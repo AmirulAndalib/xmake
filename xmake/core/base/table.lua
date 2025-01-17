@@ -154,12 +154,16 @@ function table.append(array, ...)
 end
 
 -- clone table
-function table.clone(self)
+--
+-- @param depth   e.g. shallow: 1, deep: -1
+--
+function table.clone(self, depth)
+    depth = depth or 1
     local result = self
-    if type(self) == "table" then
+    if type(self) == "table" and depth > 0 then
         result = {}
         for k, v in pairs(self) do
-            result[k] = v
+            result[k] = table.clone(v, depth - 1)
         end
     end
     return result
@@ -231,6 +235,7 @@ function table.inherit2(self, ...)
             end
         end
     end
+    setmetatable(self, metainfo)
     return self
 end
 
@@ -349,6 +354,7 @@ function table.wrap_lock(value)
     if type(value) == "table" then
         value.__wrap_locked__ = true
     end
+    return value
 end
 
 -- unlock table value to unwrap
@@ -356,6 +362,7 @@ function table.wrap_unlock(value)
     if type(value) == "table" then
         value.__wrap_locked__ = nil
     end
+    return value
 end
 
 -- remove repeat from the given array
@@ -374,6 +381,9 @@ function table.unique(array, barrier)
                     exists[v] = true
                     table.insert(unique, v)
                 end
+            end
+            if array.__wrap_locked__ then
+                table.wrap_lock(unique)
             end
             array = unique
         end
@@ -399,6 +409,9 @@ function table.reverse_unique(array, barrier)
                     exists[v] = true
                     table.insert(unique, 1, v)
                 end
+            end
+            if array.__wrap_locked__ then
+                table.wrap_lock(unique)
             end
             array = unique
         end
@@ -431,7 +444,15 @@ end
 function table.orderkeys(tbl, callback)
     local callback = type(callback) == "function" and callback or nil
     local keys = table.keys(tbl)
-    table.sort(keys, callback)
+    if callback then
+        table.sort(keys, callback)
+    else
+        local ok = pcall(table.sort, keys)
+        if not ok then
+            -- maybe sort strings and numbers, {1, 2, "a"}
+            table.sort(keys, function (a, b) return tostring(a) < tostring(b) end)
+        end
+    end
     return keys
 end
 

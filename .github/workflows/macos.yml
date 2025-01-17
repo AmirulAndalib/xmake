@@ -1,4 +1,4 @@
-name: macOS
+name: macOS (x86_64)
 
 on:
   pull_request:
@@ -9,10 +9,15 @@ on:
 jobs:
   build:
 
-    runs-on: macos-latest
+    strategy:
+      matrix:
+        os: [macos-13]
+        arch: [x86_64]
+
+    runs-on: ${{ matrix.os }}
 
     concurrency:
-        group: ${{ github.ref }}-${{ github.base_ref }}-${{ github.head_ref }}-macOS
+        group: ${{ github.ref }}-${{ github.base_ref }}-${{ github.head_ref }}-macOS-${{ matrix.arch }}
         cancel-in-progress: true
     steps:
       - uses: actions/checkout@v2
@@ -41,25 +46,28 @@ jobs:
       - name: Artifact
         run: |
           brew install gnu-tar
-          gem install --no-document fpm
-          scripts/archive-all
-          scripts/makeself/build-runfile.sh
-      - uses: actions/upload-artifact@v2
+          cd core
+          xmake pack -y --autobuild=n --basename=xmake -o ../artifacts xmakesrc
+          xmake f --embed=y -c
+          xmake
+          cp build/xmake ../artifacts/xmake-bundle
+          cd ..
+      - uses: actions/upload-artifact@v4
         with:
           name: xmake-latest.gz.run
           path: artifacts/xmake.gz.run
-      - uses: actions/upload-artifact@v2
-        with:
-          name: xmake-latest.xz.run
-          path: artifacts/xmake.xz.run
-      - uses: actions/upload-artifact@v2
+      - uses: actions/upload-artifact@v4
         with:
           name: xmake-latest.tar.gz
           path: artifacts/xmake.tar.gz
-      - uses: actions/upload-artifact@v2
+      - uses: actions/upload-artifact@v4
         with:
           name: xmake-latest.zip
           path: artifacts/xmake.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xmake-bundle.macos.x86_64
+          path: artifacts/xmake-bundle
 
         # upload artifacts to latest release
       - name: Get Previous tag
@@ -97,17 +105,6 @@ jobs:
           asset_name: xmake-${{ steps.tagName.outputs.tag }}.gz.run
           asset_content_type: application/zip
 
-      - name: Publish xz runfile
-        if: github.event.action == 'published'
-        uses: actions/upload-release-asset@v1.0.1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: artifacts/xmake.xz.run
-          asset_name: xmake-${{ steps.tagName.outputs.tag }}.xz.run
-          asset_content_type: application/zip
-
       - name: Publish gz archive
         if: github.event.action == 'published'
         uses: actions/upload-release-asset@v1.0.1
@@ -128,4 +125,15 @@ jobs:
           upload_url: ${{ github.event.release.upload_url }}
           asset_path: artifacts/xmake.zip
           asset_name: xmake-${{ steps.tagName.outputs.tag }}.zip
+          asset_content_type: application/zip
+
+      - name: Publish bundle binary
+        if: github.event.action == 'published'
+        uses: actions/upload-release-asset@v1.0.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: artifacts/xmake-bundle
+          asset_name: xmake-bundle-${{ steps.tagName.outputs.tag }}.macos.x86_64
           asset_content_type: application/zip

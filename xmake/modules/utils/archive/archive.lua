@@ -22,7 +22,14 @@
 import("core.base.option")
 import("lib.detect.find_file")
 import("lib.detect.find_tool")
+import("archive_xmz")
 import("extension", {alias = "get_archive_extension"})
+
+-- archive archivefile using xmake compress module
+function _archive_using_xmz(archivefile, inputfiles, extension, opt)
+    archive_xmz(archivefile, inputfiles, opt)
+    return true
+end
 
 -- archive archivefile using zip
 function _archive_using_zip(archivefile, inputfiles, extension, opt)
@@ -281,12 +288,25 @@ end
 
 -- archive archive file using archivers
 function _archive(archivefile, inputfiles, extension, archivers, opt)
+    local errors
     for _, archive in ipairs(archivers) do
-        if archive(archivefile, inputfiles, extension, opt) then
+        local ok = try {
+            function ()
+                return archive(archivefile, inputfiles, extension, opt)
+            end,
+            catch {
+                function (errs)
+                    if errs then
+                        errors = tostring(errs)
+                    end
+                end
+            }
+        }
+        if ok then
             return true
         end
     end
-    return false
+    raise("cannot archive %s, %s!", path.filename(archivefile), errors or "archivers not found!")
 end
 
 -- only archive tar file
@@ -299,19 +319,15 @@ function _archive_tarfile(archivefile, tarfile, opt)
     return _archive(archivefile, tarfile, extension, archivers[extension], opt)
 end
 
--- archive archive file
+-- archive file
 --
 -- @param archivefile   the archive file. e.g. *.tar.gz, *.zip, *.7z, *.tar.bz2, ..
 -- @param inputfiles    the input file or directory or list
 -- @param options       the options, e.g.. {curdir = "/tmp", recurse = true, compress = "fastest|faster|default|better|best", excludes = {"*/dir/*", "dir/*"}}
 --
 function main(archivefile, inputfiles, opt)
-
-    -- init inputfiles
-    inputfiles = inputfiles or os.curdir()
-
-    -- init options
     opt = opt or {}
+    inputfiles = inputfiles or os.curdir()
     if opt.recurse == nil then
         opt.recurse = true
     end
@@ -325,10 +341,17 @@ function main(archivefile, inputfiles, opt)
     ,   [".tar"]        = {_archive_using_tar}
     ,   [".tar.gz"]     = {_archive_using_tar, _archive_using_gzip}
     ,   [".tar.xz"]     = {_archive_using_tar, _archive_using_xz}
+    ,   [".xmz"]        = {_archive_using_xmz}
     }
 
     -- get extension
     local extension = opt.extension or get_archive_extension(archivefile)
+
+    -- ensure output directory
+    local archivedir = path.directory(archivefile)
+    if not os.isdir(archivedir) then
+        os.mkdir(archivedir)
+    end
 
     -- archive it
     return _archive(archivefile, inputfiles, extension, archivers[extension], opt)

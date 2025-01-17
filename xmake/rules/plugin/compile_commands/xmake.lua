@@ -51,7 +51,7 @@ rule("plugin.compile_commands.autoupdate")
             local lsp
             local sourcefiles = {}
             for _, target in pairs(project.targets()) do
-                table.join2(sourcefiles, target:sourcefiles(), target:headerfiles())
+                table.join2(sourcefiles, target:sourcefiles(), (target:headerfiles()))
                 local extraconf = target:extraconf("rules", "plugin.compile_commands.autoupdate")
                 if extraconf then
                     outputdir = extraconf.outputdir
@@ -66,7 +66,7 @@ rule("plugin.compile_commands.autoupdate")
                 task.run("project", {kind = "compile_commands", outputdir = outputdir, lsp = lsp})
                 print("compile_commands.json updated!")
             end, {dependfile = dependfile,
-                  files = project.allfiles(),
+                  files = table.join(project.allfiles(), config.filepath()),
                   values = sourcefiles})
             lockfile:close()
         end

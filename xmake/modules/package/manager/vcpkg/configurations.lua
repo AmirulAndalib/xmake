@@ -25,8 +25,8 @@ function arch(arch)
         i386            = "x86",
 
         -- android: armeabi armeabi-v7a arm64-v8a x86 x86_64 mips mip64
-        -- Offers a doc: https://github.com/microsoft/vcpkg/blob/master/docs/users/android.md
-        ["armeabi-v7a"] = "arm",
+        -- Offers a doc: https://github.com/microsoft/vcpkg/tree/master/triplets
+        ["armeabi-v7a"] = "arm-neon",
         ["arm64-v8a"]   = "arm64",
 
         -- ios: arm64 armv7 armv7s i386
@@ -41,6 +41,7 @@ end
 function plat(plat)
     local plats = {
         macosx          = "osx",
+        iphoneos        = "ios",
         bsd             = "freebsd",
     }
     return plats[plat] or plat
@@ -52,8 +53,19 @@ function triplet(configs, plat, arch)
     local triplet = arch .. "-" .. plat
     if plat == "windows" and configs.shared ~= true then
         triplet = triplet .. "-static"
-        if configs.vs_runtime and configs.vs_runtime:startswith("MD") then
+        if configs.runtimes and configs.runtimes:startswith("MD") then
             triplet = triplet .. "-md"
+        end
+    elseif plat == "linux" then
+        -- x64-linux-dynamic
+        if arch == "x64" and configs.shared then
+            triplet = triplet .. "-dynamic"
+        end
+    elseif plat == "osx" then
+        -- x64-osx-dynamic
+        -- arm64-osx-dynamic
+        if (arch == "x64" or arch == "arm64") and configs.shared then
+            triplet = triplet .. "-dynamic"
         end
     elseif plat == "mingw" then
         triplet = triplet .. (configs.shared ~= true and "-static" or "-dynamic")

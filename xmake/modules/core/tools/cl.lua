@@ -76,10 +76,16 @@ function init(self)
 
         -- language
     ,   ["-ansi"]                   = ""
-    ,   ["-std=c99"]                = "-TP" -- compile as c++ files because msvc only support c89
-    ,   ["-std=c11"]                = "-TP" -- compile as c++ files because msvc only support c89
-    ,   ["-std=gnu99"]              = "-TP" -- compile as c++ files because msvc only support c89
-    ,   ["-std=gnu11"]              = "-TP" -- compile as c++ files because msvc only support c89
+    ,   ["-std=c99"]                = "-TP" -- compile as c++ files because msvc doesn't support c99
+    ,   ["-std=c11"]                = "-std:c11"
+    ,   ["-std=c17"]                = "-std:c17"
+    ,   ["-std=c2x"]                = "-std:clatest"
+    ,   ["-std=c23"]                = "-std:clatest"
+    ,   ["-std=gnu99"]              = "-TP" -- compile as c++ files because msvc doesn't support c99
+    ,   ["-std=gnu11"]              = "-std:c11"
+    ,   ["-std=gnu17"]              = "-std:c17"
+    ,   ["-std=gnu2x"]              = "-std:clatest"
+    ,   ["-std=gnu23"]              = "-std:clatest"
     ,   ["-std=.*"]                 = ""
 
         -- others
@@ -88,7 +94,7 @@ function init(self)
 end
 
 -- make the symbol flags
-function nf_symbols(self, levels, target)
+function nf_symbols(self, levels, opt)
     local flags = nil
     local values = hashset.from(levels)
     if values:has("debug") then
@@ -103,6 +109,7 @@ function nf_symbols(self, levels, target)
 
         -- generate *.pdb file
         local symbolfile = nil
+        local target = opt.target
         if target and target.symbolfile and not values:has("embed") then
             symbolfile = target:symbolfile()
         end
@@ -159,7 +166,7 @@ function nf_warnings(self, levels)
     ,   everything = "-Wall"
     ,   error      = "-WX"
     }
-    for _, level in values:keys() do
+    for _, level in values:orderkeys() do
         local flag = maps[level]
         if flag then
             table.insert(flags, flag)
@@ -176,17 +183,23 @@ function nf_optimize(self, level)
     {
         none        = "-Od"
     ,   faster      = "-Ox"
-    ,   fastest     = "-O2 -fp:fast"
+    ,   fastest     = "-O2"
     ,   smallest    = "-O1 -GL" -- /GL and (/OPT:REF is on by default in linker), we need to enable /ltcg
-    ,   aggressive  = "-O2 -fp:fast"
+    ,   aggressive  = "-O2"
     }
     return maps[level]
 end
 
--- make vs runtime flag
-function nf_runtime(self, vs_runtime)
-    if vs_runtime then
-        return "-" .. vs_runtime
+-- make the runtime flag
+function nf_runtime(self, runtime)
+    if runtime then
+        local maps = {
+            MT = "-MT",
+            MD = "-MD",
+            MTd = "-MTd",
+            MDd = "-MDd"
+        }
+        return maps[runtime]
     end
 end
 
@@ -203,9 +216,22 @@ function nf_vectorext(self, extension)
     ,   fma        = "-arch:AVX2"
     ,   all        = {"-arch:SSE", "-arch:SSE2", "/d2archSSE42", "-arch:AVX", "-arch:AVX2", "-arch:AVX512"}
     }
-    local flag = maps[extension]
-    if flag and self:has_flags(flag, "cxflags") then
-        return flag
+    local flags = maps[extension]
+    if flags then
+        -- @see https://github.com/xmake-io/xmake/issues/5499
+        if type(flags) == "string" then
+            return flags
+        else
+            local result = {}
+            for _, flag in ipairs(flags) do
+                if self:has_flags(flag, "cxflags") then
+                    table.insert(result, flag)
+                end
+            end
+            if #result > 0 then
+                return table.unwrap(result)
+            end
+        end
     end
 end
 
@@ -220,12 +246,16 @@ function nf_language(self, stdname)
             -- stdc
             c99       = "-TP" -- compile as c++ files because older msvc only support c89
         ,   gnu99     = "-TP"
-        ,   c11       = {"-std:c11", "-TP"}
-        ,   gnu11     = {"-std:c11", "-TP"}
-        ,   c17       = {"-std:c17", "-TP"}
-        ,   gnu17     = {"-std:c17", "-TP"}
-        ,   clatest   = {"-std:c17", "-std:c11"}
-        ,   gnulatest = {"-std:c17", "-std:c11"}
+        ,   c11       = {"-std:c11", "-std:clatest", "-TP"}
+        ,   gnu11     = {"-std:c11", "-std:clatest", "-TP"}
+        ,   c17       = {"-std:c17", "-std:clatest", "-TP"}
+        ,   gnu17     = {"-std:c17", "-std:clatest", "-TP"}
+        ,   c2x       = {"-std:c23", "-std:clatest", "-TP"}
+        ,   gnu2x     = {"-std:c23", "-std:clatest", "-TP"}
+        ,   c23       = {"-std:c23", "-std:clatest", "-TP"}
+        ,   gnu23     = {"-std:c23", "-std:clatest", "-TP"}
+        ,   clatest   = {"-std:clatest", "-std:c23", "-std:c17", "-std:c11", "-TP"}
+        ,   gnulatest   = {"-std:clatest", "-std:c23", "-std:c17", "-std:c11", "-TP"}
         }
     end
 
@@ -249,6 +279,8 @@ function nf_language(self, stdname)
         ,   gnuxx23     = {"-std:c++23", "-std:c++latest"}
         ,   cxx2b       = {"-std:c++23", "-std:c++latest"}
         ,   gnuxx2b     = {"-std:c++23", "-std:c++latest"}
+        ,   cxx26       = {"-std:c++26", "-std:c++latest"}
+        ,   gnuxx26     = {"-std:c++26", "-std:c++latest"}
         ,   cxxlatest   = "-std:c++latest"
         ,   gnuxxlatest = "-std:c++latest"
         }
@@ -296,7 +328,8 @@ function nf_includedir(self, dir)
 end
 
 -- make the force include flag
-function nf_forceinclude(self, headerfile, target)
+function nf_forceinclude(self, headerfile, opt)
+    local target = opt.target
     local sourcekinds = target and target:extraconf("forceincludes", headerfile, "sourcekinds")
     if not sourcekinds or table.contains(table.wrap(sourcekinds), self:kind()) then
         return {"-FI", headerfile}
@@ -355,7 +388,8 @@ function nf_encoding(self, encoding)
     end
     local charsets = {
         ["utf-8"] = "utf-8",
-        utf8 = "utf-8"
+        utf8 = "utf-8",
+        gb2312 = "gb2312"
     }
     local flags = {}
     charset = charsets[charset:lower()]
@@ -377,24 +411,26 @@ function nf_encoding(self, encoding)
 end
 
 -- make the c precompiled header flag
-function nf_pcheader(self, pcheaderfile, target)
+function nf_pcheader(self, pcheaderfile, opt)
     if self:kind() == "cc" then
+        local target = opt.target
         local objectfiles = target:objectfiles()
         if objectfiles then
             table.insert(objectfiles, target:pcoutputfile("c") .. ".obj")
         end
-        return {"-Yu" .. path.filename(pcheaderfile), "-FI" .. path.filename(pcheaderfile), "-Fp" .. target:pcoutputfile("c")}
+        return {"-Yu" .. path.absolute(pcheaderfile), "-FI" .. path.absolute(pcheaderfile), "-Fp" .. target:pcoutputfile("c")}
     end
 end
 
 -- make the c++ precompiled header flag
-function nf_pcxxheader(self, pcheaderfile, target)
+function nf_pcxxheader(self, pcheaderfile, opt)
     if self:kind() == "cxx" then
+        local target = opt.target
         local objectfiles = target:objectfiles()
         if objectfiles then
             table.insert(objectfiles, target:pcoutputfile("cxx") .. ".obj")
         end
-        return {"-Yu" .. path.filename(pcheaderfile), "-FI" .. path.filename(pcheaderfile), "-Fp" .. target:pcoutputfile("cxx")}
+        return {"-Yu" .. path.absolute(pcheaderfile), "-FI" .. path.absolute(pcheaderfile), "-Fp" .. target:pcoutputfile("cxx")}
     end
 end
 
@@ -710,7 +746,7 @@ function compile(self, sourcefile, objectfile, dependinfo, flags, opt)
             function (ok, outdata, errdata)
 
                 -- show warnings?
-                if ok and policy.build_warnings() then
+                if ok and policy.build_warnings(opt) then
                     local output = outdata or ""
                     if #output:trim() == 0 then
                         output = errdata or ""
@@ -749,3 +785,4 @@ function compile(self, sourcefile, objectfile, dependinfo, flags, opt)
         end
     end
 end
+

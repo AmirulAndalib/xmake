@@ -51,7 +51,6 @@ function _register_required_package_libs(instance, required_package, is_deps)
                 fetchinfo.static  = nil
                 fetchinfo.shared  = nil
                 fetchinfo.installdir = nil
-                fetchinfo.extra = nil
                 fetchinfo.components = nil
             end
 
@@ -65,6 +64,11 @@ function _register_required_package_libs(instance, required_package, is_deps)
                 required_package:set("__components_deps", instance:components_deps())
                 required_package:set("__components_default", instance:components_default())
                 required_package:set("__components_orderlist", instance:components_orderlist())
+            end
+
+            -- save namespace
+            if instance:namespace() then
+                required_package:set("__namespace", instance:namespace())
             end
 
             -- merge into the components values

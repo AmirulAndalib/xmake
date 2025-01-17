@@ -34,6 +34,9 @@ rule("mode.debug")
             if not target:get("optimize") then
                 target:set("optimize", "none")
             end
+
+            -- #5777: '--device-debug (-G)' overrides '--generate-line-info (-lineinfo)' in nvcc
+            target:add("cuflags", "-G")
         end
     end)
 
@@ -65,6 +68,7 @@ rule("mode.release")
 
             -- enable NDEBUG macros to disables standard-C assertions
             target:add("cxflags", "-DNDEBUG")
+            target:add("cuflags", "-DNDEBUG")
         end
     end)
 
@@ -96,6 +100,10 @@ rule("mode.releasedbg")
 
             -- enable NDEBUG macros to disables standard-C assertions
             target:add("cxflags", "-DNDEBUG")
+            target:add("cuflags", "-DNDEBUG")
+
+            -- #5777: '--device-debug (-G)' overrides '--generate-line-info (-lineinfo)' in nvcc
+            target:add("cuflags", "-lineinfo")
         end
     end)
 
@@ -123,6 +131,7 @@ rule("mode.minsizerel")
 
             -- enable NDEBUG macros to disables standard-C assertions
             target:add("cxflags", "-DNDEBUG")
+            target:add("cuflags", "-DNDEBUG")
         end
     end)
 
@@ -147,13 +156,22 @@ rule("mode.profile")
                 end
             end
 
-            -- enable gprof
-            target:add("cxflags", "-pg")
-            target:add("mxflags", "-pg")
-            target:add("ldflags", "-pg")
+            if target:is_plat("windows") then
+                -- enable vs profile
+                target:add("ldflags", "/profile")
+            else
+                -- enable gprof
+                target:add("cxflags", "-pg")
+                target:add("mxflags", "-pg")
+                target:add("ldflags", "-pg")
+            end
 
             -- enable NDEBUG macros to disables standard-C assertions
             target:add("cxflags", "-DNDEBUG")
+            target:add("cuflags", "-DNDEBUG")
+
+            -- #5777: '--device-debug (-G)' overrides '--generate-line-info (-lineinfo)' in nvcc
+            target:add("cuflags", "-lineinfo")
         end
     end)
 

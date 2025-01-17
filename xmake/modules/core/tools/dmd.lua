@@ -72,7 +72,7 @@ function nf_strip(self, level)
 end
 
 -- make the symbol flag
-function nf_symbol(self, level, target)
+function nf_symbol(self, level)
     local kind = self:kind()
     if language.sourcekinds()[kind] then
         local maps = _g.symbol_maps
@@ -83,7 +83,7 @@ function nf_symbol(self, level, target)
             _g.symbol_maps = maps
         end
         return maps[level .. '_' .. kind] or maps[level]
-    elseif (kind == "dcld" or kind == "dcsh") and target:is_plat("windows") and level == "debug" then
+    elseif (kind == "dcld" or kind == "dcsh") and self:is_plat("windows") and level == "debug" then
         return "-g"
     end
 end
@@ -143,6 +143,20 @@ function nf_linkdir(self, dir)
     end
 end
 
+-- make the framework flag
+function nf_framework(self, framework)
+    if self:is_plat("macosx") then
+        return {"-L-framework", "-L" .. framework}
+    end
+end
+
+-- make the frameworkdir flag
+function nf_frameworkdir(self, frameworkdir)
+    if self:is_plat("macosx") then
+        return {"-L-F" .. path.translate(frameworkdir)}
+    end
+end
+
 -- make the rpathdir flag
 function nf_rpathdir(self, dir)
     if not self:is_plat("windows") then
@@ -159,7 +173,8 @@ function nf_rpathdir(self, dir)
 end
 
 -- make the link arguments list
-function linkargv(self, objectfiles, targetkind, targetfile, flags)
+function linkargv(self, objectfiles, targetkind, targetfile, flags, opt)
+    opt = opt or {}
 
     -- add rpath for dylib (macho), e.g. -install_name @rpath/file.dylib
     local flags_extra = {}
@@ -169,7 +184,11 @@ function linkargv(self, objectfiles, targetkind, targetfile, flags)
     end
 
     -- init arguments
-    return self:program(), table.join(flags, flags_extra, "-of" .. targetfile, objectfiles)
+    local argv = table.join(flags, flags_extra, "-of" .. targetfile, objectfiles)
+    if is_host("windows") and not opt.rawargs then
+        argv = winos.cmdargv(argv, {escape = true})
+    end
+    return self:program(), argv
 end
 
 -- link the target file

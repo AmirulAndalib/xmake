@@ -78,11 +78,11 @@ function _get_values_from_pkgs(target, name)
                     local info = components[component_name]
                     if info then
                         for _, value in ipairs(info[name]) do
-                            values[value] = string.format(" -> package(%s)", pkg:name())
+                            values[value] = string.format(" -> package(%s)", pkg:fullname())
                         end
                     else
                         local components_str = table.concat(table.wrap(configinfo.components), ", ")
-                        utils.warning("unknown component(%s) in add_packages(%s, {components = {%s}})", component_name, pkg:name(), components_str)
+                        utils.warning("unknown component(%s) in add_packages(%s, {components = {%s}})", component_name, pkg:fullname(), components_str)
                     end
                 end
             end
@@ -95,7 +95,7 @@ function _get_values_from_pkgs(target, name)
         else
             -- get values from the builtin package configs
             for _, value in ipairs(pkg:get(name)) do
-                values[value] = string.format(" -> package(%s)", pkg:name())
+                values[value] = string.format(" -> package(%s)", pkg:fullname())
             end
         end
     end
@@ -114,11 +114,17 @@ function _get_values_from_deps(target, name)
             for _, value in ipairs(dep:get(name, {interface = true})) do
                 values[value] = string.format(" -> dep(%s)", dep:name())
             end
-            for _, value in ipairs(dep:get_from_opts(name, {interface = true})) do
-                values[value] = string.format(" -> dep(%s) -> options", dep:name())
+            local values_chunks = dep:get_from(name, "option::*", {interface = true})
+            for _, values_chunk in ipairs(values_chunks) do
+                for _, value in ipairs(values_chunk) do
+                    values[value] = string.format(" -> dep(%s) -> options", dep:name())
+                end
             end
-            for _, value in ipairs(dep:get_from_pkgs(name, {interface = true})) do
-                values[value] = string.format(" -> dep(%s) -> packages", dep:name())
+            values_chunks = dep:get_from(name, "package::*", {interface = true})
+            for _, values_chunk in ipairs(values_chunks) do
+                for _, value in ipairs(values_chunk) do
+                    values[value] = string.format(" -> dep(%s) -> packages", dep:name())
+                end
             end
         end
     end

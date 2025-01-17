@@ -29,6 +29,7 @@ import("devel.debugger")
 import("async.runjobs")
 import("private.action.run.runenvs")
 import("private.service.remote_build.action", {alias = "remote_build_action"})
+import("lib.detect.find_tool")
 
 -- run target
 function _do_run_target(target)
@@ -50,12 +51,17 @@ function _do_run_target(target)
     -- get run arguments
     local args = table.wrap(option.get("arguments") or target:get("runargs"))
 
+    if not is_host("windows") and target:is_plat("windows") then
+        local wine = assert(find_tool("wine"), "wine not found!")
+        table.insert(args, 1, targetfile)
+        targetfile = wine.program
+    end
+
     -- debugging?
     if option.get("debug") then
         debugger.run(targetfile, args, {curdir = rundir, addenvs = addenvs, setenvs = setenvs})
     else
-        local envs = runenvs.join(addenvs, setenvs)
-        os.execv(targetfile, args, {curdir = rundir, detach = option.get("detach"), envs = envs})
+        os.execv(targetfile, args, {curdir = rundir, detach = option.get("detach"), addenvs = addenvs, setenvs = setenvs})
     end
 end
 
@@ -213,7 +219,7 @@ function main()
         -- we need clear the previous config and reload it
         -- to avoid trigger recheck configs
         config.clear()
-        task.run("build")
+        task.run("build", {target = option.get("target"), all = option.get("all")})
     end
 
     -- load targets

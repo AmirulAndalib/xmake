@@ -119,8 +119,9 @@ function _find_sdkdir(sdkdir, sdkver)
             end
         end
     else
-        table.insert(paths, "~/Qt")
-        table.insert(paths, "~/Qt*")
+        for _, dir in ipairs(os.dirs("~/Qt*")) do
+            table.insert(paths, dir)
+        end
     end
 
     -- special case for android on windows, where qmake is a .bat from version 6.3
@@ -133,7 +134,19 @@ function _find_sdkdir(sdkdir, sdkver)
     end
 
     -- attempt to find qmake
-    local qmake = find_file(is_host("windows") and "qmake.exe" or "qmake", paths, {suffixes = subdirs})
+    local qmake
+    if is_host("windows") then
+        qmake = find_file("qmake.exe", paths, {suffixes = subdirs})
+    else
+        -- @see https://github.com/xmake-io/xmake/issues/4881
+        if sdkver then
+            local major = sdkver:sub(1, 1)
+            qmake = find_file("qmake" .. major, paths, {suffixes = subdirs})
+        end
+        if not qmake then
+            qmake = find_file("qmake", paths, {suffixes = subdirs})
+        end
+    end
     if qmake then
         return path.directory(path.directory(qmake)), qmake
     end
@@ -154,7 +167,8 @@ function _find_qmake(sdkdir, sdkver)
     if sdkver then
         sdkver = semver.try_parse(sdkver)
         if sdkver then
-            qmake = find_tool("qmake", {program = "qmake" .. sdkver:major(), paths = sdkdir and path.join(sdkdir, "bin")})
+            local cachekey = "qmake-" .. sdkver:major()
+            qmake = find_tool("qmake", {program = "qmake" .. sdkver:major(), cachekey = cachekey, paths = sdkdir and path.join(sdkdir, "bin")})
         end
     end
 
@@ -163,7 +177,8 @@ function _find_qmake(sdkdir, sdkver)
     if not qmake then
         local suffixes = {"", "6", "-qt5"}
         for _, suffix in ipairs(suffixes) do
-            qmake = find_tool("qmake", {program = "qmake" .. suffix, paths = sdkdir and path.join(sdkdir, "bin")})
+            local cachekey = "qmake-" .. suffix
+            qmake = find_tool("qmake", {program = "qmake" .. suffix, cachekey = cachekey, paths = sdkdir and path.join(sdkdir, "bin")})
             if qmake then
                 break
             end
@@ -177,7 +192,18 @@ end
 -- get qt environment
 function _get_qtenvs(qmake)
     local envs = {}
-    local results = try {function () return os.iorunv(qmake, {"-query"}) end}
+    local results = try {
+        function ()
+            return os.iorunv(qmake, {"-query"})
+        end,
+        catch {
+            function (errors)
+                if errors then
+                    dprint(tostring(errors))
+                end
+            end
+        }
+    }
     if results then
         for _, qtenv in ipairs(results:split('\n', {plain = true})) do
             local kv = qtenv:split(':', {plain = true, limit = 2}) -- @note set limit = 2 for supporting value with win-style path, e.g. `key:C:\xxx`
@@ -185,8 +211,8 @@ function _get_qtenvs(qmake)
                 envs[kv[1]] = kv[2]:trim()
             end
         end
+        return envs
     end
-    return envs
 end
 
 -- find qt sdk toolchains

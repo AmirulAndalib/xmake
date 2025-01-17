@@ -38,14 +38,15 @@ function menu_options()
                                        values = {"release", "debug"}         },
         {'f', "configs",       "kv", nil, "Set the given extra package configs.",
                                        "e.g.",
-                                       "    - xrepo install -f \"vs_runtime='MD'\" zlib",
+                                       "    - xrepo install -f \"runtimes='MD'\" zlib",
                                        "    - xrepo install -f \"regex=true,thread=true\" boost"},
         {'j', "jobs",          "kv", tostring(os.default_njob()),
                                           "Set the number of parallel compilation jobs."},
-        {nil, "linkjobs",      "kv", nil,    "Set the number of parallel link jobs."},
+        {nil, "linkjobs",      "kv", nil, "Set the number of parallel link jobs."},
         {nil, "includes",      "kv", nil, "Includes extra lua configuration files.",
                                        "e.g.",
                                        "    - xrepo install -p cross --toolchain=mytool --includes='toolchain1.lua" .. path.envsep() .. "toolchain2.lua'"},
+        {nil, "policies",      "kv", nil, "Set the policies."                },
         {category = "Visual Studio SDK Configuration"                        },
         {nil, "vs",            "kv", nil, "The Microsoft Visual Studio"
                                         , "  e.g. --vs=2017"                 },
@@ -69,6 +70,7 @@ function menu_options()
         {category = "Cross Compilation Configuration"                        },
         {nil, "sdk",           "kv", nil, "Set the SDK directory of cross toolchain." },
         {nil, "toolchain",     "kv", nil, "Set the toolchain name."          },
+        {nil, "toolchain_host","kv", nil, "Set the host toolchain name."     },
         {category = "MingW Configuration"                                    },
         {nil, "mingw",         "kv", nil, "Set the MingW SDK directory."     },
         {category = "XCode SDK Configuration"                                },
@@ -130,7 +132,9 @@ function _install_packages(packages)
     local rcfiles = {}
     local includes = option.get("includes")
     if includes then
-        table.join2(rcfiles, path.splitenv(includes))
+        for _, includefile in ipairs(path.splitenv(includes)) do
+            table.insert(rcfiles, path.absolute(includefile))
+        end
     end
 
     -- enter working project directory
@@ -143,7 +147,7 @@ function _install_packages(packages)
     if not os.isdir(workdir) then
         os.mkdir(workdir)
         os.cd(workdir)
-        os.vrunv("xmake", {"create", "-P", "."})
+        os.vrunv(os.programfile(), {"create", "-P", "."})
     else
         os.cd(workdir)
     end
@@ -178,6 +182,10 @@ function _install_packages(packages)
         table.insert(config_argv, "-k")
         table.insert(config_argv, kind)
     end
+    local policies = option.get("policies")
+    if policies then
+        table.insert(config_argv, "--policies=" .. policies)
+    end
     -- for android
     if option.get("ndk") then
         table.insert(config_argv, "--ndk=" .. option.get("ndk"))
@@ -203,6 +211,9 @@ function _install_packages(packages)
     end
     if option.get("toolchain") then
         table.insert(config_argv, "--toolchain=" .. option.get("toolchain"))
+    end
+    if option.get("toolchain_host") then
+        table.insert(config_argv, "--toolchain_host=" .. option.get("toolchain_host"))
     end
     -- for mingw
     if option.get("mingw") then
@@ -235,7 +246,7 @@ function _install_packages(packages)
     if #rcfiles > 0 then
         envs.XMAKE_RCFILES = path.joinenv(rcfiles)
     end
-    os.vrunv("xmake", config_argv, {envs = envs})
+    os.vrunv(os.programfile(), config_argv, {envs = envs})
 
     -- do install
     local require_argv = {"require"}
@@ -297,7 +308,7 @@ function _install_packages(packages)
         end
         table.join2(require_argv, packages)
     end
-    os.vexecv("xmake", require_argv, {envs = envs})
+    os.vexecv(os.programfile(), require_argv, {envs = envs})
 end
 
 -- main entry

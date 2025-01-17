@@ -30,7 +30,7 @@ import("core.base.bit")
 function _get_librarydeps(target)
     local librarydeps = {}
     for _, depname in ipairs(target:get("deps")) do
-        local dep = project.target(depname)
+        local dep = project.target(depname, {namespace = target:namespace()})
         if not ((target:is_binary() or target:is_shared()) and dep:is_static()) then
             table.insert(librarydeps, dep:name():lower())
         end
@@ -54,6 +54,8 @@ function _package_remote(target)
             file:print("    set_kind(\"binary\")")
         elseif target:is_headeronly() then
             file:print("    set_kind(\"library\", {headeronly = true})")
+        elseif target:is_moduleonly() then
+            file:print("    set_kind(\"library\", {moduleonly = true})")
         end
         local homepage = option.get("homepage")
         if homepage then
@@ -122,6 +124,7 @@ function _package_target(target)
         ,   static     = _package_remote
         ,   shared     = _package_remote
         ,   headeronly = _package_remote
+        ,   moduleonly = _package_remote
         }
         local kind = target:kind()
         local script = scripts[kind]

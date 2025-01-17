@@ -17,6 +17,10 @@
 -- @author      ruki
 -- @file        toolchain.lua
 --
+import("core.base.semver")
+import("core.tool.linker")
+import("core.tool.compiler")
+import("core.language.language")
 
 -- is the compatible with the host?
 function is_compatible_with_host(name)
@@ -25,9 +29,47 @@ function is_compatible_with_host(name)
             return true
         end
     elseif is_host("windows") then
-        if name == "msvc" or name == "llvm" then
+        if name == "msvc" or name == "llvm" or name == "clang-cl" then
             return true
         end
     end
+end
+
+-- get vs toolset version, e.g. v143, v144, ..
+function get_vs_toolset_ver(vs_toolset)
+    local toolset_ver
+    if vs_toolset then
+        local verinfo = semver.new(vs_toolset)
+        toolset_ver = "v" .. verinfo:major() .. (tostring(verinfo:minor()):sub(1, 1) or "0")
+
+        -- @see https://github.com/xmake-io/xmake/pull/5176
+        if toolset_ver and toolset_ver == "v144" and verinfo:ge("14.40") and verinfo:lt("14.45") then
+            toolset_ver = "v143"
+        end
+    end
+    return toolset_ver
+end
+
+-- map compiler flags for package
+function map_compflags_for_package(package, langkind, name, values)
+    -- @note we need to patch package:sourcekinds(), because it wiil be called nf_runtime for gcc/clang
+    package.sourcekinds = function (self)
+        local sourcekind = language.langkinds()[langkind]
+        return sourcekind
+    end
+    local flags = compiler.map_flags(langkind, name, values, {target = package})
+    package.sourcekinds = nil
+    return flags
+end
+
+-- map linker flags for package
+function map_linkflags_for_package(package, targetkind, sourcekinds, name, values)
+    -- @note we need to patch package:sourcekinds(), because it wiil be called nf_runtime for gcc/clang
+    package.sourcekinds = function (self)
+        return sourcekinds
+    end
+    local flags = linker.map_flags(targetkind, sourcekinds, name, values, {target = package})
+    package.sourcekinds = nil
+    return flags
 end
 

@@ -33,6 +33,7 @@ local sandbox       = require("sandbox/sandbox")
 local toolchain     = require("tool/toolchain")
 local platform      = require("platform/platform")
 local language      = require("language/language")
+local is_cross      = require("base/private/is_cross")
 local import        = require("sandbox/modules/import")
 
 -- new an instance
@@ -109,6 +110,11 @@ function _instance:is_arch(...)
             return true
         end
     end
+end
+
+-- is cross-compilation?
+function _instance:is_cross()
+    return is_cross(self:plat(), self:arch())
 end
 
 -- get the tool program
@@ -231,8 +237,6 @@ end
 -- @param opt.toolchain_info  the toolchain info (optional)
 --
 function tool.load(kind, opt)
-
-    -- get tool information
     opt = opt or {}
     local program = opt.program
     local toolname = opt.toolname
@@ -243,7 +247,7 @@ function tool.load(kind, opt)
     local arch = toolchain_info.arch or config.get("arch") or os.arch()
 
     -- init cachekey
-    local cachekey = kind .. (program or "") .. plat .. arch
+    local cachekey = kind .. (program or "") .. plat .. arch .. (opt.host and "host" or "")
 
     -- get it directly from cache dirst
     tool._TOOLS = tool._TOOLS or {}
@@ -267,7 +271,7 @@ function tool.load(kind, opt)
 
     -- get the tool program and name
     if not program then
-        program, toolname, toolchain_info = platform.tool(kind, plat, arch)
+        program, toolname, toolchain_info = platform.tool(kind, plat, arch, {host = opt.host})
         if toolchain_info then
             assert(toolchain_info.plat == plat)
             assert(toolchain_info.arch == arch)

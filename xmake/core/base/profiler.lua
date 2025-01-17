@@ -214,7 +214,7 @@ function profiler:stop()
    end
 end
 
--- enter the given tag for perl:tag
+-- enter the given tag for perf:tag
 function profiler:enter(name, ...)
     local is_perf_tag = self._IS_PERF_TAG
     if is_perf_tag == nil then
@@ -229,7 +229,7 @@ function profiler:enter(name, ...)
     end
 end
 
--- leave the given tag for perl:tag
+-- leave the given tag for perf:tag
 function profiler:leave(name, ...)
     local is_perf_tag = self._IS_PERF_TAG
     if is_perf_tag == nil then
@@ -247,7 +247,7 @@ function profiler:leave(name, ...)
     end
 end
 
--- get profiler mode, e.g. perf:call, perf:tag, trace
+-- get profiler mode, e.g. perf:call, perf:tag, perf:process, trace
 function profiler:mode()
     local mode = self._MODE
     if mode == nil then

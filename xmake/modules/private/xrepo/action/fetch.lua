@@ -30,29 +30,31 @@ function menu_options()
     -- menu options
     local options =
     {
-        {'k', "kind",       "kv", nil, "Enable static/shared library.",
-                                       values = {"static", "shared"}         },
-        {'p', "plat",       "kv", nil, "Set the given platform."             },
-        {'a', "arch",       "kv", nil, "Set the given architecture."         },
-        {'m', "mode",       "kv", nil, "Set the given mode.",
-                                       values = {"release", "debug"}         },
-        {'f', "configs",    "kv", nil, "Set the given extra package configs.",
+        {'k', "kind",           "kv", nil, "Enable static/shared library.",
+                                       values = {"static", "shared"}},
+        {'p', "plat",           "kv", nil, "Set the given platform."                                                                                    },
+        {'a', "arch",           "kv", nil, "Set the given architecture."                                                                                },
+        {'m', "mode",           "kv", nil, "Set the given mode.",
+                                       values = {"release", "debug"}},
+        {'f', "configs",        "kv", nil, "Set the given extra package configs.",
                                        "e.g.",
-                                       "    - xrepo fetch --configs=\"vs_runtime='MD'\" zlib",
-                                       "    - xrepo fetch --configs=\"regex=true,thread=true\" boost"},
-        {nil, "system",     "k", "false", "Only fetch package on current system."},
-        {},
-        {nil, "toolchain",  "kv", nil, "Set the toolchain name."             },
-        {nil, "includes",   "kv", nil, "Includes extra lua configuration files.",
+                                       "    - xrepo fetch --configs=\"runtimes='MD'\" zlib",
+                                       "    - xrepo fetch --configs=\"regex=true,thread=true\" boost"                                                   },
+        {nil, "system",         "k", "false", "Only fetch package on current system."                                                                   },
+        {                                                                                                                                               },
+        {nil, "sdk",            "kv", nil, "Set the SDK directory of cross toolchain."                                                                  },
+        {nil, "toolchain",      "kv", nil, "Set the toolchain name."                                                                                    },
+        {nil, "toolchain_host", "kv", nil, "Set the host toolchain name."                                                                               },
+        {nil, "includes",       "kv", nil, "Includes extra lua configuration files.",
                                        "e.g.",
-                                       "    - xrepo fetch -p cross --toolchain=mytool --includes='toolchain1.lua" .. path.envsep() .. "toolchain2.lua'"},
-        {nil, "deps",       "k",  nil, "Fetch packages with dependencies."   },
-        {nil, "cflags",     "k",  nil, "Fetch cflags of the given packages." },
-        {nil, "ldflags",    "k",  nil, "Fetch ldflags of the given packages."},
-        {'e', "external",   "k",  nil, "Show cflags as external packages with -isystem."},
-        {nil, "json",       "k",  nil, "Output package info as json format." },
-        {},
-        {nil, "packages",   "vs", nil, "The packages list.",
+                                       "    - xrepo fetch -p cross --toolchain=mytool --includes='toolchain1.lua" .. path.envsep() .. "toolchain2.lua'" },
+        {nil, "deps",           "k",  nil, "Fetch packages with dependencies."                                                                          },
+        {nil, "cflags",         "k",  nil, "Fetch cflags of the given packages."                                                                        },
+        {nil, "ldflags",        "k",  nil, "Fetch ldflags of the given packages."                                                                       },
+        {'e', "external",       "k",  nil, "Show cflags as external packages with -isystem."                                                            },
+        {nil, "json",           "k",  nil, "Output package info as json format."                                                                        },
+        {                                                                                                                                               },
+        {nil, "packages",       "vs", nil, "The packages list.",
                                        "e.g.",
                                        "    - xrepo fetch zlib boost",
                                        "    - xrepo fetch /tmp/zlib.lua",
@@ -62,7 +64,7 @@ function menu_options()
                                        "    - xrepo fetch conan::zlib/1.2.11 vcpkg::zlib",
                                        "    - xrepo fetch brew::zlib",
                                        "    - xrepo fetch system::zlib (from pkgconfig, brew, /usr/lib ..)",
-                                       "    - xrepo fetch pkgconfig::zlib"}
+                                       "    - xrepo fetch pkgconfig::zlib"                                                                              }
     }
 
     -- show menu options
@@ -101,7 +103,9 @@ function _fetch_packages(packages)
     local rcfiles = {}
     local includes = option.get("includes")
     if includes then
-        table.join2(rcfiles, path.splitenv(includes))
+        for _, includefile in ipairs(path.splitenv(includes)) do
+            table.insert(rcfiles, path.absolute(includefile))
+        end
     end
 
     -- enter working project directory
@@ -113,7 +117,7 @@ function _fetch_packages(packages)
     if not os.isdir(workdir) then
         os.mkdir(workdir)
         os.cd(workdir)
-        os.vrunv("xmake", {"create", "-P", "."})
+        os.vrunv(os.programfile(), {"create", "-P", "."})
     else
         os.cd(workdir)
     end
@@ -135,8 +139,15 @@ function _fetch_packages(packages)
         table.insert(config_argv, "-a")
         table.insert(config_argv, option.get("arch"))
     end
+    -- for cross toolchain
+    if option.get("sdk") then
+        table.insert(config_argv, "--sdk=" .. option.get("sdk"))
+    end
     if option.get("toolchain") then
         table.insert(config_argv, "--toolchain=" .. option.get("toolchain"))
+    end
+    if option.get("toolchain_host") then
+        table.insert(config_argv, "--toolchain_host=" .. option.get("toolchain_host"))
     end
     local mode  = option.get("mode")
     if mode then
@@ -152,7 +163,7 @@ function _fetch_packages(packages)
     if #rcfiles > 0 then
         envs.XMAKE_RCFILES = path.joinenv(rcfiles)
     end
-    os.vrunv("xmake", config_argv, {envs = envs})
+    os.vrunv(os.programfile(), config_argv, {envs = envs})
 
     -- do fetch
     local require_argv = {"require", "--fetch"}
@@ -210,7 +221,7 @@ function _fetch_packages(packages)
         end
         table.join2(require_argv, packages)
     end
-    os.vexecv("xmake", require_argv, {envs = envs})
+    os.vexecv(os.programfile(), require_argv, {envs = envs})
 end
 
 -- main entry

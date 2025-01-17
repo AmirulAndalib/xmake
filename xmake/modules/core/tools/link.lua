@@ -58,9 +58,10 @@ function get(self, name)
 end
 
 -- make the strip flag
-function nf_strip(self, level, target)
+function nf_strip(self, level, opt)
 
     -- link.exe/arm64 does not support /opt:ref, /opt:icf
+    local target = opt.target
     if target and target:is_arch("arm64") then
         return
     end
@@ -80,10 +81,11 @@ function nf_strip(self, level, target)
 end
 
 -- make the symbol flag
-function nf_symbol(self, level, target)
+function nf_symbol(self, level, opt)
 
     -- debug? generate *.pdb file
     local flags = nil
+    local target = opt.target
     if target then
         if target:type() == "target" then
             if level == "debug" and (target:is_binary() or target:is_shared()) then
@@ -100,7 +102,7 @@ end
 
 -- make the link flag
 function nf_link(self, lib)
-    if not lib:endswith(".lib") then
+    if not lib:endswith(".lib") and not lib:endswith(".obj") then
         lib = lib .. ".lib"
     end
     return lib
@@ -111,9 +113,9 @@ function nf_syslink(self, lib)
     return nf_link(self, lib)
 end
 
--- make vs runtime flag
-function nf_runtime(self, vs_runtime)
-    if vs_runtime and vs_runtime:startswith("MT") then
+-- make the runtime flag
+function nf_runtime(self, runtime)
+    if runtime and runtime:startswith("MT") then
         return "-nodefaultlib:msvcrt.lib"
     end
 end

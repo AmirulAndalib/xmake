@@ -165,7 +165,7 @@ task("config")
     set_category("action")
     on_run("main")
     set_menu {
-                usage = "xmake config|f [options] [target]",
+                usage = "xmake config|f [options]",
                 description = "Configure the project.",
                 shortname = 'f',
                 options = {
@@ -213,6 +213,21 @@ task("config")
                                                           , "    - xmake f --toolchain=[cross|llvm|sdcc ..] --sdk=/xxx"
                                                           , "    - run `xmake show -l toolchains` to get all toolchains"
                                                           , values = _toolchain_values},
+                    {nil, "toolchain_host", "kv", nil,      "Set host toolchain name, it's only for building packages on host machine."
+                                                          , "e.g. "
+                                                          , "    - xmake f --toolchain_host=clang"
+                                                          , "    - xmake f --toolchain_host=[cross|llvm|sdcc ..] --sdk=/xxx"
+                                                          , "    - run `xmake show -l toolchains` to get all toolchains"
+                                                          , values = _toolchain_values},
+                    {nil, "runtimes", "kv", nil,          "Set the compiler runtime library."
+                                                          , "e.g. "
+                                                          , "    - xmake f --runtimes=MTd"
+                                                          , "    - xmake f --runtimes=MT,c++_static"
+                                                          , values = {"MT", "MTd", "MD", "MDd",             -- only for msvc
+                                                                      "c++_static", "c++_shared",           -- gcc/clang/android ndk
+                                                                      "stdc++_static", "stdc++_shared",     -- gcc/clang
+                                                                      "gnustl_static", "gnustl_shared",     -- only for old android ndk
+                                                                      "stlport_static", "stlport_shared"}}, -- only for old android ndk
                     _language_menu_options,
                     _platform_menu_options,
                     {category = "Other Configuration"},

@@ -20,9 +20,12 @@
 
 -- imports
 import("core.base.option")
+import("core.project.config")
+import("core.project.project")
 import("core.tool.toolchain")
 import("lib.detect.find_tool")
 import("private.utils.upgrade_vsproj")
+import("private.utils.toolchain", {alias = "toolchain_utils"})
 
 -- get the number of parallel jobs
 function _get_parallel_njobs(opt)
@@ -31,7 +34,7 @@ end
 
 -- get msvc
 function _get_msvc(package)
-    local msvc = toolchain.load("msvc", {plat = package:plat(), arch = package:arch()})
+    local msvc = package:toolchain("msvc")
     assert(msvc:check(), "vs not found!") -- we need to check vs envs if it has been not checked yet
     return msvc
 end
@@ -63,6 +66,19 @@ function _get_configs(package, configs, opt)
     end
     if not configs_str:find("p:Platform=", 1, true) then
         table.insert(configs, "-p:Platform=" .. _get_vsarch(package))
+    end
+    if not configs_str:find("p:PlatformToolset=", 1, true) then
+        local vs_toolset = toolchain_utils.get_vs_toolset_ver(_get_msvc(package):config("vs_toolset") or config.get("vs_toolset"))
+        if vs_toolset then
+            table.insert(configs, "/p:PlatformToolset=" .. vs_toolset)
+        end
+    end
+    if project.policy("package.msbuild.multi_tool_task") or package:policy("package.msbuild.multi_tool_task") then
+        table.insert(configs, "/p:UseMultiToolTask=true")
+        table.insert(configs, "/p:EnforceProcessCountAcrossBuilds=true")
+        if jobs then
+            table.insert(configs, format("/p:MultiProcMaxCount=%d", jobs))
+        end
     end
     return configs
 end

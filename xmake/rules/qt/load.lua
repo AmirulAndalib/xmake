@@ -26,7 +26,7 @@ import("core.base.hashset")
 import("lib.detect.find_library")
 
 -- make link for framework
-function _link(target, linkdirs, framework, qt_sdkver)
+function _link(target, linkdirs, framework, qt_sdkver, infix)
     if framework:startswith("Qt") then
         local debug_suffix = "_debug"
         if target:is_plat("windows") then
@@ -41,12 +41,12 @@ function _link(target, linkdirs, framework, qt_sdkver)
             debug_suffix = ""
         end
         if qt_sdkver:ge("5.0") then
-            framework = "Qt" .. qt_sdkver:major() .. framework:sub(3) .. (is_mode("debug") and debug_suffix or "")
+            framework = "Qt" .. qt_sdkver:major() .. framework:sub(3) .. infix .. (is_mode("debug") and debug_suffix or "")
         else -- for qt4.x, e.g. QtGui4.lib
             if target:is_plat("windows", "mingw") then
-                framework = "Qt" .. framework:sub(3) .. (is_mode("debug") and debug_suffix or "") .. qt_sdkver:major()
+                framework = "Qt" .. framework:sub(3) .. infix .. (is_mode("debug") and debug_suffix or "") .. qt_sdkver:major()
             else
-                framework = "Qt" .. framework:sub(3) .. (is_mode("debug") and debug_suffix or "")
+                framework = "Qt" .. framework:sub(3) .. infix .. (is_mode("debug") and debug_suffix or "")
             end
         end
         if target:is_plat("android") then --> -lQt5Core_armeabi/-lQt5CoreDebug_armeabi for 5.14.x
@@ -127,10 +127,56 @@ end
 -- @see https://github.com/xmake-io/xmake/issues/4135
 function _get_frameworks_from_target(target)
     local values = table.wrap(target:get("frameworks"))
-    table.join2(values, target:get_from_opts("frameworks"))
-    table.join2(values, target:get_from_pkgs("frameworks"))
-    table.join2(values, target:get_from_deps("__qt_frameworks", {interface = true}))
+    for _, value in ipairs((target:get_from("frameworks", "option::*"))) do
+        table.join2(values, value)
+    end
+    for _, value in ipairs((target:get_from("frameworks", "package::*"))) do
+        table.join2(values, value)
+    end
+    for _, value in ipairs((target:get_from("__qt_frameworks", "dep::*", {interface = true}))) do
+        table.join2(values, value)
+    end
     return table.unique(values)
+end
+
+function _add_qmakeprllibs(target, prlfile, qt)
+    if os.isfile(prlfile) then
+        local contents = io.readfile(prlfile)
+        local envs = {}
+        if contents then
+            for _, prlenv in ipairs(contents:split('\n', {plain = true})) do
+                local kv = prlenv:split('=', {plain = true})
+                if #kv == 2 then
+                    envs[kv[1]:trim()] = kv[2]:trim()
+                end
+            end
+        end
+        if envs.QMAKE_PRL_LIBS_FOR_CMAKE then
+            for _, lib in ipairs(envs.QMAKE_PRL_LIBS_FOR_CMAKE:split(';', {plain = true})) do
+                if lib:startswith("-L") then
+                    local libdir = lib:sub(3)
+                    target:add("linkdirs", libdir)
+                else
+                    if qt.qmldir then
+                        lib = string.gsub(lib, "%$%$%[QT_INSTALL_QML%]", qt.qmldir)
+                    end
+                    if qt.sdkdir then
+                        lib = string.gsub(lib, "%$%$%[QT_INSTALL_PREFIX%]", qt.sdkdir)
+                    end
+                    if qt.pluginsdir then
+                        lib = string.gsub(lib, "%$%$%[QT_INSTALL_PLUGINS%]", qt.pluginsdir)
+                    end
+                    if qt.libdir then
+                        lib = string.gsub(lib, "%$%$%[QT_INSTALL_LIBS%]", qt.libdir)
+                    end
+                    if lib:startswith("-l") then
+                        lib = lib:sub(3)
+                    end
+                    target:add("syslinks", lib)
+                end
+            end
+        end
+    end
 end
 
 -- the main entry
@@ -148,6 +194,25 @@ function main(target, opt)
         qt_sdkver = semver.new(qt.sdkver)
     else
         raise("Qt SDK version not found, please run `xmake f --qt_sdkver=xxx` to set it.")
+    end
+
+    -- get qt sdk infix
+    local infix = ""
+    if qt.mkspecsdir then
+        if os.isfile(path.join(qt.mkspecsdir, "qconfig.pri")) then
+            local qconfig = io.readfile(path.join(qt.mkspecsdir, "qconfig.pri"))
+            if qconfig then
+                qconfig = qconfig:trim():split("\n")
+                for _, line in ipairs(qconfig) do
+                    if line:startswith("QT_LIBINFIX") then
+                        local kv = line:split("=", {plain = true, limit = 2})
+                        if #kv == 2 then
+                            infix = kv[2]:trim()
+                        end
+                    end
+                end
+            end
+        end
     end
 
     -- add -fPIC
@@ -229,13 +294,21 @@ function main(target, opt)
     target:set("syslinks", nil)
 
     -- add qt links and directories
+    target:add("syslinks", target:values("qt.links"))
+    local qtprldirs = {}
     for _, qt_linkdir in ipairs(target:values("qt.linkdirs")) do
         local linkdir = path.join(qt.sdkdir, qt_linkdir)
         if os.isdir(linkdir) then
             target:add("linkdirs", linkdir)
+            table.insert(qtprldirs, linkdir)
         end
     end
-    target:add("syslinks", target:values("qt.links"))
+    for _, qt_link in ipairs(target:values("qt.links")) do
+        for _, qt_libdir in ipairs(qtprldirs) do
+            local prl_file = path.join(qt_libdir, qt_link .. ".prl")
+            _add_qmakeprllibs(target, prl_file, qt)
+        end
+    end
 
     -- backup qt frameworks
     local qt_frameworks = target:get("frameworks")
@@ -290,19 +363,26 @@ function main(target, opt)
                         _add_includedirs(target, path.join(frameworkdir, "Headers", qt.sdkver, framework))
                         frameworksset:insert(framework)
                     else
-                        target:add("syslinks", _link(target, qt.libdir, framework, qt_sdkver))
+                        local link = _link(target, qt.libdir, framework, qt_sdkver, infix)
+                        target:add("syslinks", link)
+                        _add_qmakeprllibs(target, path.join(qt.libdir, link .. ".prl"), qt)
                         _add_includedirs(target, path.join(qt.includedir, framework))
                         -- e.g. QtGui/5.15.0/QtGui/qpa/qplatformopenglcontext.h
                         _add_includedirs(target, path.join(qt.includedir, framework, qt.sdkver))
                         _add_includedirs(target, path.join(qt.includedir, framework, qt.sdkver, framework))
                     end
                 else
-                    target:add("syslinks", _link(target, qt.libdir, framework, qt_sdkver))
+                    local link = _link(target, qt.libdir, framework, qt_sdkver, infix)
+                    target:add("syslinks", link)
+                    _add_qmakeprllibs(target, path.join(qt.libdir, link .. ".prl"), qt)
                     _add_includedirs(target, path.join(qt.includedir, framework))
                     _add_includedirs(target, path.join(qt.includedir, framework, qt.sdkver))
                     _add_includedirs(target, path.join(qt.includedir, framework, qt.sdkver, framework))
                 end
             end
+        elseif target:is_plat("macosx") then
+            --@see https://github.com/xmake-io/xmake/issues/5336
+            frameworksset:insert(framework)
         end
     end
 
@@ -342,7 +422,6 @@ function main(target, opt)
             target:add("rpathdirs", "@executable_path/Frameworks", qt.libdir)
         else
             target:add("rpathdirs", qt.libdir)
-            _add_includedirs(target, qt.includedir)
 
             -- remove qt frameworks
             local frameworks = table.wrap(target:get("frameworks"))
@@ -354,6 +433,7 @@ function main(target, opt)
             end
             target:set("frameworks", frameworks)
         end
+        _add_includedirs(target, qt.includedir)
         _add_includedirs(target, path.join(qt.mkspecsdir, "macx-clang"))
         target:add("linkdirs", qt.libdir)
     elseif target:is_plat("linux") then
@@ -438,10 +518,12 @@ function main(target, opt)
             target:add("defines", "_WINDOWS")
             local subsystem = false
             for _, ldflag in ipairs(target:get("ldflags")) do
-                ldflag = ldflag:lower()
-                if ldflag:find("[/%-]subsystem:") then
-                    subsystem = true
-                    break
+                if type(ldflag) == "string" then
+                    ldflag = ldflag:lower()
+                    if ldflag:find("[/%-]subsystem:") then
+                        subsystem = true
+                        break
+                    end
                 end
             end
             -- maybe user will set subsystem to console

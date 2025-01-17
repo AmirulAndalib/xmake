@@ -66,6 +66,8 @@ function _find_arch_from_cross()
             arch = "riscv64"
         elseif cross:find("riscv", 1, true) then
             arch = "riscv"
+        elseif cross:find("loong64", 1, true) then
+            arch = "loong64"
         elseif cross:find("s390x", 1, true) then
             arch = "s390x"
         elseif cross:find("powerpc64", 1, true) then
@@ -110,6 +112,8 @@ function _find_arch(plat, arch)
                 else
                     arch = "x86_64"
                 end
+            elseif plat == "harmony" then
+                arch = "arm64-v8a"
             elseif plat == "cross" then
                 arch = _find_arch_from_cross()
             else

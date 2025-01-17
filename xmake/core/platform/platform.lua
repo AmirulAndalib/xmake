@@ -27,19 +27,22 @@ local os             = require("base/os")
 local path           = require("base/path")
 local utils          = require("base/utils")
 local table          = require("base/table")
+local global         = require("base/global")
 local interpreter    = require("base/interpreter")
 local toolchain      = require("tool/toolchain")
 local memcache       = require("cache/memcache")
 local sandbox        = require("sandbox/sandbox")
 local config         = require("project/config")
-local global         = require("base/global")
+local scheduler      = require("sandbox/modules/import/core/base/scheduler")
 
 -- new an instance
-function _instance.new(name, arch, info)
+function _instance.new(name, info, opt)
+    opt = opt or{}
     local instance    = table.inherit(_instance)
     instance._NAME    = name
-    instance._ARCH    = arch
     instance._INFO    = info
+    instance._ARCH    = opt.arch
+    instance._IS_HOST = opt.host or false
     return instance
 end
 
@@ -51,6 +54,11 @@ function _instance:_memcache()
         self._MEMCACHE = cache
     end
     return cache
+end
+
+-- the toolchains cache key for names
+function _instance:_toolchains_key()
+    return "__toolchains_" .. self:name() .. "_" .. self:arch() .. (self:is_host() and "_host" or "")
 end
 
 -- get platform name
@@ -71,6 +79,11 @@ function _instance:arch_set(arch)
         platform._PLATFORMS[self:name() .. "_" .. arch] = self
         self._ARCH = arch
     end
+end
+
+-- is host platform, it will use the host toolchain
+function _instance:is_host()
+    return self._IS_HOST
 end
 
 -- set the value to the platform configuration
@@ -156,13 +169,14 @@ function _instance:toolchains(opt)
         local names = nil
         toolchains = {}
         if not (opt and opt.all) then
-            names = config.get("__toolchains_" .. self:name() .. "_" .. self:arch())
+            names = config.get(self:_toolchains_key())
         end
         if not names then
             -- get the given toolchain
-            local toolchain_given = config.get("toolchain")
+            local toolchain_given = config.get(self:is_host() and "toolchain_host" or "toolchain")
             if toolchain_given then
-                local toolchain_inst, errors = toolchain.load(toolchain_given, {plat = self:name(), arch = self:arch()})
+                local toolchain_inst, errors = toolchain.load(toolchain_given, {
+                    plat = self:name(), arch = self:arch()})
                 -- attempt to load toolchain from project
                 if not toolchain_inst and platform._project() then
                     toolchain_inst = platform._project().toolchain(toolchain_given)
@@ -181,7 +195,8 @@ function _instance:toolchains(opt)
         end
         if names then
             for _, name in ipairs(table.wrap(names)) do
-                local toolchain_inst, errors = toolchain.load(name, {plat = self:name(), arch = self:arch()})
+                local toolchain_inst, errors = toolchain.load(name, {
+                    plat = self:name(), arch = self:arch()})
                 -- attempt to load toolchain from project
                 if not toolchain_inst and platform._project() then
                     toolchain_inst = platform._project().toolchain(name)
@@ -189,7 +204,10 @@ function _instance:toolchains(opt)
                 if not toolchain_inst then
                     os.raise(errors)
                 end
-                table.insert(toolchains, toolchain_inst)
+                -- ignore cross toolchains for the host platform:w
+                if (self:is_host() and not toolchain_inst:is_cross()) or not self:is_host() then
+                    table.insert(toolchains, toolchain_inst)
+                end
             end
         end
         self:_memcache():set("toolchains", toolchains)
@@ -234,8 +252,15 @@ end
 
 -- do check
 function _instance:check()
+    -- @see https://github.com/xmake-io/xmake/issues/4645#issuecomment-2201036943
+    -- @note avoid check it in the same time leading to deadlock if running in the coroutine
+    local lockname = tostring(self)
+    scheduler.co_lock(lockname)
+
+    -- this platform has been check?
     local checked = self:_memcache():get("checked")
     if checked ~= nil then
+        scheduler.co_unlock(lockname)
         return checked
     end
 
@@ -261,12 +286,14 @@ function _instance:check()
     end
     if #toolchains == 0 then
         self:_memcache():set("checked", false)
+        scheduler.co_unlock(lockname)
         return false, "toolchains not found!"
     end
 
     -- save valid toolchains
-    config.set("__toolchains_" .. self:name() .. "_" .. self:arch(), toolchains_valid)
+    config.set(self:_toolchains_key(), toolchains_valid)
     self:_memcache():set("checked", true)
+    scheduler.co_unlock(lockname)
     return true
 end
 
@@ -275,7 +302,8 @@ function _instance:formats()
     local formats = self._FORMATS
     if not formats then
         for _, toolchain_inst in ipairs(self:toolchains()) do
-            formats = toolchain_inst:get("formats")
+            -- @note we can only get formats from set_formats in toolchain description.
+            formats = toolchain_inst:get("formats", {load = false})
             if formats then
                 break
             end
@@ -394,14 +422,16 @@ function platform.add_directories(...)
 end
 
 -- load the given platform
-function platform.load(plat, arch)
-
-    -- get platform name
+function platform.load(plat, arch, opt)
+    opt = opt or {}
     plat = plat or config.get("plat") or os.host()
     arch = arch or config.get("arch") or os.arch()
 
     -- get cache key
     local cachekey = plat .. "_" .. arch
+    if opt.host then
+        cachekey = cachekey .. "_host"
+    end
 
     -- get it directly from cache dirst
     platform._PLATFORMS = platform._PLATFORMS or {}
@@ -412,8 +442,6 @@ function platform.load(plat, arch)
     -- find the platform script path
     local scriptpath = nil
     for _, dir in ipairs(platform.directories()) do
-
-        -- find this directory
         scriptpath = path.join(dir, plat, "xmake.lua")
         if os.isfile(scriptpath) then
             break
@@ -456,14 +484,14 @@ function platform.load(plat, arch)
     end
 
     -- save instance to the cache
-    local instance = _instance.new(plat, arch, result)
+    local instance = _instance.new(plat, result, {arch = arch, host = opt.host})
     platform._PLATFORMS[cachekey] = instance
     return instance
 end
 
 -- get the given platform configuration
-function platform.get(name, plat, arch)
-    local instance, errors = platform.load(plat, arch)
+function platform.get(name, plat, arch, opt)
+    local instance, errors = platform.load(plat, arch, opt)
     if instance then
         return instance:get(name)
     else
@@ -475,8 +503,8 @@ end
 --
 -- e.g. cc, cxx, mm, mxx, as, ar, ld, sh, ..
 --
-function platform.tool(toolkind, plat, arch)
-    local instance, errors = platform.load(plat, arch)
+function platform.tool(toolkind, plat, arch, opt)
+    local instance, errors = platform.load(plat, arch, opt)
     if instance then
         return instance:tool(toolkind)
     else
@@ -485,8 +513,8 @@ function platform.tool(toolkind, plat, arch)
 end
 
 -- get the given tool configuration
-function platform.toolconfig(name, plat, arch)
-    local instance, errors = platform.load(plat, arch)
+function platform.toolconfig(name, plat, arch, opt)
+    local instance, errors = platform.load(plat, arch, opt)
     if instance then
         return instance:toolconfig(name)
     else
@@ -550,8 +578,8 @@ function platform.archs(plat, arch)
     return platform.get("archs", plat, arch)
 end
 
--- get the format of the given target kind for platform
-function platform.format(targetkind, plat, arch)
+-- get the format of the given kind for platform
+function platform.format(kind, plat, arch)
 
     -- get platform instance
     local instance, errors = platform.load(plat, arch)
@@ -562,7 +590,7 @@ function platform.format(targetkind, plat, arch)
     -- get formats
     local formats = instance:formats()
     if formats then
-        return formats[targetkind]
+        return formats[kind]
     end
 end
 

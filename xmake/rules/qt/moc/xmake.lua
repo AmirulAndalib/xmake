@@ -23,8 +23,6 @@ rule("qt.moc")
     add_deps("qt.ui", {order = true})
     set_extensions(".h", ".hpp")
     before_buildcmd_file(function (target, batchcmds, sourcefile, opt)
-
-        -- imports
         import("core.tool.compiler")
 
         -- get moc
@@ -61,10 +59,10 @@ rule("qt.moc")
         -- get values from target
         -- @see https://github.com/xmake-io/xmake/issues/3930
         local function _get_values_from_target(target, name)
-            local values = table.wrap(target:get(name))
-            table.join2(values, target:get_from_opts(name))
-            table.join2(values, target:get_from_pkgs(name))
-            table.join2(values, target:get_from_deps(name, {interface = true}))
+            local values = {}
+            for _, value in ipairs((target:get_from(name, "*"))) do
+                table.join2(values, value)
+            end
             return table.unique(values)
         end
 
@@ -109,13 +107,15 @@ rule("qt.moc")
                     break
                 end
             end
+            batchcmds:set_depmtime(os.mtime(sourcefile_moc))
+            batchcmds:set_depcache(target:dependfile(sourcefile_moc))
         else
             -- compile c++ source file for moc
             batchcmds:compile(sourcefile_moc, objectfile)
+            batchcmds:set_depmtime(os.mtime(objectfile))
+            batchcmds:set_depcache(target:dependfile(objectfile))
         end
 
         -- add deps
         batchcmds:add_depfiles(sourcefile)
-        batchcmds:set_depmtime(os.mtime(objectfile))
-        batchcmds:set_depcache(target:dependfile(objectfile))
     end)

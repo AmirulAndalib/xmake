@@ -11,7 +11,7 @@ param (
 )
 
 & {
-    $LastRelease = "v2.8.3"
+    $LastRelease = "v2.9.7"
     $ErrorActionPreference = 'Stop'
 
     function writeErrorTip($msg) {
@@ -38,7 +38,7 @@ param (
         throw 'Unsupported platform'
     }
 
-    $temppath = ($env:TMP, $env:TEMP, "$(Get-Location)" -ne $null)[0]
+    $temppath = ([System.IO.Path]::GetTempPath(), $env:TMP, $env:TEMP, "$(Get-Location)" -ne $null)[0]
     [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
 
     if ($null -eq $installdir -or $installdir -match '^\s*$') {

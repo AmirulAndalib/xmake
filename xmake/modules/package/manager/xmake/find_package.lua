@@ -163,9 +163,19 @@ function _find_package_from_repo(name, opt)
         end
     end
     if opt.plat == "windows" or opt.plat == "mingw" then
-        for _, file in ipairs(os.files(path.join(installdir, "bin", "*.dll"))) do
-            result.shared = true
-            table.insert(libfiles, file)
+        local bindirs = opt.bindirs or "bin"
+        for _, bindir in ipairs(bindirs) do
+            for _, file in ipairs(os.files(path.join(installdir, bindir, "*.dll"))) do
+                result.shared = true
+                table.insert(libfiles, file)
+            end
+        end
+        -- @see https://github.com/xmake-io/xmake/issues/5325#issuecomment-2242513463
+        if not result.shared then
+            for _, file in ipairs(os.files(path.join(installdir, "**.dll"))) do
+                result.shared = true
+                table.insert(libfiles, file)
+            end
         end
     end
 
@@ -245,6 +255,7 @@ function _find_package_from_repo(name, opt)
     -- get version and license
     result.version = manifest.version or path.filename(path.directory(path.directory(manifest_file)))
     result.license = manifest.license
+    result.extras  = manifest.extras
     return result
 end
 
@@ -352,5 +363,6 @@ function main(name, opt)
     if not result and opt.packagedirs then
         result = _find_package_from_packagedirs(name, opt)
     end
+
     return result
 end

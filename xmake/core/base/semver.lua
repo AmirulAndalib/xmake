@@ -28,8 +28,6 @@ local string    = require("base/string")
 
 -- get the version info
 function _instance:get(name)
-
-    -- get it from info first
     local value = self._INFO[name]
     if value ~= nil then
         return value
@@ -152,17 +150,29 @@ end
 
 -- v1 == v2?
 function _instance:__eq(version)
-    return self:eq(version)
+    if type(self) == "string" then
+        return version:eq(self)
+    else
+        return self:eq(version)
+    end
 end
 
 -- v1 < v2?
 function _instance:__lt(version)
-    return self:lt(version)
+    if type(self) == "string" then
+        return version:gt(self)
+    else
+        return self:lt(version)
+    end
 end
 
 -- v1 <= v2?
 function _instance:__le(version)
-    return self:le(version)
+    if type(self) == "string" then
+        return version:ge(self)
+    else
+        return self:le(version)
+    end
 end
 
 -- get the raw version string

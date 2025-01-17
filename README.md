@@ -1,6 +1,6 @@
 <div align="center">
   <a href="https://xmake.io">
-    <img width="160" heigth="160" src="https://tboox.org/static/img/xmake/logo256c.png">
+    <img width="160" height="160" src="https://tboox.org/static/img/xmake/logo256c.png">
   </a>
 
   <h1>xmake</h1>
@@ -53,7 +53,7 @@ Support this project by [becoming a sponsor](https://xmake.io/#/about/sponsor). 
 
 ## Technical support
 
-You can also consider sponsoring us to get extra technical support services via the [Github sponsor program](https://github.com/sponsors/waruqi). If you do, you can get access to the [xmake-io/technical-support](https://github.com/xmake-io/technical-support) repository, which has the following bennefits:
+You can also consider sponsoring us to get extra technical support services via the [Github sponsor program](https://github.com/sponsors/waruqi). If you do, you can get access to the [xmake-io/technical-support](https://github.com/xmake-io/technical-support) repository, which has the following benefits:
 
 - [X] Handling Issues with higher priority
 - [X] One-to-one technical consulting service
@@ -119,7 +119,7 @@ target("console")
 
 Creates a new target `console` of kind `binary`, and adds all the files ending in `.c` in the `src` directory.
 
-## Package dependences
+## Package dependencies
 
 ```lua
 add_requires("tbox 1.6.*", "zlib", "libpng ~1.6")
@@ -133,7 +133,7 @@ The official xmake package repository exists at: [xmake-repo](https://github.com
 <img src="https://github.com/xmake-io/xmake-docs/raw/master/assets/img/index/package.gif" width="650px" />
 </p>
 
-## Commandline interface reference
+## Command line interface reference
 
 The below assumes you are currently in the project's root directory.
 
@@ -180,69 +180,73 @@ $ xmake f --menu
 
 ## Supported platforms
 
-* Windows (x86, x64)
+* Windows (x86, x64, arm, arm64, arm64ec)
 * macOS (i386, x86_64, arm64)
-* Linux (i386, x86_64, cross-toolchains ..)
+* Linux (i386, x86_64, arm, arm64, riscv, mips, 390x, sh4 ...)
 * *BSD (i386, x86_64)
 * Android (x86, x86_64, armeabi, armeabi-v7a, arm64-v8a)
 * iOS (armv7, armv7s, arm64, i386, x86_64)
 * WatchOS (armv7k, i386)
 * AppleTVOS (armv7, arm64, i386, x86_64)
+* AppleXROS (arm64, x86_64)
 * MSYS (i386, x86_64)
 * MinGW (i386, x86_64, arm, arm64)
 * Cygwin (i386, x86_64)
-* Wasm (wasm32)
+* Wasm (wasm32, wasm64)
+* Haiku (i386, x86_64)
+* Harmony (x86_64, armeabi-v7a, arm64-v8a)
 * Cross (cross-toolchains ..)
 
 ## Supported toolchains
 
-### IDE-Tied
-
-* Xcode
-* MSVC (Microsoft Visual C compiler)
-* Android NDK
-
-### Languages
-
-* Zig
-* Go(lang)
-* Swift
-* Nim
-* Rust
-* GCC (GNU Compiler Collection)
-* Clang
-* TinyCC
-* icc (Intel C Compiler)
-* icpc (Intel C++ Compiler)
-* icx (Intel LLVM C/C++ Compiler)
-* Clang-CL (Clang Compatability with MSVC)
-* DPC++ (Intel LLVM C++ Compiler using SYCL)
-* MinGW (GNU for Windows)
-* C51 (Keil C Compiler for the 8051)
-* GNU-RM (GNU Arm Embedded Toolchain)
-* ArmCC (Keil C Compiler for Keil MKD Version 5)
-* Circle (New C++20 compiler)
-* WASI (C/C++ WebAssembly Toolchain)
-* ArmClang (Version 6 of the Keil MDK)
-* SDCC (Small Device C Compiler)
-* GDC (GNU D Compiler)
-* LDC (LLVM D Compiler)
-* DMD (Dlang)
-* FPC (Free Pascal Programming Language Compiler)
-* GFortran (GNU Fortran Compiler)
-* Ifort (Intel Fortran Compiler)
-* CUDA (nvcc, nvc, nvc++, nvfortran)
-* Emscripten
-* LLVM
-* Icarus Verilog
-* Verilator (SystemVerilog simulator and lint system)
-
-### Assemblers
-
-* FASM
-* NASM
-* YASM
-* MASM32 (Microsoft Macro Assembler 32-bit SDK)
+```bash
+$ xmake show -l toolchains
+xcode         Xcode IDE
+msvc          Microsoft Visual C/C++ Compiler
+clang-cl      LLVM Clang C/C++ Compiler compatible with msvc
+yasm          The Yasm Modular Assembler
+clang         A C language family frontend for LLVM
+go            Go Programming Language Compiler
+dlang         D Programming Language Compiler (Auto)
+dmd           D Programming Language Compiler
+ldc           The LLVM-based D Compiler
+gdc           The GNU D Compiler (GDC)
+gfortran      GNU Fortran Programming Language Compiler
+zig           Zig Programming Language Compiler
+sdcc          Small Device C Compiler
+cuda          CUDA Toolkit (nvcc, nvc, nvc++, nvfortran)
+ndk           Android NDK
+rust          Rust Programming Language Compiler
+swift         Swift Programming Language Compiler
+llvm          A collection of modular and reusable compiler and toolchain technologies
+cross         Common cross compilation toolchain
+nasm          NASM Assembler
+gcc           GNU Compiler Collection
+mingw         Minimalist GNU for Windows
+gnu-rm        GNU Arm Embedded Toolchain
+envs          Environment variables toolchain
+fasm          Flat Assembler
+tinycc        Tiny C Compiler
+emcc          A toolchain for compiling to asm.js and WebAssembly
+icc           Intel C/C++ Compiler
+ifort         Intel Fortran Compiler
+ifx           Intel LLVM Fortran Compiler
+muslcc        The musl-based cross-compilation toolchain
+fpc           Free Pascal Programming Language Compiler
+wasi          WASI-enabled WebAssembly C/C++ toolchain
+nim           Nim Programming Language Compiler
+circle        A new C++20 compiler
+armcc         ARM Compiler Version 5 of Keil MDK
+armclang      ARM Compiler Version 6 of Keil MDK
+c51           Keil development tools for the 8051 Microcontroller Architecture
+icx           Intel LLVM C/C++ Compiler
+dpcpp         Intel LLVM C++ Compiler for data parallel programming model based on Khronos SYCL
+masm32        The MASM32 SDK
+iverilog      Icarus Verilog
+verilator     Verilator open-source SystemVerilog simulator and lint system
+cosmocc       build-once run-anywhere
+hdk           Harmony SDK
+```
 
 ## Supported languages
 
@@ -686,4 +690,7 @@ This project exists thanks to all the people who have [contributed](CONTRIBUTING
 * [uael](https://github.com/uael): Provide the semantic versioning library [sv](https://github.com/uael/sv)
 * [OpportunityLiu](https://github.com/OpportunityLiu): Improve cuda, tests and ci
 * [xq144](https://github.com/xq114): Improve `xrepo env shell`, and contribute a lot of packages to the [xmake-repo](https://github.com/xmake-io/xmake-repo) repository.
+* [star-hengxing](https://github.com/star-hengxing): Contribute a lot of packages to the [xmake-repo](https://github.com/xmake-io/xmake-repo) repository.
+* [Arthapz](https://github.com/Arthapz): Contribue new C++ Modules implementation.
+* [SirLynix](https://github.com/SirLynix): Contributed many packages and let more people know about xmake.
 * `enderger`: Helped smooth out the edges on the English translation of the README

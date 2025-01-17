@@ -29,6 +29,7 @@ import("core.tool.linker")
 import("core.tool.compiler")
 import("core.language.language")
 import("utils.progress", {alias = "progress_utils"})
+import("utils.binary.rpath", {alias = "rpath_utils"})
 
 -- define module
 local batchcmds = batchcmds or object { _init = {"_TARGET", "_CMDS", "_DEPINFO", "_tip"}}
@@ -59,7 +60,7 @@ function _show(showtext, progress)
                 local split = msg:split(sep, {plain = true, strict = true})
                 cprintf(table.concat(split, "..."))
             end
-            if math.floor(progress) == 100 then
+            if math.floor(progress:percent()) == 100 then
                 print("")
                 _g.showing_without_scroll = false
             else
@@ -140,28 +141,64 @@ end
 function _runcmd_rm(cmd, opt)
     local filepath = cmd.filepath
     if not opt.dryrun then
-        os.tryrm(filepath)
+        os.tryrm(filepath, opt)
+    end
+end
+
+-- run command: os.rmdir
+function _runcmd_rmdir(cmd, opt)
+    local dir = cmd.dir
+    if not opt.dryrun and os.isdir(dir) then
+        os.tryrm(dir, opt)
     end
 end
 
 -- run command: os.cp
 function _runcmd_cp(cmd, opt)
     if not opt.dryrun then
-        os.cp(cmd.srcpath, cmd.dstpath, opt.opt)
+        os.cp(cmd.srcpath, cmd.dstpath, cmd.opt)
     end
 end
 
 -- run command: os.mv
 function _runcmd_mv(cmd, opt)
     if not opt.dryrun then
-        os.mv(cmd.srcpath, cmd.dstpath, opt.opt)
+        os.mv(cmd.srcpath, cmd.dstpath, cmd.opt)
     end
 end
 
 -- run command: os.ln
 function _runcmd_ln(cmd, opt)
     if not opt.dryrun then
-        os.ln(cmd.srcpath, cmd.dstpath, opt.opt)
+        os.ln(cmd.srcpath, cmd.dstpath, cmd.opt)
+    end
+end
+
+-- run command: clean rpath
+function _runcmd_clean_rpath(cmd, opt)
+    if not opt.dryrun then
+        rpath_utils.clean(cmd.filepath, cmd.opt)
+    end
+end
+
+-- run command: insert rpath
+function _runcmd_insert_rpath(cmd, opt)
+    if not opt.dryrun then
+        rpath_utils.insert(cmd.filepath, cmd.rpath, cmd.opt)
+    end
+end
+
+-- run command: remove rpath
+function _runcmd_remove_rpath(cmd, opt)
+    if not opt.dryrun then
+        rpath_utils.remove(cmd.filepath, cmd.rpath, cmd.opt)
+    end
+end
+
+-- run command: change rpath
+function _runcmd_change_rpath(cmd, opt)
+    if not opt.dryrun then
+        rpath_utils.change(cmd.filepath, cmd.rpath_old, cmd.rpath_new, cmd.opt)
     end
 end
 
@@ -172,17 +209,22 @@ function _runcmd(cmd, opt)
     if not maps then
         maps =
         {
-            show   = _runcmd_show,
-            runv   = _runcmd_runv,
-            vrunv  = _runcmd_vrunv,
-            execv  = _runcmd_execv,
-            vexecv = _runcmd_vexecv,
-            mkdir  = _runcmd_mkdir,
-            cd     = _runcmd_cd,
-            rm     = _runcmd_rm,
-            cp     = _runcmd_cp,
-            mv     = _runcmd_mv,
-            ln     = _runcmd_ln
+            show         = _runcmd_show,
+            runv         = _runcmd_runv,
+            vrunv        = _runcmd_vrunv,
+            execv        = _runcmd_execv,
+            vexecv       = _runcmd_vexecv,
+            mkdir        = _runcmd_mkdir,
+            rmdir        = _runcmd_rmdir,
+            cd           = _runcmd_cd,
+            rm           = _runcmd_rm,
+            cp           = _runcmd_cp,
+            mv           = _runcmd_mv,
+            ln           = _runcmd_ln,
+            clean_rpath  = _runcmd_clean_rpath,
+            insert_rpath = _runcmd_insert_rpath,
+            remove_rpath = _runcmd_remove_rpath,
+            change_rpath = _runcmd_change_rpath
         }
         _g.maps = maps
     end
@@ -249,7 +291,7 @@ function batchcmds:compile(sourcefiles, objectfile, opt)
 
     -- load compiler and get compilation command
     local sourcekind = opt.sourcekind
-    if not sourcekind and type(sourcefiles) == "string" or path.instance_of(sourcefiles) then
+    if not sourcekind and (type(sourcefiles) == "string" or path.instance_of(sourcefiles)) then
         sourcekind = language.sourcekind_of(tostring(sourcefiles))
     end
     local compiler_inst = compiler.load(sourcekind, opt)
@@ -275,14 +317,21 @@ function batchcmds:compilev(argv, opt)
     end
 
     -- we need to translate path for the project generator
+    local patterns = {"^([%-/]external:I)(.*)",
+                      "^([%-/]I)(.*)",
+                      "^([%-/]Fp)(.*)",
+                      "^([%-/]Fd)(.*)",
+                      "^([%-/]Yu)(.*)",
+                      "^([%-/]FI)(.*)"}
     for idx, item in ipairs(argv) do
         if type(item) == "string" then
-            if item:startswith("-I") then
-                argv[idx] = path(item:sub(3), function (p) return "-I" .. p end)
-            elseif item:startswith("/I") then
-                argv[idx] = path(item:sub(3), function (p) return "/I" .. p end)
-            elseif item:startswith("-external:I") or item:startswith("/external:I") then
-                argv[idx] = path(item:sub(12), function (p) return "-external:I" .. p end)
+            for _, pattern in ipairs(patterns) do
+                local _, count = item:gsub(pattern, function (prefix, value)
+                    argv[idx] = path(value, function (p) return prefix .. p end)
+                end)
+                if count > 0 then
+                    break
+                end
             end
         end
     end
@@ -311,14 +360,18 @@ function batchcmds:link(objectfiles, targetfile, opt)
     local program, argv = linker_inst:linkargv(objectfiles, path(targetfile), opt)
 
     -- we need to translate path for the project generator
+    local patterns = {"^([%-/]L)(.*)",
+                      "^([%-/]F)(.*)",
+                      "^([%-/]libpath:)(.*)"}
     for idx, item in ipairs(argv) do
         if type(item) == "string" then
-            if item:startswith("-L") then
-                argv[idx] = path(item:sub(3), function (p) return "-L" .. p end)
-            elseif item:startswith("-F") then
-                argv[idx] = path(item:sub(3), function (p) return "-F" .. p end)
-            elseif item:startswith("-libpath:") then
-                argv[idx] = path(item:sub(10), function (p) return "-libpath:" .. p end)
+            for _, pattern in ipairs(patterns) do
+                local _, count = item:gsub(pattern, function (prefix, value)
+                    argv[idx] = path(value, function (p) return prefix .. p end)
+                end)
+                if count > 0 then
+                    break
+                end
             end
         end
     end
@@ -333,9 +386,14 @@ function batchcmds:mkdir(dir)
     table.insert(self:cmds(), {kind = "mkdir", dir = dir})
 end
 
+-- add command: os.rmdir
+function batchcmds:rmdir(dir, opt)
+    table.insert(self:cmds(), {kind = "rmdir", dir = dir, opt = opt})
+end
+
 -- add command: os.rm
-function batchcmds:rm(filepath)
-    table.insert(self:cmds(), {kind = "rm", filepath = filepath})
+function batchcmds:rm(filepath, opt)
+    table.insert(self:cmds(), {kind = "rm", filepath = filepath, opt = opt})
 end
 
 -- add command: os.cp
@@ -362,6 +420,31 @@ end
 function batchcmds:show(format, ...)
     local showtext = string.format(format, ...)
     table.insert(self:cmds(), {kind = "show", showtext = showtext})
+end
+
+-- add command: clean rpath
+function batchcmds:clean_rpath(filepath, opt)
+    table.insert(self:cmds(), {kind = "clean_rpath", filepath = filepath, opt = opt})
+end
+
+-- add command: insert rpath
+function batchcmds:insert_rpath(filepath, rpath, opt)
+    table.insert(self:cmds(), {kind = "insert_rpath", filepath = filepath, rpath = rpath, opt = opt})
+end
+
+-- add command: remove rpath
+function batchcmds:remove_rpath(filepath, rpath, opt)
+    table.insert(self:cmds(), {kind = "remove_rpath", filepath = filepath, rpath = rpath, opt = opt})
+end
+
+-- add command: change rpath
+function batchcmds:change_rpath(filepath, rpath_old, rpath_new, opt)
+    table.insert(self:cmds(), {kind = "change_rpath", filepath = filepath, rpath_old = rpath_old, rpath_new = rpath_new, opt = opt})
+end
+
+-- add raw command for the specific generator or xpack format
+function batchcmds:rawcmd(kind, rawstr)
+    table.insert(self:cmds(), {kind = kind, rawstr = rawstr})
 end
 
 -- add command: show progress
@@ -431,3 +514,4 @@ function new(opt)
     opt = opt or {}
     return batchcmds {_TARGET = opt.target, _CMDS = {}}
 end
+

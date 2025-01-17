@@ -38,6 +38,9 @@ import("utils.archive")
 function _checkout(package, url, sourcedir, opt)
     opt = opt or {}
 
+    -- we need to enable longpaths on windows
+    local longpaths = package:policy("platform.longpaths")
+
     -- use previous source directory if exists
     local packagedir = path.join(sourcedir, package:name())
     if os.isdir(path.join(packagedir, ".git")) and
@@ -50,7 +53,7 @@ function _checkout(package, url, sourcedir, opt)
         -- clean and reset submodules
         if os.isfile(path.join(packagedir, ".gitmodules")) then
             git.submodule.clean({repodir = packagedir, force = true, all = true})
-            git.submodule.reset({repodir = packagedir, hard = true})
+            git.submodule.reset({repodir = packagedir, hard = true, longpaths = longpaths})
         end
         tty.erase_line_to_start().cr()
         return
@@ -71,7 +74,7 @@ function _checkout(package, url, sourcedir, opt)
         git.reset({repodir = localdir, hard = true})
         if os.isfile(path.join(localdir, ".gitmodules")) then
             git.submodule.clean({repodir = localdir, force = true, all = true})
-            git.submodule.reset({repodir = localdir, hard = true})
+            git.submodule.reset({repodir = localdir, hard = true, longpaths = longpaths})
         end
         os.cp(localdir, packagedir)
         tty.erase_line_to_start().cr()
@@ -80,9 +83,6 @@ function _checkout(package, url, sourcedir, opt)
 
     -- remove temporary directory
     os.rm(sourcedir .. ".tmp")
-
-    -- we need to enable longpaths on windows
-    local longpaths = package:policy("platform.longpaths")
 
     -- download package from branches?
     packagedir = path.join(sourcedir .. ".tmp", package:name())
@@ -121,10 +121,11 @@ function _checkout(package, url, sourcedir, opt)
         else
 
             -- clone whole history and tags
-            git.clone(url, {longpaths = longpaths, outputdir = packagedir})
+            -- @see https://github.com/xmake-io/xmake/issues/5507
+            git.clone(url, {treeless = true, checkout = false, longpaths = longpaths, outputdir = packagedir})
 
             -- attempt to checkout the given version
-            git.checkout(revision, {repodir = packagedir})
+            git.checkout(revision, {repodir = packagedir, includes = opt.url_includes})
 
             -- update all submodules
             if os.isfile(path.join(packagedir, ".gitmodules")) and opt.url_submodules ~= false then
@@ -148,6 +149,9 @@ function _download(package, url, sourcedir, opt)
 
     -- get package file
     local packagefile = url_filename(url)
+    if opt.download_only then
+        packagefile = package:name() .. "-" .. package:version_str() .. archive.extension(packagefile)
+    end
 
     -- get sourcehash from the given url
     --
@@ -207,11 +211,17 @@ function _download(package, url, sourcedir, opt)
         end
     end
 
+    -- we do not extract it if we download only it.
+    if opt.download_only then
+        return
+    end
+
     -- extract package file
     local sourcedir_tmp = sourcedir .. ".tmp"
     os.rm(sourcedir_tmp)
     local extension = archive.extension(packagefile)
-    if archive.extract(packagefile, sourcedir_tmp, {excludes = opt.url_excludes}) then
+    local ok = try {function() archive.extract(packagefile, sourcedir_tmp, {excludes = opt.url_excludes}); return true end}
+    if ok then
         -- move to source directory and we skip it to avoid long path issues on windows if only one root directory
         os.rm(sourcedir)
         local filedirs = os.filedirs(path.join(sourcedir_tmp, "*"))
@@ -224,7 +234,9 @@ function _download(package, url, sourcedir, opt)
             os.mv(sourcedir_tmp, sourcedir)
         end
         -- mark this sourcedir as cleanable
-        package:data_set("cleanable_sourcedir", path.absolute(sourcedir))
+        if not package:is_debug() then
+            package:data_set("cleanable_sourcedir", path.absolute(sourcedir))
+        end
     elseif extension and extension ~= "" then
         -- create an empty source directory if do not extract package file
         os.tryrm(sourcedir)
@@ -248,11 +260,7 @@ end
 
 -- download codes from script
 function _download_from_script(package, script, opt)
-
-    -- do download
     script(package, opt)
-
-    -- trace
     tty.erase_line_to_start().cr()
     cprint("${yellow}  => ${clear}download %s .. ${color.success}${text.success}", opt.url)
 end
@@ -277,10 +285,11 @@ function _urls(package)
 end
 
 -- download the given package
-function main(package)
+function main(package, opt)
+    opt = opt or {}
 
     -- get working directory of this package
-    local workdir = package:cachedir()
+    local workdir = opt.outputdir or package:cachedir()
 
     -- ensure the working directory first
     os.mkdir(workdir)
@@ -301,6 +310,7 @@ function main(package)
     for idx, url in ipairs(urls) do
         local url_alias = package:url_alias(url)
         local url_excludes = package:url_excludes(url)
+        local url_includes = package:url_includes(url)
         local url_http_headers = package:url_http_headers(url)
         local url_submodules = package:extraconf("urls", url, "submodules")
 
@@ -331,19 +341,24 @@ function main(package)
                 local script = package:script("download")
                 if script then
                     _download_from_script(package, script, {
+                        download_only = opt.download_only,
                         sourcedir = sourcedir,
                         url = url,
                         url_alias = url_alias,
                         url_excludes = url_excludes,
+                        url_includes = url_includes,
                         url_submodules = url_submodules})
                 elseif git.checkurl(url) then
                     _checkout(package, url, sourcedir, {
                         url_alias = url_alias,
+                        url_includes = url_includes,
                         url_submodules = url_submodules})
                 else
                     _download(package, url, sourcedir, {
+                        download_only = opt.download_only,
                         url_alias = url_alias,
                         url_excludes = url_excludes,
+                        url_includes = url_includes,
                     url_http_headers = url_http_headers})
                 end
                 return true
@@ -403,8 +418,18 @@ function main(package)
             }
         }
 
-        -- ok? break it
-        if ok then break end
+        if ok then
+            -- download only packages, we need not to install it, so we need flush console output
+            if opt.download_only then
+                tty.erase_line_to_start().cr()
+                if git.checkurl(url) then
+                    cprint("${yellow}  => ${clear}clone %s %s .. ${color.success}${text.success}", url, package:version_str())
+                else
+                    cprint("${yellow}  => ${clear}download %s .. ${color.success}${text.success}", url)
+                end
+            end
+            break
+        end
     end
 
     -- unlock this package

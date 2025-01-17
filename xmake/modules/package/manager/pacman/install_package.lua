@@ -22,6 +22,7 @@
 import("core.base.option")
 import("lib.detect.find_tool")
 import("privilege.sudo")
+import("get_package_name")
 
 -- install package
 --
@@ -31,29 +32,23 @@ import("privilege.sudo")
 -- @return      true or false
 --
 function main(name, opt)
-
-    -- init options
     opt = opt or {}
-
-    -- find pacman
     local pacman = find_tool("pacman")
     if not pacman then
         raise("pacman not found!")
     end
 
-    -- for msys2/mingw? mingw-w64-[i686|x86_64]-xxx
-    if opt.plat == "mingw" then
-        name = (opt.arch == "x86_64" and "mingw-w64-x86_64-" or "mingw-w64-i686-") .. name
-    end
+    -- get package name
+    name = get_package_name(name, opt)
 
     -- init argv
-    local argv = {"-Sy", "--noconfirm", "--needed", "--disable-download-timeout", opt.pacman or name}
+    local argv = {"-Sy", "--noconfirm", "--needed", "--disable-download-timeout", name}
     if opt.verbose or option.get("verbose") then
         table.insert(argv, "--verbose")
     end
 
     -- install package directly if the current user is root
-    if is_subhost("msys") or os.isroot() then
+    if is_host("windows") or os.isroot() then
         os.vrunv(pacman.program, argv)
     -- install with administrator permission?
     elseif sudo.has() then

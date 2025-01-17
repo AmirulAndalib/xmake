@@ -25,6 +25,7 @@ import("lib.detect.find_path")
 import("lib.detect.pkgconfig")
 import("core.project.target")
 import("package.manager.find_package")
+import("private.core.base.is_cross")
 
 -- get the root directory of the brew packages
 function _brew_pkg_rootdir()
@@ -56,20 +57,20 @@ function _find_package_from_pkgconfig(name, opt)
     local nameinfo = name:split('/')
     local pcname   = nameinfo[2] or nameinfo[1]
 
-    -- find package from pkg-config/*.pc, attempt to find it from `brew --prefix`/package first
+    -- find package from pkg-config/*.pc,
+    -- but we cannot find it from `brew --prefix`/package, because `brew --prefix` is too slow (> 3s) when it's not found.
     local result = nil
-    local pcfile = find_file(pcname .. ".pc", path.join(brew_pkg_rootdir, nameinfo[1], "*/lib/pkgconfig")) or
-                   find_file(pcname .. ".pc", path.join(brew_pkg_rootdir, nameinfo[1], "*/share/pkgconfig"))
-    if not pcfile then
-        -- attempt to find it from `brew --prefix package`
-        local brew = find_tool("brew")
-        local brew_pkgdir = brew and try {function () return os.iorunv(brew.program, {"--prefix", nameinfo[1]}) end}
-        if brew_pkgdir then
-            brew_pkgdir = brew_pkgdir:trim()
-            pcfile = find_file(pcname .. ".pc", path.join(brew_pkgdir, "lib/pkgconfig")) or
-                     find_file(pcname .. ".pc", path.join(brew_pkgdir, "share/pkgconfig"))
-        end
+    local paths = {}
+    table.insert(paths, path.join(brew_pkg_rootdir, nameinfo[1], "lib/pkgconfig"))
+    table.insert(paths, path.join(brew_pkg_rootdir, nameinfo[1], "share/pkgconfig"))
+    if opt.require_version then
+        table.insert(paths, path.join(brew_pkg_rootdir, nameinfo[1], opt.require_version, "lib/pkgconfig"))
+        table.insert(paths, path.join(brew_pkg_rootdir, nameinfo[1], opt.require_version, "share/pkgconfig"))
+    else
+        table.insert(paths, path.join(brew_pkg_rootdir, nameinfo[1], "*/lib/pkgconfig"))
+        table.insert(paths, path.join(brew_pkg_rootdir, nameinfo[1], "*/share/pkgconfig"))
     end
+    local pcfile = find_file(pcname .. ".pc", paths)
     if pcfile then
         opt.configdirs = path.directory(pcfile)
         result = find_package("pkgconfig::" .. pcname, opt)
@@ -92,9 +93,12 @@ end
 -- @param opt   the options, e.g. {verbose = true, version = "1.12.x")
 --
 function main(name, opt)
+    opt = opt or {}
+    if is_cross(opt.plat, opt.arch) then
+        return
+    end
 
     -- find the prefix directory of brew
-    opt = opt or {}
     local brew_pkg_rootdir = _brew_pkg_rootdir()
     if not brew_pkg_rootdir then
         return

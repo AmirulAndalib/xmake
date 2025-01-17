@@ -29,6 +29,7 @@ import("private.utils.batchcmds")
 import("detect.sdks.find_cuda")
 import("vsfile")
 import("vsutils")
+import("private.utils.toolchain", {alias = "toolchain_utils"})
 
 function _make_dirs(dir, vcxprojdir)
     dir = dir:trim()
@@ -62,16 +63,9 @@ end
 
 -- get toolset version
 function _get_toolset_ver(targetinfo, vsinfo)
-
     -- get toolset version from vs version
-    local toolset_ver = nil
     local vs_toolset = toolchain.load("msvc"):config("vs_toolset") or config.get("vs_toolset")
-    if vs_toolset then
-        local verinfo = vs_toolset:split('%.')
-        if #verinfo >= 2 then
-            toolset_ver = "v" .. verinfo[1] .. (verinfo[2]:sub(1, 1) or "0")
-        end
-    end
+    local toolset_ver = toolchain_utils.get_vs_toolset_ver(vs_toolset)
     if not toolset_ver then
         toolset_ver = vsinfo.toolset_version
     end
@@ -136,6 +130,12 @@ end
 function _split_gpucodes(flag)
     flag = flag:gsub("[%[\"]?(.-)[%]\"]?", "%1")
     return flag:split(",")
+end
+
+-- is module file?
+function _is_modulefile(sourcefile)
+    local extension = path.extension(sourcefile)
+    return extension == ".mpp" or extension == ".mxx" or extension == ".cppm" or extension == ".ixx"
 end
 
 -- make compiling command
@@ -218,6 +218,17 @@ function _make_header(vcxprojfile, vsinfo)
     vcxprojfile:enter("<Project DefaultTargets=\"Build\" ToolsVersion=\"%s.0\" xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\">", assert(vsinfo.project_version))
 end
 
+-- make references
+function _make_references(vcxprojfile, vsinfo, target)
+    vcxprojfile:print("<ItemGroup>")
+    for dep_name, dep_vcxprojfile in pairs(target.deps) do
+        vcxprojfile:print("<ProjectReference Include=\"%s\">", dep_vcxprojfile)
+            vcxprojfile:print("<Project>{%s}</Project>", hash.uuid4(dep_name))
+        vcxprojfile:print("</ProjectReference>")
+    end
+    vcxprojfile:print("</ItemGroup>")
+end
+
 -- make tailer
 function _make_tailer(vcxprojfile, vsinfo, target)
     vcxprojfile:print("<Import Project=\"%$(VCTargetsPath)\\Microsoft.Cpp.targets\" />")
@@ -242,6 +253,7 @@ function _make_configurations(vcxprojfile, vsinfo, target)
         binary = "Application"
     ,   shared = "DynamicLibrary"
     ,   static = "StaticLibrary"
+    ,   moduleonly = "StaticLibrary" -- emulate moduleonly with staticlib
     }
 
     -- make ProjectConfigurations
@@ -307,8 +319,10 @@ function _make_configurations(vcxprojfile, vsinfo, target)
         vcxprojfile:enter("<PropertyGroup Condition=\"\'%$(Configuration)|%$(Platform)\'==\'%s|%s\'\">", targetinfo.mode, targetinfo.arch)
             vcxprojfile:print("<OutDir>%s\\</OutDir>", _make_dirs(targetinfo.targetdir, target.project_dir))
             vcxprojfile:print("<IntDir>%s\\</IntDir>", _make_dirs(targetinfo.objectdir, target.project_dir))
-            vcxprojfile:print("<TargetName>%s</TargetName>", path.basename(targetinfo.targetfile))
-            vcxprojfile:print("<TargetExt>%s</TargetExt>", path.extension(targetinfo.targetfile))
+            if targetinfo.targetfile then 
+                vcxprojfile:print("<TargetName>%s</TargetName>", path.basename(targetinfo.targetfile))
+                vcxprojfile:print("<TargetExt>%s</TargetExt>", path.extension(targetinfo.targetfile))
+            end
 
             if target.kind == "binary" then
                 vcxprojfile:print("<LinkIncremental>true</LinkIncremental>")
@@ -480,11 +494,50 @@ function _make_source_options_cl(vcxprojfile, flags, condition)
         vcxprojfile:print("<CompileAs%s>CompileAsCpp</CompileAs>", condition)
     end
 
+
+    -- make SDLCheck flag: /sdl
+    if flagstr:find("[%-/]sdl") then
+        if flagstr:find("[%-/]sdl%-") then
+            vcxprojfile:print("<SDLCheck%s>false</SDLCheck>", condition)
+        else
+            vcxprojfile:print("<SDLCheck%s>true</SDLCheck>", condition)
+        end
+    end
+
+    -- make RemoveUnreferencedCodeData flag: Zc:inline
+    if flagstr:find("[%-/]Zc:inline") then
+        if flagstr:find("[%-/]Zc:inline%-") then
+            vcxprojfile:print("<RemoveUnreferencedCodeData%s>false</RemoveUnreferencedCodeData>", condition)
+        else
+            vcxprojfile:print("<RemoveUnreferencedCodeData%s>true</RemoveUnreferencedCodeData>", condition)
+        end
+    end
+
+    -- make ExceptionHandling flag:
+    if flagstr:find("[%-/]EH[asc]+%-?") then
+        local args = flagstr:match("[%-/]EH([asc]+%-?)")
+        -- remove the last arg if flag endwith `-`
+        if args and args:endswith("-") then
+            args = args:sub(1, -2)
+        end
+        if args and args:find("a", 1, true) then
+            -- a will overwrite s and c
+            vcxprojfile:print("<ExceptionHandling%s>Async</ExceptionHandling>", condition)
+        elseif args == "sc" or args == "cs" then
+            vcxprojfile:print("<ExceptionHandling%s>Sync</ExceptionHandling>", condition)
+        elseif args == "s" then
+            vcxprojfile:print("<ExceptionHandling%s>SyncCThrow</ExceptionHandling>", condition)
+        else
+            -- if args == "c"
+            -- c is ignored without s or a, do nothing here
+        end
+    end
+
     -- make AdditionalOptions
     local excludes = {
         "Od", "Os", "O0", "O1", "O2", "Ot", "Ox", "W0", "W1", "W2", "W3", "W4", "WX", "Wall", "Zi", "ZI", "Z7", "MT", "MTd", "MD", "MDd", "TP",
         "Fd", "fp", "I", "D", "Gm%-", "Gm", "GR%-", "GR", "MP", "external:W0", "external:W1", "external:W2", "external:W3", "external:W4", "external:templates%-?", "external:I",
-        "std:c11", "std:c17", "std:c%+%+11", "std:c%+%+14", "std:c%+%+17", "std:c%+%+20", "std:c%+%+latest", "nologo", "wd(%d+)"
+        "std:c11", "std:c17", "std:c%+%+11", "std:c%+%+14", "std:c%+%+17", "std:c%+%+20", "std:c%+%+latest", "nologo", "wd(%d+)", "sdl%-?", "Zc:inline%-?", "EH[asc]+%-?"
     }
     local additional_flags = _exclude_flags(flags, excludes)
     if #additional_flags > 0 then
@@ -723,7 +776,7 @@ endlocal &amp; call :xmErrorLevel %errorlevel% &amp; goto :xmDone
 exit /b %1
 :xmDone
 if %errorlevel% neq 0 goto :VCEnd]]
-    vcxprojfile:print("<Command>%s</Command>", cmdstr)
+    vcxprojfile:print("<Command>%s</Command>", cmdstr:replace("<", " 	&lt;"):replace(">", "&gt;"):replace("/Fo ", "/Fo"))
     if suffix == "after" or suffix == "after_link" then
         vcxprojfile:print("</PostBuildEvent>")
     elseif suffix == "before" then
@@ -742,12 +795,12 @@ end
 
 -- make common item
 function _make_common_item(vcxprojfile, vsinfo, target, targetinfo)
-
     -- init the linker kinds
     local linkerkinds =
     {
         binary = "Link"
     ,   static = "Lib"
+    ,   moduleonly = "Lib" -- emulate moduleonly with staticlib
     ,   shared = "Link"
     }
     if not linkerkinds[targetinfo.targetkind] then
@@ -762,6 +815,9 @@ function _make_common_item(vcxprojfile, vsinfo, target, targetinfo)
 
         -- save subsystem
         local subsystem = "Console"
+
+        -- save profile
+        local profile = false
 
         -- make linker flags
         local flags = {}
@@ -783,6 +839,8 @@ function _make_common_item(vcxprojfile, vsinfo, target, targetinfo)
             elseif flag_lower:find("[^%-/].+%.lib") then
                 -- link file
                 table.insert(links, flag)
+            elseif flag_lower:find("[%-/]profile") then
+                profile = true
             else
                 local excluded = false
                 for _, exclude in ipairs(excludes) do
@@ -816,6 +874,9 @@ function _make_common_item(vcxprojfile, vsinfo, target, targetinfo)
 
         -- generate debug infomation?
         if linkerkinds[targetinfo.targetkind] == "Link" then
+
+            -- enable profile?
+            vcxprojfile:print("<Profile>%s</Profile>", tostring(profile))
 
             -- enable debug infomation?
             local debug = false
@@ -892,6 +953,10 @@ function _make_common_item(vcxprojfile, vsinfo, target, targetinfo)
             vcxprojfile:print("<LanguageStandard_C>%s</LanguageStandard_C>", cstandard)
         end
 
+        if targetinfo.has_modules then
+            vcxprojfile:enter("<ScanSourceForModuleDependencies>true</ScanSourceForModuleDependencies>")
+        end
+
         -- use c or c++ precompiled header
         local pcheader = target.pcxxheader or target.pcheader
         if pcheader then
@@ -959,9 +1024,8 @@ function _build_common_items(vsinfo, target)
         for _, sourcebatch in pairs(targetinfo.sourcebatches) do
             local sourcekind = sourcebatch.sourcekind
             local rulename = sourcebatch.rulename
-            if (rulename == "c.build" or rulename == "c++.build" or rulename == "asm.build" or sourcekind == "mrc") then
+            if (rulename == "c.build" or rulename == "c++.build" or rulename == "c++.build.modules" or rulename == "asm.build" or sourcekind == "mrc") then
                 for _, sourcefile in ipairs(sourcebatch.sourcefiles) do
-
                     -- make compiler flags
                     local flags = _make_compflags(sourcefile, targetinfo, target.project_dir)
 
@@ -1028,7 +1092,7 @@ function _build_common_items(vsinfo, target)
                 for _, sourcefile in ipairs(sourcebatch.sourcefiles) do
                     sourceflags[sourcefile] = targetinfo.sourceflags[sourcefile]
                 end
-            elseif rulename == "c.build" or rulename == "c++.build" then -- sourcekind maybe bind multiple rules, e.g. c++modules
+            elseif rulename == "c.build" or rulename == "c++.build" or rulename == "c++.build.modules" then -- sourcekind maybe bind multiple rules, e.g. c++modules
                 for _, sourcefile in ipairs(sourcebatch.sourcefiles) do
                     local flags = targetinfo.sourceflags[sourcefile]
                     local otherflags = {}
@@ -1062,7 +1126,7 @@ function _make_common_items(vcxprojfile, vsinfo, target)
     -- for each mode and arch
     for _, targetinfo in ipairs(target.info) do
         -- make common item
-        _make_common_item(vcxprojfile, vsinfo, target, targetinfo, target.project_dir)
+        _make_common_item(vcxprojfile, vsinfo, target, targetinfo)
     end
 end
 
@@ -1113,6 +1177,11 @@ function _make_source_file_forall(vcxprojfile, vsinfo, target, sourcefile, sourc
 
         -- for *.c/cpp/cu files
         else
+
+            -- compile as c++ modules
+            if _is_modulefile(sourcefile) then
+                vcxprojfile:print("<CompileAs>CompileAsCppModule</CompileAs>")
+            end
 
             -- we need to use different object directory and allow parallel building
             --
@@ -1246,6 +1315,11 @@ function _make_source_file_forspec(vcxprojfile, vsinfo, target, sourcefile, sour
 
         -- for *.c/cpp/cu files
         else
+            -- compile as c++ modules
+            if _is_modulefile(sourcefile) then
+                vcxprojfile:print("<CompileAs>CompileAsCppModule</CompileAs>")
+            end
+
            -- we need to use different object directory and allow parallel building
             --
             -- @see https://github.com/xmake-io/xmake/issues/2016
@@ -1325,6 +1399,19 @@ function _make_source_files(vcxprojfile, vsinfo, target)
                         sourceinfos[sourcefile] = sourceinfos[sourcefile] or {}
                         table.insert(sourceinfos[sourcefile], {targetinfo = targetinfo, mode = targetinfo.mode, arch = targetinfo.arch, sourcekind = sourcekind, objectfile = objectfile, flags = flags, compargv = targetinfo.compargvs[sourcefile]})
                     end
+                elseif rulename == "c++.build.modules" then
+                    local builder_batch = targetinfo.sourcebatches["c++.build.modules.builder"]
+                    table.sort(builder_batch.objectfiles)
+                    local objectfiles = builder_batch.objectfiles
+                    for idx, sourcefile in ipairs(sourcebatch.sourcefiles) do
+                        local is_named_module = table.contains(builder_batch.sourcefiles, sourcefile)
+                        if is_named_module then
+                            local objectfile    = objectfiles[idx]
+                            local flags         = targetinfo.sourceflags[sourcefile]
+                            sourceinfos[sourcefile] = sourceinfos[sourcefile] or {}
+                            table.insert(sourceinfos[sourcefile], {targetinfo = targetinfo, mode = targetinfo.mode, arch = targetinfo.arch, sourcekind = "cxx", objectfile = objectfile, flags = flags, compargv = targetinfo.compargvs[sourcefile]})
+                        end
+                    end
                 end
             end
         end
@@ -1385,6 +1472,9 @@ function make(vsinfo, target)
 
     -- make source files
     _make_source_files(vcxprojfile, vsinfo, target)
+
+    -- make deps references
+    _make_references(vcxprojfile, vsinfo, target)
 
     -- make tailer
     _make_tailer(vcxprojfile, vsinfo, target)

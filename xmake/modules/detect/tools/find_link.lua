@@ -51,7 +51,8 @@ function main(opt)
             --
             -- TODO maybe we can use ml to improve it
         else
-            local cl = assert(find_tool("cl", {envs = opt.envs}))
+            local is_clang_cl = toolchain and toolchain:name() == "clang-cl"
+            local cl = assert(find_tool(is_clang_cl and "clang-cl" or "cl", {envs = opt.envs}))
 
             -- make an stub source file
             local binaryfile = os.tmpfile() .. ".exe"
@@ -59,7 +60,7 @@ function main(opt)
             local sourcefile = os.tmpfile() .. ".c"
 
             -- compile sourcefile first
-            io.writefile(sourcefile, "int main(int argc, char** argv)\n{return 0;}")
+            io.writefile(sourcefile, "int main(int argc, char** argv)\n{return 0;}\n")
             os.runv(cl.program, {"-c", "-Fo" .. objectfile, sourcefile}, {envs = opt.envs})
 
             -- do link

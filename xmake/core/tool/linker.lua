@@ -60,13 +60,10 @@ end
 
 -- add flags from the linker
 function linker:_add_flags_from_linker(flags)
-
-    -- add flags
     local toolkind = self:kind()
     for _, flagkind in ipairs(self:_flagkinds()) do
-
         -- attempt to add special lanugage flags first, e.g. gcldflags, dcarflags
-        table.join2(flags, self:get(toolkind .. 'flags') or self:get(flagkind))
+        table.join2(flags, self:get(toolkind .. "flags") or self:get(flagkind))
     end
 end
 
@@ -91,8 +88,18 @@ function linker._load_tool(targetkind, sourcekinds, target)
             program, toolname, toolchain_info = target:tool(_linkerinfo.linkerkind)
         end
 
+        -- is host?
+        local is_host
+        if target and target.is_host then
+            is_host = target:is_host()
+        end
+
         -- load the linker tool from the linker kind (with cache)
-        linkertool, errors = tool.load(_linkerinfo.linkerkind, {program = program, toolname = toolname, toolchain_info = toolchain_info})
+        linkertool, errors = tool.load(_linkerinfo.linkerkind, {
+            host = is_host,
+            program = program,
+            toolname = toolname,
+            toolchain_info = toolchain_info})
         if linkertool then
             linkerinfo = _linkerinfo
             linkerinfo.program = program
@@ -136,6 +143,7 @@ function linker.load(targetkind, sourcekinds, target)
     local plat = linkertool:plat() or config.plat() or os.host()
     local arch = linkertool:arch() or config.arch() or os.arch()
     local cachekey = targetkind .. "_" .. linkerinfo.linkerkind .. (linkerinfo.program or "") .. plat .. arch
+    cachekey = cachekey .. table.concat(sourcekinds, "") -- @see https://github.com/xmake-io/xmake/issues/5360
 
     -- get it directly from cache dirst
     builder._INSTANCES = builder._INSTANCES or {}

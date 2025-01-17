@@ -206,7 +206,9 @@ function completer:_complete_option_v(options, current, completing)
         local candidates = {}
         if #values > 0 and type(values[1]) == "string" then
             for _, v in ipairs(values) do
-                table.insert(candidates, { value = v, is_complete = true })
+                if v:startswith(completing) then
+                    table.insert(candidates, { value = v, is_complete = true })
+                end
             end
         else
             for _, v in ipairs(values) do
@@ -272,7 +274,7 @@ function completer:_complete_option(options, segs, completing)
         if current_options.project then
             table.insert(args, 2, "--project=" .. current_options.project)
         end
-        os.execv("xmake", args)
+        os.execv(os.programfile(), args)
         return true
     end
 

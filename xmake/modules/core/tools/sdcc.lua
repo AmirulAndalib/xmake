@@ -21,8 +21,9 @@
 -- imports
 import("core.base.option")
 import("core.base.global")
-import("utils.progress")
+import("core.project.policy")
 import("core.language.language")
+import("utils.progress")
 
 -- init it
 function init(self)
@@ -181,16 +182,24 @@ function compargv(self, sourcefile, objectfile, flags)
 end
 
 -- compile the source file
-function compile(self, sourcefile, objectfile, dependinfo, flags)
-
-    -- ensure the object directory
+function compile(self, sourcefile, objectfile, dependinfo, flags, opt)
+    opt = opt or {}
     os.mkdir(path.directory(objectfile))
 
-    -- compile it
+    local depfile = dependinfo and os.tmpfile() .. ".rel" or nil
     try
     {
         function ()
-            local outdata, errdata = os.iorunv(compargv(self, sourcefile, objectfile, flags))
+
+            -- generate includes file
+            local compflags = flags
+            if depfile then
+                compflags = table.join(compflags, "-M")
+            end
+            os.iorunv(compargv(self, sourcefile, depfile, compflags))
+
+            -- do compile
+            outdata, errdata = os.iorunv(compargv(self, sourcefile, objectfile, flags))
             return (outdata or "") .. (errdata or "")
         end,
         catch
@@ -216,7 +225,6 @@ function compile(self, sourcefile, objectfile, dependinfo, flags)
                     errors = table.concat(table.slice(lines, start, start + ((#lines - start > 16) and 16 or (#lines - start))), "\n")
                 end
 
-                -- raise compiling errors
                 raise(errors)
             end
         },
@@ -224,12 +232,22 @@ function compile(self, sourcefile, objectfile, dependinfo, flags)
         {
             function (ok, warnings)
 
-                -- print some warnings
-                if warnings and #warnings > 0 and (option.get("verbose") or option.get("warning") or global.get("build_warning")) then
+                -- show warnings
+                if warnings and #warnings > 0 and policy.build_warnings(opt) then
                     if progress.showing_without_scroll() then
                         print("")
                     end
                     cprint("${color.warning}%s", table.concat(table.slice(warnings:split('\n'), 1, 8), '\n'))
+                end
+
+                -- generate the dependent includes
+                if depfile and os.isfile(depfile) then
+                    if dependinfo then
+                        dependinfo.depfiles_gcc = io.readfile(depfile, {continuation = "\\"})
+                    end
+
+                    -- remove the temporary dependent file
+                    os.tryrm(depfile)
                 end
             end
         }

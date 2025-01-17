@@ -1,6 +1,6 @@
 <div align="center">
   <a href="https://xmake.io/cn">
-    <img width="160" heigth="160" src="https://tboox.org/static/img/xmake/logo256c.png">
+    <img width="160" height="160" src="https://tboox.org/static/img/xmake/logo256c.png">
   </a>
 
   <h1>xmake</h1>
@@ -82,7 +82,7 @@ Xmake ≈ Make/Ninja + CMake/Meson + Vcpkg/Conan + distcc + ccache/sccache
 ```
 
 
-如果你想要了解更多，请参考：[在线文档](https://xmake.io/#/zh-cn/getting_started), [Github](https://github.com/xmake-io/xmake)以及[Gitee](https://gitee.com/tboox/xmake)，同时也欢迎加入我们的 [社区](https://xmake.io/#/zh-ch/about/contact).
+如果你想要了解更多，请参考：[在线文档](https://xmake.io/#/zh-cn/getting_started), [Github](https://github.com/xmake-io/xmake)以及[Gitee](https://gitee.com/tboox/xmake) 和 [GitCode](https://gitcode.com/xmake-io/xmake)，同时也欢迎加入我们的 [社区](https://xmake.io/#/zh-ch/about/contact).
 
 ![](https://github.com/xmake-io/xmake-docs/raw/master/assets/img/index/xmake-basic-render.gif)
 
@@ -241,19 +241,21 @@ $ xmake f --menu
 
 ## 支持平台
 
-* Windows (x86, x64)
+* Windows (x86, x64, arm, arm64, arm64ec)
 * macOS (i386, x86_64, arm64)
-* Linux (i386, x86_64, cross-toolchains ..)
+* Linux (i386, x86_64, arm, arm64, riscv, mips, 390x, sh4 ...)
 * *BSD (i386, x86_64)
 * Android (x86, x86_64, armeabi, armeabi-v7a, arm64-v8a)
 * iOS (armv7, armv7s, arm64, i386, x86_64)
 * WatchOS (armv7k, i386)
 * AppleTVOS (armv7, arm64, i386, x86_64)
+* AppleXROS (arm64, x86_64)
 * MSYS (i386, x86_64)
 * MinGW (i386, x86_64, arm, arm64)
 * Cygwin (i386, x86_64)
-* Wasm (wasm32)
+* Wasm (wasm32, wasm64)
 * Haiku (i386, x86_64)
+* Harmony (x86_64, armeabi-v7a, arm64-v8a)
 * Cross (cross-toolchains ..)
 
 ## 支持工具链
@@ -289,6 +291,7 @@ tinycc        Tiny C Compiler
 emcc          A toolchain for compiling to asm.js and WebAssembly
 icc           Intel C/C++ Compiler
 ifort         Intel Fortran Compiler
+ifx           Intel LLVM Fortran Compiler
 muslcc        The musl-based cross-compilation toolchain
 fpc           Free Pascal Programming Language Compiler
 wasi          WASI-enabled WebAssembly C/C++ toolchain
@@ -302,6 +305,8 @@ dpcpp         Intel LLVM C++ Compiler for data parallel programming model based 
 masm32        The MASM32 SDK
 iverilog      Icarus Verilog
 verilator     Verilator open-source SystemVerilog simulator and lint system
+cosmocc       build-once run-anywhere
+hdk           Harmony SDK
 ```
 
 ## 支持语言
@@ -509,7 +514,7 @@ target("test")
 add_requires("llvm 10.x", {alias = "llvm-10"})
 target("test")
     set_kind("binary")
-    add_files("src/*.c)
+    add_files("src/*.c")
     set_toolchains("llvm@llvm-10")
 ````
 
@@ -521,7 +526,7 @@ target("test")
 add_requires("muslcc")
 target("test")
     set_kind("binary")
-    add_files("src/*.c)
+    add_files("src/*.c")
     set_toolchains("@muslcc")
 ```
 
@@ -675,4 +680,7 @@ with:
 * [uael](https://github.com/uael): 提供语义版本跨平台c库 [sv](https://github.com/uael/sv)。
 * [OpportunityLiu](https://github.com/OpportunityLiu): 改进cuda构建, tests框架和ci。
 * [xq144](https://github.com/xq114): 改进 `xrepo env shell`，并贡献大量包到 [xmake-repo](https://github.com/xmake-io/xmake-repo) 仓库。
+* [star-hengxing](https://github.com/star-hengxing): 贡献大量包到 [xmake-repo](https://github.com/xmake-io/xmake-repo) 仓库。
+* [SirLynix](https://github.com/SirLynix): 贡献了许多的包，并且让更多的人知道和了解 xmake。
+* [Arthapz](https://github.com/Arthapz): 贡献新的 C++ Modules 实现。
 

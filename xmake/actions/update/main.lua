@@ -149,10 +149,10 @@ function _uninstall()
         end
     else
         if os.programdir():startswith("/usr/") then
-            _sudo_v("xmake", {"lua", "rm", os.programdir()})
+            _sudo_v(os.programfile(), {"lua", "rm", os.programdir()})
             for _, f in ipairs({"/usr/local/bin/xmake", "/usr/local/bin/xrepo", "/usr/bin/xmake", "/usr/bin/xrepo"}) do
                 if os.isfile(f) then
-                    _sudo_v("xmake", {"lua", "rm", f})
+                    _sudo_v(os.programfile(), {"lua", "rm", f})
                 end
             end
         else
@@ -318,7 +318,7 @@ function _initialize_shell()
         local profile_fish = "$XMAKE_PROGRAM_DIR/scripts/profile-unix.fish"
         local bridge_command = format([[export XMAKE_ROOTDIR="%s"
 export XMAKE_PROGRAM_DIR="%s"
-export PATH="$XMAKE_ROOTDIR:$PATH"
+# export PATH="$XMAKE_ROOTDIR:$PATH"
 test $FISH_VERSION && test -f "%s" && source "%s" && exit 0
 test -f "%s" && source "%s"
 ]], path.directory(os.programfile()), os.programdir(), profile_fish, profile_fish, profile, profile)
@@ -484,7 +484,7 @@ function main()
                             http.download(url, installerfile)
                         end
                     else
-                        git.clone(url, {depth = 1, recurse_submodules = not script_only, branch = version, outputdir = sourcedir})
+                        git.clone(url, {depth = 1, shallow_submodules = true, recurse_submodules = not script_only, branch = version, outputdir = sourcedir})
                     end
                     return true
                 end,

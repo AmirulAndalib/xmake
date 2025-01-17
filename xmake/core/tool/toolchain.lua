@@ -29,6 +29,7 @@ local utils          = require("base/utils")
 local table          = require("base/table")
 local global         = require("base/global")
 local option         = require("base/option")
+local hashset        = require("base/hashset")
 local scopeinfo      = require("base/scopeinfo")
 local interpreter    = require("base/interpreter")
 local config         = require("project/config")
@@ -41,7 +42,12 @@ local sandbox_module = require("sandbox/modules/import/core/sandbox/module")
 -- new an instance
 function _instance.new(name, info, cachekey, is_builtin, configs)
     local instance       = table.inherit(_instance)
-    instance._NAME       = name
+    local parts = name:split("::", {plain = true})
+    instance._NAME = parts[#parts]
+    table.remove(parts)
+    if #parts > 0 then
+        instance._NAMESPACE = table.concat(parts, "::")
+    end
     instance._INFO       = info
     instance._IS_BUILTIN = is_builtin
     instance._CACHE      = toolchain._localcache()
@@ -65,6 +71,17 @@ end
 -- get toolchain name
 function _instance:name()
     return self._NAME
+end
+
+-- get the namespace
+function _instance:namespace()
+    return self._NAMESPACE
+end
+
+-- get the full name
+function _instance:fullname()
+    local namespace = self:namespace()
+    return namespace and namespace .. "::" .. self:name() or self:name()
 end
 
 -- get toolchain platform
@@ -135,7 +152,8 @@ function _instance:add(name, ...)
 end
 
 -- get the toolchain configuration
-function _instance:get(name)
+function _instance:get(name, opt)
+    opt = opt or {}
 
     -- attempt to get the static configure value
     local value = self:info():get(name)
@@ -144,10 +162,10 @@ function _instance:get(name)
     end
 
     -- lazy loading toolchain
-    self:_load()
-
-    -- get other platform info
-    return self:info():get(name)
+    if opt.load ~= false then
+        self:_load()
+        return self:info():get(name)
+    end
 end
 
 -- get toolchain kind
@@ -155,11 +173,17 @@ function _instance:kind()
     return self:info():get("kind")
 end
 
+-- get toolchain formats, we must set it in description scope
+-- @see https://github.com/xmake-io/xmake/issues/4769
+function _instance:formats()
+    return self:info():get("formats")
+end
+
 -- is cross-compilation toolchain?
 function _instance:is_cross()
     if self:kind() == "cross" then
         return true
-    elseif self:kind() == "standalone" and (self:cross() or self:sdkdir()) then
+    elseif self:kind() == "standalone" and (self:cross() or self:config("sdkdir") or self:info():get("sdkdir")) then
         return true
     end
 end
@@ -201,6 +225,9 @@ end
 
 -- get the program and name of the given tool kind
 function _instance:tool(toolkind)
+    if not self:_is_checked() then
+        utils.warning("we cannot get tool(%s) in toolchain(%s) with %s/%s, because it has been not checked yet!", toolkind, self:name(), self:plat(), self:arch())
+    end
     -- ensure to do load for initializing toolset first
     -- @note we cannot call self:check() here, because it can only be called on config
     self:_load()
@@ -228,7 +255,7 @@ end
 -- get the bin directory
 function _instance:bindir()
     local bindir = self:config("bindir") or config.get("bin") or self:info():get("bindir")
-    if not bindir and self:is_cross() and self:sdkdir() and os.isdir(path.join(self:sdkdir(), "bin")) then
+    if not bindir and self:sdkdir() and os.isdir(path.join(self:sdkdir(), "bin")) then
         bindir = path.join(self:sdkdir(), "bin")
     end
     return bindir
@@ -262,20 +289,25 @@ end
 
 -- do check, we only check it once for all architectures
 function _instance:check()
-    local checkok = true
-    if not self._CHECKED then
+    local checked = self:config("__checked")
+    if checked == nil then
         local on_check = self:_on_check()
         if on_check then
             local ok, results_or_errors = sandbox.load(on_check, self)
             if ok then
-                checkok = results_or_errors
+                checked = results_or_errors
             else
                 os.raise(results_or_errors)
             end
+        else
+            checked = true
         end
-        self._CHECKED = true
+        -- we need to persist this state
+        checked = checked or false
+        self:config_set("__checked", checked)
+        self:configs_save()
     end
-    return checkok
+    return checked
 end
 
 -- do load manually, it will call on_load()
@@ -347,6 +379,9 @@ end
 
 -- do load, @note we need to load it repeatly for each architectures
 function _instance:_load()
+    if not self:_is_checked() then
+        utils.warning("we cannot load toolchain(%s), because it has been not checked yet!", self:name(), self:plat(), self:arch())
+    end
     local info = self:info()
     if not info:get("__loaded") and not info:get("__loading") then
         local on_load = self:_on_load()
@@ -367,6 +402,11 @@ function _instance:_is_loaded()
     return self:info():get("__loaded")
 end
 
+-- is checked?
+function _instance:_is_checked()
+    return self:config("__checked") ~= nil or self:_on_check() == nil
+end
+
 -- get the tool description from the tool kind
 function _instance:_description(toolkind)
     local descriptions = self._DESCRIPTIONS
@@ -381,6 +421,8 @@ function _instance:_description(toolkind)
             ar         = "the static library archiver",
             mrc        = "the windows resource compiler",
             strip      = "the symbols stripper",
+            ranlib     = "the archive index generator",
+            objcopy    = "the GNU objcopy utility",
             dsymutil   = "the symbols generator",
             mm         = "the objc compiler",
             mxx        = "the objc++ compiler",
@@ -567,6 +609,7 @@ function toolchain.apis()
         ,   "toolchain.set_bindir"
         ,   "toolchain.set_sdkdir"
         ,   "toolchain.set_archs"
+        ,   "toolchain.set_runtimes"
         ,   "toolchain.set_homepage"
         ,   "toolchain.set_description"
         }
@@ -698,8 +741,6 @@ function toolchain.load_fromfile(filepath, opt)
     local scope_opt = {interpreter = toolchain._interpreter(), deduplicate = true, enable_filter = true}
     local info = scopeinfo.new("toolchain", fileinfo.info, scope_opt)
     local instance = toolchain.load_withinfo(fileinfo.name, info, opt)
-    -- we need to skip check
-    instance._CHECKED = true
     return instance
 end
 
@@ -790,6 +831,9 @@ function toolchain.toolconfig(toolchains, name, opt)
     local toolconfig = cache:get2(cachekey, name)
     if toolconfig == nil then
         for _, toolchain_inst in ipairs(toolchains) do
+            if not toolchain_inst:_is_checked() then
+                utils.warning("we cannot get toolconfig(%s) in toolchain(%s) with %s/%s, because it has been not checked yet!", name, toolchain_inst:name(), toolchain_inst:plat(), toolchain_inst:arch())
+            end
             local values = toolchain_inst:get(name)
             if values then
                 toolconfig = toolconfig or {}

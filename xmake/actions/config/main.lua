@@ -30,7 +30,7 @@ import("core.cache.localcache")
 import("scangen")
 import("menuconf", {alias = "menuconf_show"})
 import("configfiles", {alias = "generate_configfiles"})
-import("private.action.require.check", {alias = "check_packages"})
+import("private.action.require.register", {alias = "register_packages"})
 import("private.action.require.install", {alias = "install_packages"})
 import("private.service.remote_build.action", {alias = "remote_build_action"})
 
@@ -51,6 +51,7 @@ function _option_filter(name)
     ,   export      = true
     ,   import      = true
     ,   check       = true
+    ,   menu        = true
     }
     return not options[name]
 end
@@ -100,20 +101,23 @@ function _need_check(changed)
 end
 
 -- check target
-function _check_target(target)
-    for _, depname in ipairs(target:get("deps")) do
-        assert(depname ~= target:name(), "the target(%s) cannot depend self!", depname)
-        local deptarget = project.target(depname)
-        assert(deptarget, "unknown target(%s) for %s.deps!", depname, target:name())
-        _check_target(deptarget)
+function _check_target(target, checked_targets)
+    if not checked_targets[target:fullname()] then
+        checked_targets[target:fullname()] = target
+        for _, depname in ipairs(target:get("deps")) do
+            local deptarget = project.target(depname, {namespace = target:namespace()})
+            assert(deptarget, "unknown target(%s) for %s.deps!", depname, target:fullname())
+            _check_target(deptarget, checked_targets)
+        end
     end
 end
 
 -- check targets
 function _check_targets()
     assert(not project.is_loaded(), "project and targets may have been loaded early!")
+    local checked_targets = {}
     for _, target in pairs(project.targets()) do
-        _check_target(target)
+        _check_target(target, checked_targets)
     end
 end
 
@@ -379,13 +383,13 @@ force to build in current directory via run `xmake -P .`]], os.projectdir())
         -- check configs
         _check_configs()
 
-        -- install and update packages
+        -- install and register packages
         local require_enable = option.boolean(option.get("require"))
         if (recheck or require_enable) then
             if require_enable ~= false then
                 install_packages()
             else
-                check_packages()
+                register_packages()
             end
         end
 

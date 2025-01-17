@@ -49,7 +49,7 @@ function menu_options()
         {nil, "show",       "k",  nil, "Only show environment information."  },
         {'f', "configs",    "kv", nil, "Set the given extra package configs.",
                                        "e.g.",
-                                       "    - xrepo env -f \"vs_runtime='MD'\" zlib cmake ..",
+                                       "    - xrepo env -f \"runtimes='MD'\" zlib cmake ..",
                                        "    - xrepo env -f \"regex=true,thread=true\" \"zlib,boost\" cmake .."},
         {nil, "add",        "k",  nil, "Add global environment config.",
                                        "e.g.",
@@ -102,11 +102,11 @@ function _enter_project()
     if not os.isdir(workdir) then
         os.mkdir(workdir)
         os.cd(workdir)
-        os.vrunv("xmake", {"create", "-P", "."})
+        os.vrunv(os.programfile(), {"create", "-P", "."})
     else
         os.cd(workdir)
         os.rm("*")
-        os.vrunv("xmake", {"create", "-P", "."})
+        os.vrunv(os.programfile(), {"create", "-P", "."})
     end
     project.chdir(workdir)
 end
@@ -176,7 +176,7 @@ function _package_addenvs(envs, instance)
     end
 
     -- add run envs, e.g. PATH, LD_LIBRARY_PATH, DYLD_LIBRARY_PATH
-    local installdir = instance:installdir()
+    local installdir = instance:installdir({readonly = true})
     for name, values in pairs(instance:envs()) do
         _addenvs(envs, name, table.unpack(table.wrap(values)))
     end

@@ -1,5 +1,0 @@
-export module duplicate;
-
-export int value() {
-    return 0;
-}

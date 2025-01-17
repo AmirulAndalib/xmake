@@ -28,6 +28,7 @@ import("private.utils.batchcmds")
 import("private.utils.executable_path")
 import("private.utils.rule_groups")
 import("plugins.project.utils.target_cmds", {rootdir = os.programdir()})
+import("actions.test.main", {rootdir = os.programdir(), alias = "test_action"})
 
 -- escape path
 function _escape_path(p)
@@ -60,18 +61,8 @@ function _get_windows_sdk_arguments(target)
     local msvc = target:toolchain("msvc")
     if msvc then
         local envs = msvc:runenvs()
-        local WindowsSdkDir = envs.WindowsSdkDir
-        local WindowsSDKVersion = envs.WindowsSDKVersion
-        if WindowsSdkDir and WindowsSDKVersion then
-            local includedirs = os.dirs(path.join(WindowsSdkDir, "Include", envs.WindowsSDKVersion, "*"))
-            for _, tool in ipairs({"atlmfc", "diasdk"}) do
-                local tool_dir = path.join(WindowsSdkDir, tool, "include")
-                if os.isdir(tool_dir) then
-                    table.insert(includedirs, tool_dir)
-                end
-            end
-
-            for _, dir in ipairs(includedirs) do
+        if envs then
+            for _, dir in ipairs(path.splitenv(envs.INCLUDE)) do
                 table.insert(args, "-imsvc")
                 table.insert(args, dir)
             end
@@ -125,6 +116,13 @@ function _translate_arguments(arguments)
                 local v = arg:sub(3)
                 if v and v:find(' ', 1, true) then
                     arg = f .. "\"" .. v .. "\""
+                end
+            elseif arg:startswith("-ccbin=") then
+                -- @see https://github.com/xmake-io/xmake/issues/4716
+                local f = arg:sub(1, 7)
+                local v = arg:sub(8)
+                if v then
+                    arg = f .. v:gsub("\\\\", "\\")
                 end
             end
         end
@@ -217,7 +215,7 @@ function _add_target_source_commands(jsonfile, target)
         if sourcekind and _sourcebatch_is_built(sourcebatch) then
             for index, sourcefile in ipairs(sourcebatch.sourcefiles) do
                 local objectfile = sourcebatch.objectfiles[index]
-                local arguments = table.join(compiler.compargv(sourcefile, objectfile, {target = target, sourcekind = sourcekind}))
+                local arguments = table.join(compiler.compargv(sourcefile, objectfile, {target = target, sourcekind = sourcekind, rawargs=true}))
                 _make_arguments(jsonfile, arguments, {sourcefile = sourcefile, target = target})
             end
         end
@@ -233,8 +231,8 @@ function _add_target_commands(jsonfile, target)
     -- add before commands
     -- we use irpairs(groups), because the last group that should be given the highest priority.
     local cmds_before = {}
-    target_cmds.get_target_buildcmd(target, cmds_before, "before")
-    target_cmds.get_target_buildcmd_sourcegroups(target, cmds_before, sourcegroups, "before")
+    target_cmds.get_target_buildcmd(target, cmds_before, {suffix = "before"})
+    target_cmds.get_target_buildcmd_sourcegroups(target, cmds_before, sourcegroups, {suffix = "before"})
     -- rule.on_buildcmd_files should also be executed before building the target, as cmake PRE_BUILD does not work.
     target_cmds.get_target_buildcmd_sourcegroups(target, cmds_before, sourcegroups)
     _add_target_custom_commands(jsonfile, target, "before", cmds_before)
@@ -244,8 +242,8 @@ function _add_target_commands(jsonfile, target)
 
     -- add after commands
     local cmds_after = {}
-    target_cmds.get_target_buildcmd_sourcegroups(target, cmds_after, sourcegroups, "after")
-    target_cmds.get_target_buildcmd(target, cmds_after, "after")
+    target_cmds.get_target_buildcmd_sourcegroups(target, cmds_after, sourcegroups, {suffix = "after"})
+    target_cmds.get_target_buildcmd(target, cmds_after, {suffix = "after"})
     _add_target_custom_commands(jsonfile, target, "after", cmds_after)
 end
 
@@ -276,7 +274,15 @@ end
 function _add_targets(jsonfile)
     jsonfile:print("[")
     _g.firstline = true
+
     for _, target in pairs(project.targets()) do
+        if not target:is_phony() then
+            _add_target(jsonfile, target)
+        end
+    end
+    -- https://github.com/xmake-io/xmake/issues/4750
+    for _, test in pairs(test_action.get_tests()) do
+        local target = test.target
         if not target:is_phony() then
             _add_target(jsonfile, target)
         end

@@ -64,7 +64,7 @@ end
 function _check_try_running(flags, opt)
 
     -- make an stub source file
-    local snippet = opt.snippet or "int main(int argc, char** argv)\n{return 0;}"
+    local snippet = opt.snippet or "int main(int argc, char** argv)\n{return 0;}\n"
     local sourcefile = os.tmpfile("cl_has_flags:" .. snippet) .. _get_extension(opt)
     if not os.isfile(sourcefile) then
         io.writefile(sourcefile, snippet)
@@ -74,8 +74,17 @@ function _check_try_running(flags, opt)
     local errors = nil
     return try  {   function ()
                         local tmpdir = os.tmpdir()
-                        local _, errs = os.iorunv(opt.program, table.join("-c", "-nologo", flags, "-Fo" .. os.nuldev(), sourcefile),
+                        local nuldev = os.nuldev()
+                        local tmpfile
+                        if not is_host("windows") then
+                            tmpfile = os.tmpfile()
+                            nuldev = tmpfile
+                        end
+                        local _, errs = os.iorunv(opt.program, table.join("-c", "-nologo", flags, "-Fo" .. nuldev, sourcefile),
                                             {envs = opt.envs, curdir = tmpdir}) -- we need to switch to tmpdir to avoid generating some tmp files, e.g. /Zi -> vc140.pdb
+                        if tmpfile then
+                            os.tryrm(tmpfile)
+                        end
                         if errs and #errs:trim() > 0 then
                             return false, errs
                         end

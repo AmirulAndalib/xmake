@@ -34,9 +34,12 @@ local option         = require("base/option")
 local hashset        = require("base/hashset")
 local scopeinfo      = require("base/scopeinfo")
 local interpreter    = require("base/interpreter")
+local select_script  = require("base/private/select_script")
+local is_cross       = require("base/private/is_cross")
 local memcache       = require("cache/memcache")
 local toolchain      = require("tool/toolchain")
 local compiler       = require("tool/compiler")
+local linker         = require("tool/linker")
 local sandbox        = require("sandbox/sandbox")
 local config         = require("project/config")
 local policy         = require("project/policy")
@@ -53,7 +56,26 @@ local sandbox_module = require("sandbox/modules/import/core/sandbox/module")
 function _instance.new(name, info, opt)
     opt = opt or {}
     local instance = table.inherit(_instance)
-    instance._NAME      = name
+    if name then
+        local parts = name:split("::", {plain = true})
+        local managers = package._memcache():get("managers")
+        if managers == nil and #parts == 2 then
+            managers = hashset.new()
+            for _, dir in ipairs(os.dirs(path.join(os.programdir(), "modules/package/manager/*"))) do
+                managers:insert(path.filename(dir))
+            end
+            package._memcache():set("managers", managers)
+        end
+        if #parts == 2 and managers and managers:has(parts[1]) then
+            instance._NAME = name
+        else
+            instance._NAME = parts[#parts]
+            table.remove(parts)
+            if #parts > 0 then
+                instance._NAMESPACE = table.concat(parts, "::")
+            end
+        end
+    end
     instance._INFO      = info
     instance._REPO      = opt.repo
     instance._SCRIPTDIR = opt.scriptdir and path.absolute(opt.scriptdir)
@@ -70,9 +92,30 @@ function _instance:_memcache()
     return cache
 end
 
--- get the package name
+-- get the package name without namespace
 function _instance:name()
     return self._NAME
+end
+
+-- get the namespace
+function _instance:namespace()
+    return self._NAMESPACE
+end
+
+-- get the full name (with namespace)
+function _instance:fullname()
+    local namespace = self:namespace()
+    return namespace and namespace .. "::" .. self:name() or self:name()
+end
+
+-- get the display name (with namespace and ~label)
+function _instance:displayname()
+    return self._DISPLAYNAME
+end
+
+-- set the display name
+function _instance:displayname_set(displayname)
+    self._DISPLAYNAME = displayname
 end
 
 -- get the type: package
@@ -106,11 +149,26 @@ end
 
 -- set the value to the package info
 function _instance:set(name, ...)
+    if self._SOURCE_INITED then
+        -- we can use set/add to modify urls, .. in on_load() if urls have been inited.
+        -- but we cannot init urls, ... in on_load() if it has been not inited
+        --
+        -- @see https://github.com/xmake-io/xmake/issues/5148
+        -- https://github.com/xmake-io/xmake-repo/pull/4204
+        if self:_sourceset():has(name) and self:get(name) == nil then
+            os.raise("'%s' can only be initied in on_source() or the description scope.", name)
+        end
+    end
     self._INFO:apival_set(name, ...)
 end
 
 -- add the value to the package info
 function _instance:add(name, ...)
+    if self._SOURCE_INITED then
+        if self:_sourceset():has(name) and self:get(name) == nil then
+            os.raise("'%s' can only be initied in on_source() or the description scope.", name)
+        end
+    end
     self._INFO:apival_add(name, ...)
 end
 
@@ -148,8 +206,7 @@ function _instance:plat()
     if self._PLAT then
         return self._PLAT
     end
-    -- @note we uses os.host() instead of them for the binary package
-    if self:is_binary() then
+    if self:is_host() then
         return os.subhost()
     end
     local requireinfo = self:requireinfo()
@@ -164,8 +221,7 @@ function _instance:arch()
     if self._ARCH then
         return self._ARCH
     end
-    -- @note we uses os.arch() instead of them for the binary package
-    if self:is_binary() then
+    if self:is_host() then
         return os.subarch()
     end
     return self:targetarch()
@@ -295,9 +351,17 @@ function _instance:url_version(url)
     return self:extraconf("urls", url, "version")
 end
 
--- get the excludes list of url for the archive extractor, @note need raw url
+-- get the excludes paths of url
+-- @note it supports the path pattern, but it only supports for archiver.
 function _instance:url_excludes(url)
     return self:extraconf("urls", url, "excludes")
+end
+
+-- get the includes paths of url
+-- @note it does not support the path pattern, and it only supports for git url now.
+-- @see https://github.com/xmake-io/xmake/issues/6071
+function _instance:url_includes(url)
+    return self:extraconf("urls", url, "includes")
 end
 
 -- get the http headers of url, @note need raw url
@@ -307,7 +371,7 @@ end
 
 -- set artifacts info
 function _instance:artifacts_set(artifacts_info)
-    local versions = self:get("versions")
+    local versions = self:_versions_list()
     if versions then
         -- backup previous package configuration
         self._ARTIFACTS_BACKUP = {
@@ -383,10 +447,10 @@ function _instance:fallback_build()
                 self:urls_set(artifacts_backup.urls)
             end
             if artifacts_backup.versions then
-                self:set("versions", artifacts_backup.versions)
+                self._INFO:apival_set("versions", artifacts_backup.versions)
             end
             if artifacts_backup.install then
-                self:set("install", artifacts_backup.install)
+                self._INFO:apival_set("install", artifacts_backup.install)
             end
             self._MANIFEST = nil
         end
@@ -415,6 +479,20 @@ end
 -- get plain deps
 function _instance:plaindeps()
     return self._PLAINDEPS
+end
+
+-- get library dep
+function _instance:librarydep(name, opt)
+    local key = "librarydeps_map_" .. ((opt and opt.private) and "private" or "")
+    local librarydeps_map = self:_memcache():get(key)
+    if not librarydeps_map then
+        librarydeps_map = {}
+        for _, dep in ipairs(self:librarydeps()) do
+            librarydeps_map[dep:name()] = dep
+        end
+        self:_memcache():set(key, librarydeps_map)
+    end
+    return librarydeps_map[name]
 end
 
 -- get library deps with correct link order
@@ -467,7 +545,7 @@ end
 
 -- get hash of the source package for the url_alias@version_str
 function _instance:sourcehash(url_alias)
-    local versions    = self:get("versions")
+    local versions    = self:_versions_list()
     local version_str = self:version_str()
     if versions and version_str then
         local sourcehash = nil
@@ -554,6 +632,11 @@ function _instance:is_headeronly()
     return self:is_library() and self:extraconf("kind", "library", "headeronly")
 end
 
+-- is module only?
+function _instance:is_moduleonly()
+    return self:is_library() and self:extraconf("kind", "library", "moduleonly")
+end
+
 -- is top level? user top requires in xmake.lua
 function _instance:is_toplevel()
     local requireinfo = self:requireinfo()
@@ -578,7 +661,16 @@ function _instance:is_fetchonly()
     if project and project.policy("package.fetch_only") then
         return true
     end
-    return self:get("fetch") and not self:get("install")
+    -- only fetch script
+    if self:get("fetch") and not self:get("install") then
+        return true
+    end
+    -- only from system
+    local requireinfo = self:requireinfo()
+    if requireinfo and requireinfo.system then
+        return true
+    end
+    return false
 end
 
 -- is optional package?
@@ -633,7 +725,40 @@ end
 -- is local package?
 -- we will use local installdir and cachedir in current project
 function _instance:is_local()
-    return self:is_source_embed() or self:is_binary_embed() or self:is_thirdparty()
+    return self._IS_LOCAL or self:is_source_embed() or self:is_binary_embed() or self:is_thirdparty()
+end
+
+-- is debug package? (deprecated)
+function _instance:debug()
+    return self:is_debug()
+end
+
+-- is host package?
+--
+-- @note It is different from not is_cross() in that users do not use host packages directly,
+-- they are usually used to build library packages.
+function _instance:is_host()
+    local requireinfo = self:requireinfo()
+    if requireinfo and requireinfo.host then
+        return true
+    end
+    return self:is_binary()
+end
+
+-- is cross-compilation?
+function _instance:is_cross()
+    if self:is_host() then
+        return false
+    end
+    return is_cross(self:plat(), self:arch())
+end
+
+-- mark it as local package
+function _instance:_mark_as_local(is_local)
+    if self:is_local() ~= is_local then
+        self._INSTALLDIR = nil
+        self._IS_LOCAL = is_local
+    end
 end
 
 -- use external includes?
@@ -657,36 +782,6 @@ function _instance:use_external_includes()
         external = true
     end
     return external
-end
-
--- is debug package? (deprecated)
-function _instance:debug()
-    return self:is_debug()
-end
-
--- is cross-compilation?
-function _instance:is_cross()
-    if os.host() == "windows" then
-        local host_arch = os.arch()
-        if self:is_plat("windows") then
-            -- maybe cross-compilation for arm64 on x86/x64
-            if (host_arch == "x86" or host_arch == "x64") and self:is_arch("arm64") then
-                return true
-            -- maybe cross-compilation for x86/64 on arm64
-            elseif host_arch == "arm64" and not self:is_arch("arm64") then
-                return true
-            end
-            return false
-        elseif self:is_plat("mingw") then
-            return false
-        end
-    end
-    if not self:is_plat(os.host()) and not self:is_plat(os.subhost()) then
-        return true
-    end
-    if not self:is_arch(os.arch()) and not self:is_arch(os.subarch()) then
-        return true
-    end
 end
 
 -- get the filelock of the whole package directory
@@ -750,11 +845,22 @@ function _instance:cachedir()
     if not cachedir then
         cachedir = self:get("cachedir")
         if not cachedir then
-            local name = self:name():lower():gsub("::", "_")
+            -- we need to use displayname (with package id) to avoid
+            -- multiple processes accessing it at the same time.
+            --
+            -- @see https://github.com/libbpf/libbpf-bootstrap/pull/259#issuecomment-1994914188
+            --
+            -- e.g.
+            --
+            -- lock elfutils#1 /home/runner/.xmake/cache/packages/2403/e/elfutils/0.189
+            -- lock elfutils /home/runner/.xmake/cache/packages/2403/e/elfutils/0.189
+            -- package(elfutils) is being accessed by other processes, please wait!
+            --
+            local name = self:displayname():lower():gsub("::", "_"):gsub("#", "_")
             local version_str = self:version_str()
-            if self:is_thirdparty() then
-                -- strip `>= <=`
-                version_str = version_str:gsub("[>=<]", "")
+            -- strip invalid characters on windows, e.g. `>= <=`
+            if os.is_host("windows") then
+                version_str = version_str:gsub("[>=<|%*]", "")
             end
             if self:is_local() then
                 cachedir = path.join(config.buildir({absolute = true}), ".packages", name:sub(1, 1):lower(), name, version_str, "cache")
@@ -781,9 +887,9 @@ function _instance:installdir(...)
             end
             local version_str = self:version_str()
             if version_str then
-                if self:is_thirdparty() then
-                    -- strip `>= <=`
-                    version_str = version_str:gsub("[>=<]", "")
+                -- strip invalid characters on windows, e.g. `>= <=`
+                if os.is_host("windows") then
+                    version_str = version_str:gsub("[>=<|%*]", "")
                 end
                 installdir = path.join(installdir, version_str)
             end
@@ -878,6 +984,7 @@ function _instance:manifest_save()
     manifest.mode        = self:mode()
     manifest.configs     = self:configs()
     manifest.envs        = self:_rawenvs()
+    manifest.pathenvs    = self:_pathenvs():to_array()
 
     -- save enabled library deps
     if self:librarydeps() then
@@ -890,10 +997,10 @@ function _instance:manifest_save()
     end
 
     -- save deps
-    if self:deps() then
+    if self:librarydeps() then
         manifest.deps = {}
-        for name, dep in pairs(self:deps()) do
-            manifest.deps[name] = {
+        for _, dep in ipairs(self:librarydeps()) do
+            manifest.deps[dep:name()] = {
                 version = dep:version_str(),
                 buildhash = dep:buildhash()
             }
@@ -902,31 +1009,38 @@ function _instance:manifest_save()
 
     -- save global variables and component variables
     local vars
+    local extras
     local components
     local apis = language.apis()
-    for _, apiname in ipairs(table.join(apis.values, apis.paths)) do
+    for _, apiname in ipairs(table.join(apis.values, apis.paths, apis.groups)) do
         if apiname:startswith("package.add_") or apiname:startswith("package.set_")  then
             local name = apiname:sub(13)
-            local value = self:get(name)
-            if value ~= nil then
+            local values = self:get(name)
+            if values ~= nil then
                 vars = vars or {}
-                vars[name] = value
+                vars[name] = values
+                local extra = self:extraconf(name)
+                if extra then
+                    extras = extras or {}
+                    extras[name] = extra
+                end
             end
             for _, component_name in ipairs(table.wrap(self:get("components"))) do
                 local comp = self:component(component_name)
                 if comp then
-                    local component_value = comp:get(name)
-                    if component_value ~= nil then
+                    local component_values = comp:get(name)
+                    if component_values ~= nil then
                         components = components or {}
                         components.vars = components.vars or {}
                         components.vars[component_name] = components.vars[component_name] or {}
-                        components.vars[component_name][name] = component_value
+                        components.vars[component_name][name] = component_values
                     end
                 end
             end
         end
     end
     manifest.vars = vars
+    manifest.extras = extras
     manifest.components = components
 
     -- save repository
@@ -957,16 +1071,63 @@ function _instance:manifest_save()
     end
 end
 
+-- get the source configuration set
+function _instance:_sourceset()
+    local sourceset = self._SOURCESET
+    if sourceset == nil then
+        sourceset = hashset.of("urls", "versions", "versionfiles", "configs")
+        self._SOURCESET = sourceset
+    end
+    return sourceset
+end
+
+-- init package source
+function _instance:_init_source()
+    local inited = self._SOURCE_INITED
+    if not inited then
+        local on_source = self:script("source")
+        if on_source then
+            on_source(self)
+        end
+    end
+end
+
+-- load package
+function _instance:_load()
+    self._SOURCE_INITED = true
+    local loaded = self._LOADED
+    if not loaded then
+        local on_load = self:script("load")
+        if on_load then
+            on_load(self)
+        end
+    end
+end
+
+-- mark as loaded package
+function _instance:_mark_as_loaded()
+    self._LOADED = true
+end
+
 -- get the raw environments
 function _instance:_rawenvs()
     local envs = self._RAWENVS
     if not envs then
         envs = {}
-        if self:is_binary() or self:is_plat("windows", "mingw") then -- bin/*.dll for windows
+
+        -- add bin PATH
+        local bindirs = self:get("bindirs")
+        if bindirs then
+            envs.PATH = table.wrap(bindirs)
+        elseif self:is_binary() then
+            envs.PATH = {"bin"}
+        elseif os.host() == "windows" and self:is_plat("windows", "mingw") and not self:is_cross() and self:config("shared") then
+            -- bin/*.dll for windows
             envs.PATH = {"bin"}
         end
+
         -- add LD_LIBRARY_PATH to load *.so directory
-        if os.host() ~= "windows" and self:is_plat(os.host()) and self:is_arch(os.arch()) then
+        if os.host() ~= "windows" and self:is_plat(os.host()) and not self:is_cross() and self:config("shared") then
             envs.LD_LIBRARY_PATH = {"lib"}
             if os.host() == "macosx" then
                 envs.DYLD_LIBRARY_PATH = {"lib"}
@@ -1010,7 +1171,7 @@ function _instance:envs()
                 if path.is_absolute(value) then
                     table.insert(newvalues, value)
                 else
-                    table.insert(newvalues, path.normalize(path.join(self:installdir(), value)))
+                    table.insert(newvalues, path.normalize(path.join(self:installdir({readonly = true}), value)))
                 end
             end
             values = newvalues
@@ -1106,9 +1267,38 @@ function _instance:build_envs(lazy_loading)
     return build_envs
 end
 
+-- get runtimes
+function _instance:runtimes()
+    local runtimes = self:_memcache():get("runtimes")
+    if runtimes == nil then
+        runtimes = self:config("runtimes")
+        if runtimes then
+            local runtimes_current = runtimes:split(",", {plain = true})
+            runtimes = table.unwrap(runtimes_current)
+        end
+        runtimes = runtimes or false
+        self:_memcache():set("runtimes", runtimes)
+    end
+    return runtimes or nil
+end
+
+-- has the given runtime for the current toolchains?
+function _instance:has_runtime(...)
+    local runtimes_set = self:_memcache():get("runtimes_set")
+    if runtimes_set == nil then
+        runtimes_set = hashset.from(table.wrap(self:runtimes()))
+        self:_memcache():set("runtimes_set", runtimes_set)
+    end
+    for _, v in ipairs(table.pack(...)) do
+        if runtimes_set:has(v) then
+            return true
+        end
+    end
+end
+
 -- get the given toolchain
 function _instance:toolchain(name)
-    local toolchains_map = self._TOOLCHAINS_MAP
+    local toolchains_map = self:_memcache():get("toolchains_map")
     if toolchains_map == nil then
         toolchains_map = {}
         local toolchains = self:toolchains()
@@ -1117,7 +1307,10 @@ function _instance:toolchain(name)
                 toolchains_map[toolchain_inst:name()] = toolchain_inst
             end
         end
-        self._TOOLCHAINS_MAP = toolchains_map
+        self:_memcache():set("toolchains_map", toolchains_map)
+    end
+    if not toolchains_map[name] then
+        toolchains_map[name] = toolchain.load(name, {plat = self:plat(), arch = self:arch()})
     end
     return toolchains_map[name]
 end
@@ -1131,6 +1324,7 @@ function _instance:toolchains()
             local toolchain_opt = project and project.extraconf("target.toolchains", name) or {}
             toolchain_opt.plat = self:plat()
             toolchain_opt.arch = self:arch()
+            toolchain_opt.namespace = self:namespace()
             local toolchain_inst, errors = toolchain.load(name, toolchain_opt)
             if not toolchain_inst and project then
                 toolchain_inst = project.toolchain(name, toolchain_opt)
@@ -1149,24 +1343,26 @@ end
 -- get the program and name of the given tool kind
 function _instance:tool(toolkind)
     if self:toolchains() then
-        return toolchain.tool(self:toolchains(), toolkind, {cachekey = "package", plat = self:plat(), arch = self:arch()})
+        local cachekey = "package_" .. tostring(self)
+        return toolchain.tool(self:toolchains(), toolkind, {cachekey = cachekey, plat = self:plat(), arch = self:arch()})
     else
-        return platform.tool(toolkind, self:plat(), self:arch())
+        return platform.tool(toolkind, self:plat(), self:arch(), {host = self:is_host()})
     end
 end
 
 -- get tool configuration from the toolchains
 function _instance:toolconfig(name)
     if self:toolchains() then
-        return toolchain.toolconfig(self:toolchains(), name, {cachekey = "package", plat = self:plat(), arch = self:arch()})
+        local cachekey = "package_" .. tostring(self)
+        return toolchain.toolconfig(self:toolchains(), name, {cachekey = cachekey, plat = self:plat(), arch = self:arch()})
     else
-        return platform.toolconfig(name, self:plat(), self:arch())
+        return platform.toolconfig(name, self:plat(), self:arch(), {host = self:is_host()})
     end
 end
 
--- get the target compiler
+-- get the package compiler
 function _instance:compiler(sourcekind)
-    local compilerinst = self:_memcache():get("compiler")
+    local compilerinst = self:_memcache():get2("compiler", sourcekind)
     if not compilerinst then
         if not sourcekind then
             os.raise("please pass sourcekind to the first argument of package:compiler(), e.g. cc, cxx, as")
@@ -1176,9 +1372,26 @@ function _instance:compiler(sourcekind)
             os.raise(errors)
         end
         compilerinst = instance
-        self:_memcache():set("compiler", compilerinst)
+        self:_memcache():set2("compiler", sourcekind, compilerinst)
     end
     return compilerinst
+end
+
+-- get the package linker
+function _instance:linker(targetkind, sourcekinds)
+    local linkerinst = self:_memcache():get3("linker", targetkind, sourcekinds)
+    if not linkerinst then
+        if not sourcekinds then
+            os.raise("please pass sourcekinds to the second argument of package:linker(), e.g. cc, cxx, as")
+        end
+        local instance, errors = linker.load(targetkind, sourcekinds, self)
+        if not instance then
+            os.raise(errors)
+        end
+        linkerinst = instance
+        self:_memcache():set3("linker", targetkind, sourcekinds, linkerinst)
+    end
+    return linkerinst
 end
 
 -- has the given tool for the current package?
@@ -1226,11 +1439,43 @@ function _instance:originfile_set(filepath)
     self._ORIGINFILE = filepath
 end
 
+-- get versions list
+function _instance:_versions_list()
+    if self._VERSIONS_LIST == nil then
+        local versions = table.wrap(self:get("versions"))
+        local versionfiles = self:get("versionfiles")
+        if versionfiles then
+            for _, versionfile in ipairs(table.wrap(versionfiles)) do
+                if not path.is_absolute(versionfile) then
+                    local subpath = versionfile
+                    versionfile = path.join(self:scriptdir(), subpath)
+                    if not os.isfile(versionfile) then
+                        versionfile = path.join(self:base():scriptdir(), subpath)
+                    end
+                end
+                if os.isfile(versionfile) then
+                    local list = io.readfile(versionfile)
+                    for _, line in ipairs(list:split("\n")) do
+                        local splitinfo = line:split("%s+")
+                        if #splitinfo == 2 then
+                            local version = splitinfo[1]
+                            local shasum = splitinfo[2]
+                            versions[version] = shasum
+                        end
+                    end
+                end
+            end
+        end
+        self._VERSIONS_LIST = versions
+    end
+    return self._VERSIONS_LIST
+end
+
 -- get versions
 function _instance:versions()
     if self._VERSIONS == nil then
         local versions = {}
-        for version, _ in pairs(table.wrap(self:get("versions"))) do
+        for version, _ in pairs(self:_versions_list()) do
             -- remove the url alias prefix if exists
             local pos = version:find(':', 1, true)
             if pos then
@@ -1322,14 +1567,10 @@ function _instance:label()
     return requireinfo and requireinfo.label
 end
 
--- get the display name
-function _instance:displayname()
-    return self._DISPLAYNAME
-end
-
--- set the display name
-function _instance:displayname_set(displayname)
-    self._DISPLAYNAME = displayname
+-- invalidate configs
+function _instance:_invalidate_configs()
+    self._CONFIGS = nil
+    self._CONFIGS_FOR_BUILDHASH = nil
 end
 
 -- get the given configuration value of package
@@ -1338,6 +1579,19 @@ function _instance:config(name)
     local configs = self:configs()
     if configs then
         value = configs[name]
+        -- vs_runtime is deprecated now
+        if name == "vs_runtime" then
+            local runtimes = configs.runtimes
+            if runtimes then
+                for _, item in ipairs(runtimes:split(",")) do
+                    if item:startswith("MT") or item:startswith("MD") then
+                        value = item
+                        break
+                    end
+                end
+            end
+            utils.warning("please use package:runtimes() or package:has_runtime() instead of package:config(\"vs_runtime\")")
+        end
     end
     return value
 end
@@ -1359,10 +1613,15 @@ function _instance:configs()
             configs = {}
             local requireinfo = self:requireinfo()
             local configs_required = requireinfo and requireinfo.configs or {}
+            local configs_overrided = requireinfo and requireinfo.configs_overrided or {}
             for _, name in ipairs(table.wrap(configs_defined)) do
-                local value = configs_required[name]
+                local value = configs_overrided[name] or configs_required[name]
                 if value == nil then
                     value = self:extraconf("configs", name, "default")
+                    -- support for the deprecated vs_runtime in add_configs
+                    if name == "runtimes" and value == nil then
+                        value = self:extraconf("configs", "vs_runtime", "default")
+                    end
                 end
                 configs[name] = value
             end
@@ -1394,12 +1653,17 @@ function _instance:_configs_for_buildhash()
             configs = {}
             local requireinfo = self:requireinfo()
             local configs_required = requireinfo and requireinfo.configs or {}
+            local configs_overrided = requireinfo and requireinfo.configs_overrided or {}
             local ignored_configs_for_buildhash = hashset.from(requireinfo and requireinfo.ignored_configs_for_buildhash or {})
             for _, name in ipairs(table.wrap(configs_defined)) do
                 if not ignored_configs_for_buildhash:has(name) then
-                    local value = configs_required[name]
+                    local value = configs_overrided[name] or configs_required[name]
                     if value == nil then
                         value = self:extraconf("configs", name, "default")
+                        -- support for the deprecated vs_runtime in add_configs
+                        if name == "runtimes" and value == nil then
+                            value = self:extraconf("configs", "vs_runtime", "default")
+                        end
                     end
                     configs[name] = value
                 end
@@ -1412,10 +1676,19 @@ function _instance:_configs_for_buildhash()
     return configs and configs or nil
 end
 
+-- compute the build hash
+function _instance:_compute_buildhash()
+    self._BUILDHASH_PREPRARED = true
+    self:buildhash()
+end
+
 -- get the build hash
 function _instance:buildhash()
     local buildhash = self._BUILDHASH
     if buildhash == nil then
+        if not self._BUILDHASH_PREPRARED then
+            os.raise("package:buildhash() must be called after loading package")
+        end
         local function _get_buildhash(configs, opt)
             opt = opt or {}
             local str = self:plat() .. self:arch()
@@ -1424,6 +1697,15 @@ function _instance:buildhash()
                 str = str .. label
             end
             if configs then
+
+                -- with old vs_runtime configs
+                -- https://github.com/xmake-io/xmake/issues/4477
+                if opt.vs_runtime then
+                    configs = table.clone(configs)
+                    configs.vs_runtime = configs.runtimes
+                    configs.runtimes = nil
+                end
+
                 -- since luajit v2.1, the key order of the table is random and undefined.
                 -- We cannot directly deserialize the table, so the result may be different each time
                 local configs_order = {}
@@ -1461,7 +1743,7 @@ function _instance:buildhash()
                 table.sort(toolchains)
                 str = str .. "_" .. table.concat(toolchains, "_")
             end
-            return hash.uuid4(str):gsub('-', ''):lower()
+            return hash.strhash128(str)
         end
         local function _get_installdir(...)
             local name = self:name():lower():gsub("::", "_")
@@ -1501,6 +1783,16 @@ function _instance:buildhash()
             end
         end
 
+        -- we need to be compatible with the previous xmake version
+        -- with deprecated vs_runtime (< 2.8.7)
+        -- @see https://github.com/xmake-io/xmake/issues/4477
+        if not buildhash then
+            buildhash = _get_buildhash(self:_configs_for_buildhash(), {vs_runtime = true})
+            if not os.isdir(_get_installdir(buildhash)) then
+                buildhash = nil
+            end
+        end
+
         -- get build hash for current version
         if not buildhash then
             buildhash = _get_buildhash(self:_configs_for_buildhash())
@@ -1523,48 +1815,7 @@ function _instance:script(name, generic)
 
     -- get script
     local script = self:get(name)
-    local result = nil
-    if type(script) == "function" then
-        result = script
-    elseif type(script) == "table" then
-
-        -- get plat and arch
-        local plat = self:plat() or ""
-        local arch = self:arch() or ""
-
-        -- match pattern
-        --
-        -- `@linux`
-        -- `@linux|x86_64`
-        -- `@macosx,linux`
-        -- `android@macosx,linux`
-        -- `android|armeabi-v7a@macosx,linux`
-        -- `android|armeabi-v7a@macosx,linux|x86_64`
-        -- `android|armeabi-v7a@linux|x86_64`
-        --
-        for _pattern, _script in pairs(script) do
-            local hosts = {}
-            local hosts_spec = false
-            _pattern = _pattern:gsub("@(.+)", function (v)
-                for _, host in ipairs(v:split(',')) do
-                    hosts[host] = true
-                    hosts_spec = true
-                end
-                return ""
-            end)
-            if not _pattern:startswith("__") and (not hosts_spec or hosts[os.subhost() .. '|' .. os.subarch()] or hosts[os.subhost()])
-            and (_pattern:trim() == "" or (plat .. '|' .. arch):find('^' .. _pattern .. '$') or plat:find('^' .. _pattern .. '$')) then
-                result = _script
-                break
-            end
-        end
-
-        -- get generic script
-        result = result or script["__generic__"] or generic
-    end
-
-    -- only generic script
-    result = result or generic
+    local result = select_script(script, {plat = self:plat(), arch = self:arch()}) or generic
 
     -- imports some modules first
     if result and result ~= generic then
@@ -1594,6 +1845,7 @@ function _instance:_fetch_tool(opt)
             end
         end
     end
+    -- we can disable to fallback fetch if on_fetch return false
     if fetchinfo == nil then
         self._find_tool = self._find_tool or sandbox_module.import("lib.detect.find_tool", {anonymous = true})
         if opt.system then
@@ -1633,10 +1885,13 @@ function _instance:_fetch_library(opt)
     local fetchinfo
     local on_fetch = self:script("fetch")
     if on_fetch then
-        fetchinfo = on_fetch(self, {force = opt.force,
-                                    system = opt.system,
-                                    external = opt.external,
-                                    require_version = opt.require_version})
+        -- we cannot fetch it from system if it's cross-compilation package
+        if not opt.system or (opt.system and not self:is_cross()) then
+            fetchinfo = on_fetch(self, {force = opt.force,
+                                        system = opt.system,
+                                        external = opt.external,
+                                        require_version = opt.require_version})
+        end
         if fetchinfo and opt.require_version and opt.require_version:find(".", 1, true) then
             local version = fetchinfo.version
             if not (version and (version == opt.require_version or semver.satisfies(version, opt.require_version))) then
@@ -1660,6 +1915,8 @@ function _instance:_fetch_library(opt)
                     components_base.sysincludedirs = nil
                 end
             end
+            local package_utils = sandbox_module.import("private.utils.package", {anonymous = true})
+            package_utils.fetchinfo_set_concat(fetchinfo)
         end
         if fetchinfo and option.get("verbose") then
             local reponame = self:repo() and self:repo():name() or ""
@@ -1706,6 +1963,7 @@ function _instance:find_tool(name, opt)
     self._find_tool = self._find_tool or sandbox_module.import("lib.detect.find_tool", {anonymous = true})
     return self._find_tool(name, {cachekey = opt.cachekey or "fetch_package_system",
                                   installdir = self:installdir({readonly = true}),
+                                  bindirs = self:get("bindirs"),
                                   version = true, -- we alway check version
                                   require_version = opt.require_version,
                                   norun = opt.norun,
@@ -1721,21 +1979,35 @@ function _instance:find_package(name, opt)
     if system == nil and not name:startswith("xmake::") then
         system = true -- find system package by default
     end
+    local configs = table.clone(self:configs()) or {}
+    if opt.configs then
+        table.join2(configs, opt.configs)
+    end
+    if configs.runtimes then
+        configs.runtimes = self:runtimes()
+    end
     return self._find_package(name, {
                               force = opt.force,
                               installdir = self:installdir({readonly = true}),
+                              bindirs = self:get("bindirs"),
                               version = true, -- we alway check version
                               require_version = opt.require_version,
                               mode = self:mode(),
                               plat = self:plat(),
                               arch = self:arch(),
-                              configs = table.join(self:configs(), opt.configs),
+                              configs = configs,
                               components = self:components_orderlist(),
                               components_extsources = opt.components_extsources,
                               buildhash = self:buildhash(), -- for xmake package or 3rd package manager, e.g. go:: ..
                               cachekey = opt.cachekey or "fetch_package_system",
                               external = opt.external,
-                              system = system})
+                              system = system,
+                              -- the following options is only for system::find_package
+                              sourcekind = opt.sourcekind,
+                              package = self,
+                              funcs = opt.funcs,
+                              snippets = opt.snippets,
+                              includes = opt.includes})
 end
 
 -- fetch the local package info
@@ -1751,14 +2023,9 @@ function _instance:fetch(opt)
 
     -- attempt to get it from cache
     local fetchinfo = self._FETCHINFO
-    if not opt.force and opt.external == nil and opt.system == nil and fetchinfo then
+    local usecache = opt.external == nil and opt.system == nil
+    if not opt.force and usecache and fetchinfo then
         return fetchinfo
-    end
-
-    -- install only?
-    local project = package._project()
-    if project and project.policy("package.install_only") then
-        return
     end
 
     -- fetch the require version
@@ -1781,12 +2048,35 @@ function _instance:fetch(opt)
         system = nil
     end
 
+    -- install only?
+    local project = package._project()
+    if project and project.policy("package.install_only") then
+        system = false
+    end
+
     -- use sysincludedirs/-isystem instead of -I?
     local external
     if opt.external ~= nil then
         external = opt.external
     else
         external = self:use_external_includes()
+    end
+
+    -- always install to the local project directory?
+    -- @see https://github.com/xmake-io/xmake/pull/4376
+    local install_locally
+    if project and project.policy("package.install_locally") then
+        install_locally = true
+    end
+    if install_locally == nil and self:policy("package.install_locally") then
+        install_locally = true
+    end
+    if not self:is_local() and install_locally and system ~= true then
+        local has_global = os.isfile(self:manifest_file())
+        self:_mark_as_local(true)
+        if has_global and not os.isfile(self:manifest_file()) then
+            self:_mark_as_local(false)
+        end
     end
 
     -- fetch binary tool?
@@ -1819,8 +2109,8 @@ function _instance:fetch(opt)
             end
         end
 
-        -- fetch it from the system and external package sources (disabled for cross-compilation)
-        if not fetchinfo and system ~= false and not self:is_cross() then
+        -- fetch it from the system and external package sources
+        if not fetchinfo and system ~= false then
             fetchinfo = self:_fetch_library({system = true, require_version = require_ver, external = external, force = opt.force})
             if fetchinfo then
                 is_system = true
@@ -1829,7 +2119,9 @@ function _instance:fetch(opt)
     end
 
     -- save to cache
-    self._FETCHINFO = fetchinfo
+    if usecache then
+        self._FETCHINFO = fetchinfo
+    end
 
     -- we need to update the real version if it's system package
     -- @see https://github.com/xmake-io/xmake/issues/3333
@@ -1887,6 +2179,12 @@ function _instance:fetch_librarydeps()
 end
 
 -- get the patches of the current version
+--
+-- @code
+-- add_patches("6.7.6", "https://cdn.kernel.org/pub/linux/kernel/v6.x/patch-6.7.6.xz",
+--    "a394326aa325f8a930a4ce33c69ba7b8b454aef1107a4d3c2a8ae12908615fc4", {reverse = true})
+-- @endcode
+--
 function _instance:patches()
     local patches = self._PATCHES
     if patches == nil then
@@ -1898,7 +2196,8 @@ function _instance:patches()
                 patches = {}
                 patchinfo = table.wrap(patchinfo)
                 for idx = 1, #patchinfo, 2 do
-                    table.insert(patches , {url = patchinfo[idx], sha256 = patchinfo[idx + 1]})
+                    local extra = self:extraconf("patches." .. version_str, patchinfo[idx])
+                    table.insert(patches , {url = patchinfo[idx], sha256 = patchinfo[idx + 1], extra = extra})
                 end
             else
                 -- match semver, e.g add_patches(">=1.0.0", url, sha256)
@@ -1907,7 +2206,8 @@ function _instance:patches()
                         patches = patches or {}
                         patchinfo = table.wrap(patchinfo)
                         for idx = 1, #patchinfo, 2 do
-                            table.insert(patches , {url = patchinfo[idx], sha256 = patchinfo[idx + 1]})
+                            local extra = self:extraconf("patches." .. range, patchinfo[idx])
+                            table.insert(patches , {url = patchinfo[idx], sha256 = patchinfo[idx + 1], extra = extra})
                         end
                     end
                 end
@@ -2132,28 +2432,37 @@ end
 -- generate building configs for has_xxx/check_xxx
 function _instance:_generate_build_configs(configs, opt)
     opt = opt or {}
-    configs = table.join(self:fetch_librarydeps(), configs)
-    if self:is_plat("windows") then
-        local ld = self:build_getenv("ld")
-        local vs_runtime = self:config("vs_runtime")
-        -- since we are ignoring the vs_runtime of the headeronly library,
-        -- we can only get the vs_runtime from the dependency library to detect the link.
-        if self:is_headeronly() and not vs_runtime and self:librarydeps() then
-            for _, dep in ipairs(self:librarydeps()) do
-                if dep:is_plat("windows") and dep:config("vs_runtime") then
-                    vs_runtime = dep:config("vs_runtime")
-                    break
-                end
+    configs = table.join(self:fetch_librarydeps() or {}, configs)
+    -- since we are ignoring the runtimes of the headeronly library,
+    -- we can only get the runtimes from the dependency library to detect the link.
+    local runtimes = self:runtimes()
+    if self:is_headeronly() and not runtimes and self:librarydeps() then
+        for _, dep in ipairs(self:librarydeps()) do
+            if dep:is_plat("windows") and dep:runtimes() then
+                runtimes = dep:runtimes()
+                break
             end
         end
-        if vs_runtime and ld and path.basename(ld:lower()) == "link" then -- for msvc?
-            configs.cxflags = table.wrap(configs.cxflags)
-            table.insert(configs.cxflags, "/" .. vs_runtime)
-            if vs_runtime:startswith("MT") then
-                configs.ldflags = table.wrap(configs.ldflags)
-                table.insert(configs.ldflags, "-nodefaultlib:msvcrt.lib")
-            end
+    end
+    if runtimes then
+        -- @note we need to patch package:sourcekinds(), because it wiil be called nf_runtime for gcc/clang
+        local sourcekind = opt.sourcekind or "cxx"
+        self.sourcekinds = function (self)
+            return sourcekind
         end
+        local compiler = self:compiler(sourcekind)
+        local cxflags = compiler:map_flags("runtime", runtimes, {target = self})
+        configs.cxflags = table.wrap(configs.cxflags)
+        table.insert(configs.cxflags, cxflags)
+
+        local ldflags = self:linker("binary", sourcekind):map_flags("runtime", runtimes, {target = self})
+        configs.ldflags = table.wrap(configs.ldflags)
+        table.insert(configs.ldflags, ldflags)
+
+        local shflags = self:linker("shared", sourcekind):map_flags("runtime", runtimes, {target = self})
+        configs.shflags = table.wrap(configs.shflags)
+        table.insert(configs.shflags, shflags)
+        self.sourcekinds = nil
     end
     if self:config("lto") then
         local configs_lto = self:_generate_lto_configs(opt.sourcekind or "cxx")
@@ -2194,6 +2503,17 @@ function _instance:_generate_build_configs(configs, opt)
         configs.force = {ldflags = configs.ldflags, shflags = configs.shflags}
         configs.ldflags = nil
         configs.shflags = nil
+    end
+
+    -- check links for library
+    if self:is_library() and not self:is_headeronly() and not self:is_moduleonly()
+        and self:exists() then -- we need to skip it if it's in on_check, @see https://github.com/xmake-io/xmake-repo/pull/4834
+        local links = table.wrap(configs.links)
+        local ldflags = table.wrap(configs.ldflags)
+        local frameworks = table.wrap(configs.frameworks)
+        if #links == 0 and #ldflags == 0 and #frameworks == 0 then
+            os.raise("package(%s): links not found!", self:name())
+        end
     end
     return configs
 end
@@ -2319,6 +2639,19 @@ function _instance:has_features(features, opt)
     return sandbox_module.import("core.tool.compiler", {anonymous = true}).has_features(features, opt)
 end
 
+-- check the size of type
+--
+-- @param typename  the typename
+-- @param opt       the argument options, e.g. {includes = "xxx.h", configs = {defines = ""}}
+--
+-- @return          the type size
+--
+function _instance:check_sizeof(typename, opt)
+    opt = opt or {}
+    opt.target = self
+    return sandbox_module.import("lib.detect.check_sizeof", {anonymous = true})(typename, opt)
+end
+
 -- check the given c snippets?
 --
 -- @param snippets  the snippets
@@ -2373,6 +2706,44 @@ function _instance:check_mxxsnippets(snippets, opt)
     opt.target = self
     opt.configs = self:_generate_build_configs(opt.configs, {sourcekind = "mxx"})
     return sandbox_module.import("lib.detect.check_mxxsnippets", {anonymous = true})(snippets, opt)
+end
+
+-- check the given fortran snippets?
+--
+-- @param snippets  the snippets
+-- @param opt       the argument options, e.g. {configs = {defines = ""}, linkerkind = "fc", "cxx" ...}
+--
+-- @return          true or false, errors
+--
+function _instance:check_fcsnippets(snippets, opt)
+    opt = opt or {}
+    opt.target = self
+    opt.configs = self:_generate_build_configs(opt.configs, {sourcekind = "fc"})
+    return sandbox_module.import("lib.detect.check_fcsnippets", {anonymous = true})(snippets, opt)
+end
+
+-- check the given importfiles?
+--
+-- @param names     the import filenames (without .pc/.cmake extension), e.g. pkgconfig::libxml-2.0, cmake::CURL
+-- @param opt       the argument options
+--
+-- @return          true or false, errors
+--
+function _instance:check_importfiles(names, opt)
+    opt = opt or {}
+    if opt.PKG_CONFIG_PATH == nil then
+        local PKG_CONFIG_PATH = {}
+        local linkdirs = table.wrap(self:get("linkdirs") or "lib")
+        local installdir = self:installdir()
+        for _, linkdir in ipairs(linkdirs) do
+            table.insert(PKG_CONFIG_PATH, path.join(installdir, linkdir, "pkgconfig"))
+        end
+        opt.PKG_CONFIG_PATH = PKG_CONFIG_PATH
+    end
+    if opt.CMAKE_PREFIX_PATH == nil then
+        opt.CMAKE_PREFIX_PATH = self:installdir()
+    end
+    return sandbox_module.import("lib.detect.check_importfiles", {anonymous = true})(names or ("pkgconfig::" .. self:name()), opt)
 end
 
 -- the current mode is belong to the given modes?
@@ -2483,12 +2854,14 @@ function package.apis()
         ,   "package.set_arch" -- deprecated
         ,   "package.set_base"
         ,   "package.set_license"
+        ,   "package.set_installtips"
         ,   "package.set_homepage"
         ,   "package.set_description"
         ,   "package.set_parallelize"
         ,   "package.set_sourcedir"
         ,   "package.set_cachedir"
         ,   "package.set_installdir"
+        ,   "package.add_bindirs"
             -- package.add_xxx
         ,   "package.add_deps"
         ,   "package.add_urls"
@@ -2500,8 +2873,10 @@ function package.apis()
     ,   script =
         {
             -- package.on_xxx
-            "package.on_load"
+            "package.on_source"
+        ,   "package.on_load"
         ,   "package.on_fetch"
+        ,   "package.on_check"
         ,   "package.on_download"
         ,   "package.on_install"
         ,   "package.on_test"
@@ -2514,6 +2889,11 @@ function package.apis()
             -- package.add_xxx
         ,   "package.add_patches"
         ,   "package.add_resources"
+        }
+    ,   paths =
+        {
+            -- package.add_xxx
+            "package.add_versionfiles"
         }
     ,   dictionary =
         {
@@ -2583,7 +2963,8 @@ function package.load_from_system(packagename)
         -- on install script
         local on_install = function (pkg)
             local opt = {}
-            opt.configs         = pkg:configs()
+            local configs       = table.clone(pkg:configs()) or {}
+            opt.configs         = configs
             opt.mode            = pkg:is_debug() and "debug" or "release"
             opt.plat            = pkg:plat()
             opt.arch            = pkg:arch()
@@ -2591,11 +2972,14 @@ function package.load_from_system(packagename)
             opt.buildhash       = pkg:buildhash()
             opt.cachedir        = pkg:cachedir()
             opt.installdir      = pkg:installdir()
+            if configs.runtimes then
+                configs.runtimes = pkg:runtimes()
+            end
             import("package.manager.install_package")(pkg:name(), opt)
         end
 
         -- make sandbox instance with the given script
-        instance, errors = sandbox.new(on_install, interp:filter())
+        instance, errors = sandbox.new(on_install, {filter = interp:filter(), namespace = interp:namespace()})
         if not instance then
             return nil, errors
         end
@@ -2651,7 +3035,16 @@ function package.load_from_project(packagename, project)
 
     -- get package info
     local packageinfo = packages[packagename]
-    if not packageinfo then
+    if packageinfo == nil and project.namespaces() then
+        for _, namespace in ipairs(project.namespaces()) do
+            packageinfo = packages[namespace .. "::" .. packagename]
+            if packageinfo then
+                packagename = namespace .. "::" .. packagename
+                break
+            end
+        end
+    end
+    if packageinfo == nil then
         return
     end
 
@@ -2736,6 +3129,12 @@ function package.load_from_repository(packagename, packagedir, opt)
     package._memcache():set2("packages", instance)
     return instance
 end
+
+-- new a package instance
+function package.new(...)
+    return _instance.new(...)
+end
+
 
 -- return module
 return package

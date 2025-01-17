@@ -71,6 +71,16 @@ function main(target, opt)
             envs = {VCINSTALLDIR = vcvars.VCInstallDir}
         end
     end
+    -- bind qt bin path
+    -- https://github.com/xmake-io/xmake/issues/4297
+    if qt.bindir then
+        envs = envs or {}
+        envs.PATH = {qt.bindir}
+        local curpath = os.getenv("PATH")
+        if curpath then
+            table.join2(envs.PATH, path.splitenv(curpath))
+        end
+    end
 
     local argv = {"--force"}
     if option.get("diagnosis") then
@@ -81,10 +91,14 @@ function main(target, opt)
         table.insert(argv, "--verbose=0")
     end
 
-    if is_mode("debug") then
-        table.insert(argv, "--debug")
-    else
-        table.insert(argv, "--release")
+    -- make sure user flags have priority over default
+    local user_flags = table.wrap(target:values("qt.deploy.flags"))
+    if table.contains(user_flags, "--debug", "--release") then
+        if is_mode("debug") then
+            table.insert(argv, "--debug")
+        else
+            table.insert(argv, "--release")
+        end
     end
 
     if qmldir then
@@ -92,7 +106,6 @@ function main(target, opt)
     end
 
     -- add user flags
-    local user_flags = target:values("qt.deploy.flags") or {}
     if user_flags then
         argv = table.join(argv, user_flags)
     end

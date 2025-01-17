@@ -99,6 +99,20 @@ function _curl_download(tool, url, outputfile, opt)
         table.insert(argv, "-")
     end
 
+    -- set timeout
+    if opt.timeout then
+        table.insert(argv, "--max-time")
+        table.insert(argv, tostring(opt.timeout))
+    end
+
+    -- set read timeout
+    if opt.read_timeout then
+        table.insert(argv, "--speed-limit")
+        table.insert(argv, "0")
+        table.insert(argv, "--speed-time")
+        table.insert(argv, tostring(opt.read_timeout))
+    end
+
     -- set url
     table.insert(argv, url)
 
@@ -170,11 +184,40 @@ function _wget_download(tool, url, outputfile, opt)
         table.insert(argv, "-c")
     end
 
+    -- set timeout
+    if opt.timeout then
+        table.insert(argv, "--timeout=" .. tostring(opt.timeout))
+    end
+
+    -- set read timeout
+    if opt.read_timeout then
+        table.insert(argv, "--read-timeout=" .. tostring(opt.read_timeout))
+    end
+
     -- set outputfile
     table.insert(argv, "-O")
     table.insert(argv, outputfile)
 
     -- download it
+    os.vrunv(tool.program, argv)
+end
+
+-- download url using powershell
+-- e.g.
+-- powershell -ExecutionPolicy Bypass -File "D:\scripts\download.ps1" "url" "outputfile"
+function _powershell_download(tool, url, outputfile, opt)
+
+    -- get the script file
+    local scriptfile = path.join(os.programdir(), "scripts", "download.ps1")
+
+    -- ensure output directory
+    local outputdir = path.directory(outputfile)
+    if not os.isdir(outputdir) then
+        os.mkdir(outputdir)
+    end
+
+    -- download it
+    local argv = {"-ExecutionPolicy", "Bypass", "-File", scriptfile, url, outputfile}
     os.vrunv(tool.program, argv)
 end
 
@@ -202,4 +245,14 @@ function main(url, outputfile, opt)
     if tool then
         return _wget_download(tool, url, outputfile, opt)
     end
+
+    -- download url using powershell
+    if is_host("windows") then
+        tool = find_tool("pwsh") or find_tool("powershell")
+        if tool then
+            return _powershell_download(tool, url, outputfile, opt)
+        end
+    end
+
+    assert(tool, "curl or wget not found!")
 end

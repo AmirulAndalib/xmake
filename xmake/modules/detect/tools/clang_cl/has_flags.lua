@@ -74,12 +74,12 @@ function _check_try_running(flags, opt)
     -- make an stub source file
     local sourcefile = path.join(os.tmpdir(), "detect", "clang_cl_has_flags" .. extension)
     if not os.isfile(sourcefile) then
-        io.writefile(sourcefile, "int main(int argc, char** argv)\n{return 0;}")
+        io.writefile(sourcefile, "int main(int argc, char** argv)\n{return 0;}\n")
     end
 
     -- check flags for compiler
     -- @note we cannot use os.nuldev() as the output file, maybe run failed for some flags, e.g. --coverage
-    return _try_running(opt.program, table.join(flags, "-c", "-o", os.tmpfile(), sourcefile))
+    return _try_running(opt.program, table.join("-Werror=unused-command-line-argument", flags, "-c", "-o", os.tmpfile(), sourcefile))
 end
 
 -- has_flags(flags)?

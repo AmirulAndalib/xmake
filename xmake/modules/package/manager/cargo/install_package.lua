@@ -40,6 +40,7 @@ function _translate_local_path_in_deps(cargotoml, rootdir)
         if not path.is_absolute(localpath) then
             localpath = path.absolute(localpath, rootdir)
         end
+        localpath = localpath:gsub("\\", "/")
         return "path = \"" .. localpath .. "\""
     end)
     io.writefile(cargotoml, content)
@@ -91,11 +92,17 @@ function main(name, opt)
         -- https://github.com/rust-lang/cargo/issues/10534#issuecomment-1087631050
         local tomlfile = io.open(cargotoml, "a")
         tomlfile:print("")
+        tomlfile:print("[lib]")
+        tomlfile:print("crate-type = [\"staticlib\"]")
+        tomlfile:print("")
         tomlfile:print("[workspace]")
         tomlfile:print("")
         tomlfile:close()
     else
         local tomlfile = io.open(cargotoml, "w")
+        tomlfile:print("[lib]")
+        tomlfile:print("crate-type = [\"staticlib\"]")
+        tomlfile:print("")
         tomlfile:print("[package]")
         tomlfile:print("name = \"cargodeps\"")
         tomlfile:print("version = \"0.1.0\"")
@@ -124,7 +131,7 @@ target = "%s"
     end
 
     -- generate main.rs
-    local file = io.open(path.join(sourcedir, "src", "main.rs"), "w")
+    local file = io.open(path.join(sourcedir, "src", "lib.rs"), "w")
     if configs.main == false then
         file:print("#![no_main]")
     end
@@ -159,11 +166,15 @@ target = "%s"
 
     -- do install
     local installdir = opt.installdir
-    os.tryrm(path.join(installdir, "lib"))
+    local librarydir = path.join(installdir, "lib")
+    local librarydir_host = path.join(installdir, "lib", "host")
+    os.tryrm(librarydir)
     if target then
-        os.vcp(path.join(sourcedir, "target", target, opt.mode == "debug" and "debug" or "release", "deps"), path.join(installdir, "lib"))
+        os.vcp(path.join(sourcedir, "target", target, opt.mode == "debug" and "debug" or "release", "deps"), librarydir)
+        -- @see https://github.com/xmake-io/xmake/issues/5156#issuecomment-2142566862
+        os.vcp(path.join(sourcedir, "target", opt.mode == "debug" and "debug" or "release", "deps"), librarydir_host)
     else
-        os.vcp(path.join(sourcedir, "target", opt.mode == "debug" and "debug" or "release", "deps"), path.join(installdir, "lib"))
+        os.vcp(path.join(sourcedir, "target", opt.mode == "debug" and "debug" or "release", "deps"), librarydir)
     end
 
     -- install metadata

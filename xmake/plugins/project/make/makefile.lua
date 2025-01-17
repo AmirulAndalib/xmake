@@ -101,10 +101,7 @@ end
 function _get_program_from_target(target, toolkind)
     local program = target:get("toolchain." .. toolkind)
     if not program then
-        local tools = target:get("tools") -- TODO: deprecated
-        if tools then
-            program = tools[toolkind]
-        end
+        program, _ = target:tool(toolkind)
     end
     return program
 end
@@ -218,6 +215,15 @@ function _get_cmd_rm(filedir)
     end
 end
 
+-- get command: rmdir
+function _get_cmd_rmdir(filedir)
+    if is_subhost("windows") then
+        return string.format("@rmdir /S /Q %s > NUL 2>&1", filedir)
+    else
+        return string.format("@rm -rf %s", filedir)
+    end
+end
+
 -- get command: echo
 function _get_cmd_echo(str)
     return string.format("@echo %s", colors.ignore(str))
@@ -251,6 +257,8 @@ function _get_command_string(cmd, outputdir)
         end
     elseif kind == "rm" then
         return _get_cmd_rm(_get_relative_unix_path(cmd.filepath, outputdir))
+    elseif kind == "rmdir" then
+        return _get_cmd_rmdir(_get_relative_unix_path(cmd.dir, outputdir))
     elseif kind == "mv" then
         return _get_cmd_mv(_get_relative_unix_path(cmd.srcpath, outputdir), _get_relative_unix_path(cmd.dstpath, outputdir))
     elseif kind == "ln" then
@@ -466,8 +474,8 @@ function _add_build_custom_commands_before(makefile, target, sourcegroups, outpu
     -- add before commands
     -- we use irpairs(groups), because the last group that should be given the highest priority.
     local cmds_before = {}
-    target_cmds.get_target_buildcmd(target, cmds_before, "before")
-    target_cmds.get_target_buildcmd_sourcegroups(target, cmds_before, sourcegroups, "before")
+    target_cmds.get_target_buildcmd(target, cmds_before, {suffix = "before"})
+    target_cmds.get_target_buildcmd_sourcegroups(target, cmds_before, sourcegroups, {suffix = "before"})
     target_cmds.get_target_buildcmd_sourcegroups(target, cmds_before, sourcegroups)
 
     local targetname = target:name()
@@ -488,8 +496,8 @@ end
 -- add custom commands after building target
 function _add_build_custom_commands_after(makefile, target, sourcegroups, outputdir)
     local cmds_after = {}
-    target_cmds.get_target_buildcmd_sourcegroups(target, cmds_after, sourcegroups, "after")
-    target_cmds.get_target_buildcmd(target, cmds_after, "after")
+    target_cmds.get_target_buildcmd_sourcegroups(target, cmds_after, sourcegroups, {suffix = "after"})
+    target_cmds.get_target_buildcmd(target, cmds_after, {suffix = "after"})
     if #cmds_after > 0 then
         for _, cmd in ipairs(cmds_after) do
             local command = _get_command_string(cmd, outputdir)
@@ -539,7 +547,7 @@ function _add_build_target(makefile, target, targetflags, outputdir)
 
     -- make dependence for the dependent targets
     for _, depname in ipairs(target:get("deps")) do
-        local dep = project.target(depname)
+        local dep = project.target(depname, {namespace = target:namespace()})
         makefile:write(" " .. (dep:is_phony() and depname or _get_relative_unix_path(dep:targetfile(), outputdir)))
     end
 

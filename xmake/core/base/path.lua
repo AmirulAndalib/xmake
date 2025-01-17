@@ -29,6 +29,7 @@ local _instance = _instance or {}
 -- save original interfaces
 path._absolute = path._absolute or path.absolute
 path._relative = path._relative or path.relative
+path._translate = path._translate or path.translate
 
 -- new a path
 function _instance.new(p, transform)
@@ -86,6 +87,10 @@ end
 
 function _instance:translate(opt)
     return path.new(path.translate(self:str(), opt), self._TRANSFORM)
+end
+
+function _instance:unix()
+    return path.new(path.unix(self:str()), self._TRANSFORM)
 end
 
 function _instance:filename()
@@ -151,6 +156,28 @@ function _instance:__todisplay()
     return "<path: " .. (self:empty() and "empty" or self:str()) .. ">"
 end
 
+-- get unix-style path, it is usually used on windows
+-- @see https://github.com/xmake-io/xmake/issues/4731
+function path.unix(p)
+    return (tostring(p):gsub(path.sep(), "/"))
+end
+
+-- get cygwin-style path, e.g. c:\, C:\ -> /c/
+function path.cygwin(p)
+    return (tostring(p):gsub("^(%w):", function (drive)
+        return "/" .. drive:lower()
+    end):gsub("\\", "/"))
+end
+
+-- translate path
+--
+-- @param p     the path
+-- @param opt   the option, e.g. {normalize = true}
+--
+function path.translate(p, opt)
+    return path._translate(tostring(p), opt)
+end
+
 -- path.translate:
 -- - transform the path separator
 -- - expand the user directory with the prefix: ~
@@ -162,8 +189,7 @@ end
 -- - reduce "/xxx/.." => "/"
 --
 function path.normalize(p)
-    p = tostring(p)
-    return path.translate(p, {normalize = true})
+    return path.translate(tostring(p), {normalize = true})
 end
 
 -- get the directory of the path, compatible with lower version core binary
@@ -320,17 +346,14 @@ end
 
 -- concat environment variable with `path.envsep()`,
 -- also handles more speical cases such as posix flags and windows quoted paths
-function path.joinenv(env_table)
-
-    -- check
-    if not env_table or #env_table == 0 then
+function path.joinenv(paths, envsep)
+    if not paths or #paths == 0 then
         return ""
     end
-
-    local envsep = path.envsep()
+    envsep = envsep or path.envsep()
     if xmake._HOST == "windows" then
         local tab = {}
-        for _, v in ipairs(env_table) do
+        for _, v in ipairs(paths) do
             if v ~= "" then
                 if v:find(envsep, 1, true) then
                     v = '"' .. v .. '"'
@@ -340,7 +363,7 @@ function path.joinenv(env_table)
         end
         return table.concat(tab, envsep)
     else
-        return table.concat(env_table, envsep)
+        return table.concat(paths, envsep)
     end
 end
 

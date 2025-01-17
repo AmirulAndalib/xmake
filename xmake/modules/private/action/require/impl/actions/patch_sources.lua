@@ -24,11 +24,12 @@ import("core.base.global")
 import("net.http")
 import("net.proxy")
 import("devel.git")
+import("utils.archive")
 
 -- check sha256
 function _check_sha256(patch_hash, patch_file)
     local ok = (patch_hash == hash.sha256(patch_file))
-    if not ok and is_host("windows") then
+    if not ok then
         -- `git pull` maybe will replace lf to crlf in the patch text automatically on windows.
         -- so we need to attempt to fix this sha256
         --
@@ -48,7 +49,10 @@ function _check_sha256(patch_hash, patch_file)
 end
 
 -- do patch
-function _patch(package, patch_url, patch_hash)
+function _patch(package, patchinfo)
+    local patch_url = patchinfo.url
+    local patch_hash = patchinfo.sha256
+    local patch_extra = patchinfo.extra or {}
 
     -- trace
     patch_url = proxy.mirror(patch_url) or patch_url
@@ -97,8 +101,32 @@ function _patch(package, patch_url, patch_hash)
         end
     end
 
-    -- apply the patch file
-    git.apply(patch_file)
+    -- is archive file? we need extract it first
+    local extension = archive.extension(patch_file)
+    if extension and #extension > 0 then
+        local patchdir = patch_file .. ".dir"
+        local patchdir_tmp = patchdir .. ".tmp"
+        os.tryrm(patchdir_tmp)
+        local ok = try {function() archive.extract(patch_file, patchdir_tmp); return true end}
+        if ok then
+            os.tryrm(patchdir)
+            os.mv(patchdir_tmp, patchdir)
+        else
+            os.tryrm(patchdir_tmp)
+            os.tryrm(patchdir)
+            raise("cannot extract %s", patch_file)
+        end
+
+        -- apply patch files
+        for _, file in ipairs(os.files(path.join(patchdir, "**"))) do
+            vprint("applying patch %s", file)
+            git.apply(file, {reverse = patch_extra.reverse})
+        end
+    else
+        -- apply single plain patch file
+        vprint("applying patch %s", patch_file)
+        git.apply(patch_file, {reverse = patch_extra.reverse})
+    end
 end
 
 -- patch the given package
@@ -117,6 +145,6 @@ function main(package)
 
     -- do all patches
     for _, patchinfo in ipairs(patches) do
-        _patch(package, patchinfo.url, patchinfo.sha256)
+        _patch(package, patchinfo)
     end
 end

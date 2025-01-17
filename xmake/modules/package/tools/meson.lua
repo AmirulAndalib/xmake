@@ -22,10 +22,9 @@
 import("core.base.option")
 import("core.project.config")
 import("core.tool.toolchain")
-import("core.tool.linker")
-import("core.tool.compiler")
 import("lib.detect.find_tool")
 import("private.utils.executable_path")
+import("private.utils.toolchain", {alias = "toolchain_utils"})
 
 -- get build directory
 function _get_buildir(package, opt)
@@ -37,18 +36,22 @@ function _get_buildir(package, opt)
     end
 end
 
--- map compiler flags
-function _map_compflags(package, langkind, name, values)
-    return compiler.map_flags(langkind, name, values, {target = package})
-end
-
--- map linker flags
-function _map_linkflags(package, targetkind, sourcekinds, name, values)
-    return linker.map_flags(targetkind, sourcekinds, name, values, {target = package})
-end
-
 -- get pkg-config, we need force to find it, because package install environments will be changed
 function _get_pkgconfig(package)
+    -- meson need fullpath pkgconfig
+    -- @see https://github.com/xmake-io/xmake/issues/5474
+    local dep = package:dep("pkgconf") or package:dep("pkg-config")
+    if dep then
+        local suffix = dep:is_plat("windows", "mingw") and ".exe" or ""
+        local pkgconf = path.join(dep:installdir("bin"), "pkgconf" .. suffix)
+        if os.isfile(pkgconf) then
+            return pkgconf
+        end
+        local pkgconfig = path.join(dep:installdir("bin"), "pkg-config" .. suffix)
+        if os.isfile(pkgconfig) then
+            return pkgconfig
+        end
+    end
     if package:is_plat("windows") then
         local pkgconf = find_tool("pkgconf", {force = true})
         if pkgconf then
@@ -66,33 +69,171 @@ function _translate_flags(package, flags)
     if package:is_plat("android") then
         local flags_new = {}
         for _, flag in ipairs(flags) do
-            if flag:startswith("-gcc-toolchain ") or flag:startswith("-target ") or flag:startswith("-isystem ") then
+            if flag:startswith("-gcc-toolchain ") or flag:startswith("--target=") or flag:startswith("-isystem ") then
                 table.join2(flags_new, flag:split(" ", {limit = 2}))
             else
                 table.insert(flags_new, flag)
             end
         end
         flags = flags_new
+    elseif package:is_plat("windows") then
+        for idx, flag in ipairs(flags) do
+            -- @see https://github.com/xmake-io/xmake/issues/4407
+            if flag:startswith("-libpath:") then
+                flags[idx] = flag:gsub("%-libpath:", "/libpath:")
+            end
+        end
     end
     return flags
 end
 
+function _insert_cross_configs(package, file, opt)
+    -- host machine
+    file:print("[host_machine]")
+    if opt.host_machine then
+        file:print("%s", opt.host_machine)
+    elseif package:is_plat("iphoneos", "macosx") then
+        local cpu
+        local cpu_family
+        if package:is_arch("arm64") then
+            cpu = "aarch64"
+            cpu_family = "aarch64"
+        elseif package:is_arch("armv7") then
+            cpu = "arm"
+            cpu_family = "arm"
+        elseif package:is_arch("x64", "x86_64") then
+            cpu = "x86_64"
+            cpu_family = "x86_64"
+        elseif package:is_arch("x86", "i386") then
+            cpu = "i686"
+            cpu_family = "x86"
+        else
+            raise("unsupported arch(%s)", package:arch())
+        end
+        file:print("system = 'darwin'")
+        file:print("cpu_family = '%s'", cpu_family)
+        file:print("cpu = '%s'", cpu)
+        file:print("endian = 'little'")
+    elseif package:is_plat("android") then
+        local cpu
+        local cpu_family
+        if package:is_arch("arm64-v8a") then
+            cpu = "aarch64"
+            cpu_family = "aarch64"
+        elseif package:is_arch("armeabi-v7a") then
+            cpu = "arm"
+            cpu_family = "arm"
+        elseif package:is_arch("x64", "x86_64") then
+            cpu = "x86_64"
+            cpu_family = "x86_64"
+        elseif package:is_arch("x86", "i386") then
+            cpu = "i686"
+            cpu_family = "x86"
+        else
+            raise("unsupported arch(%s)", package:arch())
+        end
+        file:print("system = 'android'")
+        file:print("cpu_family = '%s'", cpu_family)
+        file:print("cpu = '%s'", cpu)
+        file:print("endian = 'little'")
+    elseif package:is_plat("mingw") then
+        local cpu
+        local cpu_family
+        if package:is_arch("x64", "x86_64") then
+            cpu = "x86_64"
+            cpu_family = "x86_64"
+        elseif package:is_arch("x86", "i386") then
+            cpu = "i686"
+            cpu_family = "x86"
+        else
+            raise("unsupported arch(%s)", package:arch())
+        end
+        file:print("system = 'windows'")
+        file:print("cpu_family = '%s'", cpu_family)
+        file:print("cpu = '%s'", cpu)
+        file:print("endian = 'little'")
+    elseif package:is_plat("windows") then
+        local cpu
+        local cpu_family
+        if package:is_arch("arm64", "arm64ec") then
+            cpu = "aarch64"
+            cpu_family = "aarch64"
+        elseif package:is_arch("x86") then
+            cpu = "x86"
+            cpu_family = "x86"
+        elseif package:is_arch("x64") then
+            cpu = "x86_64"
+            cpu_family = "x86_64"
+        else
+            raise("unsupported arch(%s)", package:arch())
+        end
+        file:print("system = 'windows'")
+        file:print("cpu_family = '%s'", cpu_family)
+        file:print("cpu = '%s'", cpu)
+        file:print("endian = 'little'")
+    elseif package:is_plat("wasm") then
+        file:print("system = 'emscripten'")
+        file:print("cpu_family = '%s'", package:arch())
+        file:print("cpu = '%s'", package:arch())
+        file:print("endian = 'little'")
+    else
+        local cpu = package:arch()
+        if package:is_arch("arm64") or package:is_arch("aarch64") then
+            cpu = "aarch64"
+        elseif package:is_arch("arm.*") then
+            cpu = "arm"
+        end
+        local cpu_family = cpu
+        file:print("system = '%s'", package:targetos() or "linux")
+        file:print("cpu_family = '%s'", cpu_family)
+        file:print("cpu = '%s'", cpu)
+        file:print("endian = 'little'")
+    end
+end
+
+-- is the toolchain compatible with the host?
+function _is_toolchain_compatible_with_host(package)
+    for _, name in ipairs(package:config("toolchains")) do
+        if toolchain_utils.is_compatible_with_host(name) then
+            return true
+        end
+    end
+end
+
 -- get cross file
-function _get_cross_file(package, opt)
+function _get_configs_file(package, opt)
     opt = opt or {}
-    local crossfile = path.join(_get_buildir(package, opt), "cross_file.txt")
-    if not os.isfile(crossfile) then
-        local file = io.open(crossfile, "w")
+    local configsfile = path.join(_get_buildir(package, opt), "configs_file.txt")
+    if not os.isfile(configsfile) then
+        local file = io.open(configsfile, "w")
         -- binaries
         file:print("[binaries]")
         local cc = package:build_getenv("cc")
         if cc then
             file:print("c=['%s']", executable_path(cc))
         end
+
         local cxx = package:build_getenv("cxx")
         if cxx then
+            -- https://github.com/xmake-io/xmake/discussions/4979
+            if package:has_tool("cxx", "clang", "gcc") then
+                local dir = path.directory(cxx)
+                local name = path.filename(cxx)
+                name = name:gsub("clang$", "clang++")
+                name = name:gsub("clang%-", "clang++-") -- clang-xx
+                name = name:gsub("clang%.", "clang++.") -- clang.exe
+                name = name:gsub("gcc$", "g++")
+                name = name:gsub("gcc%-", "g++-")
+                name = name:gsub("gcc%.", "g++.")
+                if dir and dir ~= "." then
+                    cxx = path.join(dir, name)
+                else
+                    cxx = name
+                end
+            end
             file:print("cpp=['%s']", executable_path(cxx))
         end
+
         local ld = package:build_getenv("ld")
         if ld then
             file:print("ld=['%s']", executable_path(ld))
@@ -147,127 +288,34 @@ function _get_cross_file(package, opt)
         table.join2(cxxflags, _get_cflags_from_packagedeps(package, opt))
         table.join2(ldflags,  _get_ldflags_from_packagedeps(package, opt))
         table.join2(shflags,  _get_ldflags_from_packagedeps(package, opt))
+        -- add runtimes flags
+        for _, runtime in ipairs(package:runtimes()) do
+            if not runtime:startswith("M") then
+                table.join2(cxxflags, toolchain_utils.map_compflags_for_package(package, "cxx", "runtime", {runtime}))
+                table.join2(ldflags, toolchain_utils.map_linkflags_for_package(package, "binary", {"cxx"}, "runtime", {runtime}))
+                table.join2(shflags, toolchain_utils.map_linkflags_for_package(package, "shared", {"cxx"}, "runtime", {runtime}))
+            end
+        end
         if #cflags > 0 then
-            cflags = _translate_flags(package, cflags)
             file:print("c_args=['%s']", table.concat(cflags, "', '"))
         end
         if #cxxflags > 0 then
-            cxxflags = _translate_flags(package, cxxflags)
             file:print("cpp_args=['%s']", table.concat(cxxflags, "', '"))
         end
         local linkflags = table.join(ldflags or {}, shflags)
         if #linkflags > 0 then
-            linkflags = _translate_flags(package, linkflags)
             file:print("c_link_args=['%s']", table.concat(linkflags, "', '"))
             file:print("cpp_link_args=['%s']", table.concat(linkflags, "', '"))
         end
-        file:print("")
 
-        -- host machine
-        file:print("[host_machine]")
-        if opt.host_machine then
-            file:print("%s", opt.host_machine)
-        elseif package:is_plat("iphoneos", "macosx") then
-            local cpu
-            local cpu_family
-            if package:is_arch("arm64") then
-                cpu = "aarch64"
-                cpu_family = "aarch64"
-            elseif package:is_arch("armv7") then
-                cpu = "arm"
-                cpu_family = "arm"
-            elseif package:is_arch("x64", "x86_64") then
-                cpu = "x86_64"
-                cpu_family = "x86_64"
-            elseif package:is_arch("x86", "i386") then
-                cpu = "i686"
-                cpu_family = "x86"
-            else
-                raise("unsupported arch(%s)", package:arch())
-            end
-            file:print("system = 'darwin'")
-            file:print("cpu_family = '%s'", cpu_family)
-            file:print("cpu = '%s'", cpu)
-            file:print("endian = 'little'")
-        elseif package:is_plat("android") then
-            local cpu
-            local cpu_family
-            if package:is_arch("arm64-v8a") then
-                cpu = "aarch64"
-                cpu_family = "aarch64"
-            elseif package:is_arch("armeabi-v7a") then
-                cpu = "arm"
-                cpu_family = "arm"
-            elseif package:is_arch("x64", "x86_64") then
-                cpu = "x86_64"
-                cpu_family = "x86_64"
-            elseif package:is_arch("x86", "i386") then
-                cpu = "i686"
-                cpu_family = "x86"
-            else
-                raise("unsupported arch(%s)", package:arch())
-            end
-            file:print("system = 'android'")
-            file:print("cpu_family = '%s'", cpu_family)
-            file:print("cpu = '%s'", cpu)
-            file:print("endian = 'little'")
-        elseif package:is_plat("mingw") then
-            local cpu
-            local cpu_family
-            if package:is_arch("x64", "x86_64") then
-                cpu = "x86_64"
-                cpu_family = "x86_64"
-            elseif package:is_arch("x86", "i386") then
-                cpu = "i686"
-                cpu_family = "x86"
-            else
-                raise("unsupported arch(%s)", package:arch())
-            end
-            file:print("system = 'windows'")
-            file:print("cpu_family = '%s'", cpu_family)
-            file:print("cpu = '%s'", cpu)
-            file:print("endian = 'little'")
-        elseif package:is_plat("windows") then
-            local cpu
-            local cpu_family
-            if package:is_arch("arm64") then
-                cpu = "aarch64"
-                cpu_family = "aarch64"
-            elseif package:is_arch("x86") then
-                cpu = "x86"
-                cpu_family = "x86"
-            elseif package:is_arch("x64") then
-                cpu = "x86_64"
-                cpu_family = "x86_64"
-            else
-                raise("unsupported arch(%s)", package:arch())
-            end
-            file:print("system = 'windows'")
-            file:print("cpu_family = '%s'", cpu_family)
-            file:print("cpu = '%s'", cpu)
-            file:print("endian = 'little'")
-        elseif package:is_plat("wasm") then
-            file:print("system = 'emscripten'")
-            file:print("cpu_family = 'wasm32'")
-            file:print("cpu = 'wasm32'")
-            file:print("endian = 'little'")
-        else
-            local cpu = package:arch()
-            if package:is_arch("arm64") or package:is_arch("aarch64") then
-                cpu = "aarch64"
-            elseif package:is_arch("arm.*") then
-                cpu = "arm"
-            end
-            local cpu_family = cpu
-            file:print("system = '%s'", package:targetos() or "linux")
-            file:print("cpu_family = '%s'", cpu_family)
-            file:print("cpu = '%s'", cpu)
-            file:print("endian = 'little'")
+        if package:is_cross() or opt.cross then
+            file:print("")
+            _insert_cross_configs(package, file, opt)
+            file:print("")
         end
-        file:print("")
         file:close()
     end
-    return crossfile
+    return configsfile
 end
 
 -- get configs
@@ -275,7 +323,7 @@ function _get_configs(package, configs, opt)
 
     -- add prefix
     configs = configs or {}
-    table.insert(configs, "--prefix=" .. package:installdir())
+    table.insert(configs, "--prefix=" .. (opt.prefix or package:installdir()))
     table.insert(configs, "--libdir=lib")
 
     -- set build type
@@ -296,15 +344,28 @@ function _get_configs(package, configs, opt)
         table.insert(configs, "-Db_sanitize=address")
     end
 
-    -- add vs_runtime flags
-    local vs_runtime = package:config("vs_runtime")
-    if package:is_plat("windows") and vs_runtime then
-        table.insert(configs, "-Db_vscrt=" .. vs_runtime:lower())
+    -- add vs runtimes flags
+    if package:is_plat("windows") then
+        if package:has_runtime("MT") then
+            table.insert(configs, "-Db_vscrt=mt")
+        elseif package:has_runtime("MTd") then
+            table.insert(configs, "-Db_vscrt=mtd")
+        elseif package:has_runtime("MD") then
+            table.insert(configs, "-Db_vscrt=md")
+        elseif package:has_runtime("MDd") then
+            table.insert(configs, "-Db_vscrt=mdd")
+        end
     end
 
     -- add cross file
-    if package:is_cross() then
-        table.insert(configs, "--cross-file=" .. _get_cross_file(package, opt))
+    if package:is_cross() or package:is_plat("mingw") then
+        table.insert(configs, "--cross-file=" .. _get_configs_file(package, opt))
+    elseif package:config("toolchains") then
+        if _is_toolchain_compatible_with_host(package) then
+            table.insert(configs, "--native-file=" .. _get_configs_file(package, opt))
+        else
+            table.insert(configs, "--cross-file=" .. _get_configs_file(package, table.join2(opt, {cross = true})))
+        end
     end
 
     -- add build directory
@@ -314,7 +375,7 @@ end
 
 -- get msvc
 function _get_msvc(package)
-    local msvc = toolchain.load("msvc", {plat = package:plat(), arch = package:arch()})
+    local msvc = package:toolchain("msvc")
     assert(msvc:check(), "vs not found!") -- we need to check vs envs if it has been not checked yet
     return msvc
 end
@@ -327,42 +388,74 @@ end
 -- fix libname on windows
 function _fix_libname_on_windows(package)
     for _, lib in ipairs(os.files(path.join(package:installdir("lib"), "lib*.a"))) do
-        os.mv(lib, lib:gsub("(.+)lib(.-)%.a", "%1%2.lib"))
+        os.mv(lib, (lib:gsub("(.+)\\lib(.-)%.a", "%1\\%2.lib")))
     end
 end
 
 -- get cflags from package deps
 function _get_cflags_from_packagedeps(package, opt)
-    local result = {}
+    local values
     for _, depname in ipairs(opt.packagedeps) do
-        local dep = type(depname) ~= "string" and depname or package:dep(depname)
+        local dep = type(depname) ~= "string" and depname or package:librarydep(depname)
         if dep then
-            local fetchinfo = dep:fetch({external = false})
+            local fetchinfo = dep:fetch()
             if fetchinfo then
-                table.join2(result, _map_compflags(package, "cxx", "define", fetchinfo.defines))
-                table.join2(result, _map_compflags(package, "cxx", "includedir", fetchinfo.includedirs))
-                table.join2(result, _map_compflags(package, "cxx", "sysincludedir", fetchinfo.sysincludedirs))
+                if values then
+                    values = values .. fetchinfo
+                else
+                    values = fetchinfo
+                end
             end
         end
     end
-    return result
+    -- @see https://github.com/xmake-io/xmake-repo/pull/4973#issuecomment-2295890196
+    local result = {}
+    if values then
+        if values.defines then
+            table.join2(result, toolchain_utils.map_compflags_for_package(package, "cxx", "define", values.defines))
+        end
+        if values.includedirs then
+            table.join2(result, toolchain_utils.map_compflags_for_package(package, "cxx", "includedir", values.includedirs))
+        end
+        if values.sysincludedirs then
+            table.join2(result, toolchain_utils.map_compflags_for_package(package, "cxx", "sysincludedir", values.sysincludedirs))
+        end
+    end
+    return _translate_flags(package, result)
 end
 
 -- get ldflags from package deps
 function _get_ldflags_from_packagedeps(package, opt)
-    local result = {}
+    local values
     for _, depname in ipairs(opt.packagedeps) do
-        local dep = type(depname) ~= "string" and depname or package:dep(depname)
+        local dep = type(depname) ~= "string" and depname or package:librarydep(depname)
         if dep then
-            local fetchinfo = dep:fetch({external = false})
+            local fetchinfo = dep:fetch()
             if fetchinfo then
-                table.join2(result, _map_linkflags(package, "binary", {"cxx"}, "linkdir", fetchinfo.linkdirs))
-                table.join2(result, _map_linkflags(package, "binary", {"cxx"}, "link", fetchinfo.links))
-                table.join2(result, _map_linkflags(package, "binary", {"cxx"}, "syslink", fetchinfo.syslinks))
+                if values then
+                    values = values .. fetchinfo
+                else
+                    values = fetchinfo
+                end
             end
         end
     end
-    return result
+    local result = {}
+    if values then
+        if values.linkdirs then
+            table.join2(result, toolchain_utils.map_linkflags_for_package(package, "binary", {"cxx"}, "linkdir", values.linkdirs))
+        end
+        if values.links then
+            table.join2(result, toolchain_utils.map_linkflags_for_package(package, "binary", {"cxx"}, "link", values.links))
+        end
+        if values.syslinks then
+            table.join2(result, toolchain_utils.map_linkflags_for_package(package, "binary", {"cxx"}, "syslink", values.syslinks))
+        end
+        if values.frameworks then
+            table.join2(result, toolchain_utils.map_linkflags_for_package(package, "binary", {"cxx"}, "framework", values.frameworks))
+        end
+    end
+    return _translate_flags(package, result)
 end
 
 -- get the build environments
@@ -473,20 +566,17 @@ end
 -- install package
 function install(package, configs, opt)
 
-    -- generate build files
+    -- do build
     opt = opt or {}
-    generate(package, configs, opt)
+    build(package, configs, opt)
 
     -- configure install
     local buildir = _get_buildir(package, opt)
     local argv = {"install", "-C", buildir}
-    if option.get("verbose") then
-        table.insert(argv, "-v")
-    end
 
-    -- do build and install
+    -- do install
     local meson = assert(find_tool("meson"), "meson not found!")
-    os.vrunv(meson.program, {"install", "-C", buildir}, {envs = opt.envs or buildenvs(package, opt)})
+    os.vrunv(meson.program, argv, {envs = opt.envs or buildenvs(package, opt)})
 
     -- fix static libname on windows
     if package:is_plat("windows") and not package:config("shared") then

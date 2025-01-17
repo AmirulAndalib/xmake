@@ -30,6 +30,7 @@ local table          = require("base/table")
 local global         = require("base/global")
 local interpreter    = require("base/interpreter")
 local instance_deps  = require("base/private/instance_deps")
+local select_script  = require("base/private/select_script")
 local config         = require("project/config")
 local sandbox        = require("sandbox/sandbox")
 local sandbox_os     = require("sandbox/modules/os")
@@ -59,12 +60,12 @@ function _instance:_build_deps()
     end
     self._DEPS      = self._DEPS or {}
     self._ORDERDEPS = self._ORDERDEPS or {}
-    instance_deps.load_deps(self, instances, self._DEPS, self._ORDERDEPS, {self:name()})
+    instance_deps.load_deps(self, instances, self._DEPS, self._ORDERDEPS, {self:fullname()})
 end
 
 -- clone rule
 function _instance:clone()
-    local instance = rule.new(self:name(), self._INFO:clone())
+    local instance = rule.new(self:fullname(), self._INFO:clone())
     instance._DEPS = self._DEPS
     instance._ORDERDEPS = self._ORDERDEPS
     instance._PACKAGE = self._PACKAGE
@@ -105,7 +106,23 @@ end
 
 -- set the rule name
 function _instance:name_set(name)
-    self._NAME = name
+    local parts = name:split("::", {plain = true})
+    self._NAME = parts[#parts]
+    table.remove(parts)
+    if #parts > 0 then
+        self._NAMESPACE = table.concat(parts, "::")
+    end
+end
+
+-- get the namespace
+function _instance:namespace()
+    return self._NAMESPACE
+end
+
+-- get the full name
+function _instance:fullname()
+    local namespace = self:namespace()
+    return namespace and namespace .. "::" .. self:name() or self:name()
 end
 
 -- get the rule kind
@@ -147,48 +164,7 @@ function _instance:script(name, generic)
 
     -- get script
     local script = self:get(name)
-    local result = nil
-    if type(script) == "function" then
-        result = script
-    elseif type(script) == "table" then
-
-        -- get plat and arch
-        local plat = config.get("plat") or ""
-        local arch = config.get("arch") or ""
-
-        -- match pattern
-        --
-        -- `@linux`
-        -- `@linux|x86_64`
-        -- `@macosx,linux`
-        -- `android@macosx,linux`
-        -- `android|armeabi-v7a@macosx,linux`
-        -- `android|armeabi-v7a@macosx,linux|x86_64`
-        -- `android|armeabi-v7a@linux|x86_64`
-        --
-        for _pattern, _script in pairs(script) do
-            local hosts = {}
-            local hosts_spec = false
-            _pattern = _pattern:gsub("@(.+)", function (v)
-                for _, host in ipairs(v:split(',')) do
-                    hosts[host] = true
-                    hosts_spec = true
-                end
-                return ""
-            end)
-            if not _pattern:startswith("__") and (not hosts_spec or hosts[os.subhost() .. '|' .. os.subarch()] or hosts[os.subhost()])
-            and (_pattern:trim() == "" or (plat .. '|' .. arch):find('^' .. _pattern .. '$') or plat:find('^' .. _pattern .. '$')) then
-                result = _script
-                break
-            end
-        end
-
-        -- get generic script
-        result = result or script["__generic__"] or generic
-    end
-
-    -- only generic script
-    result = result or generic
+    local result = select_script(script, {plat = config.get("plat"), arch = config.get("arch")}) or generic
 
     -- imports some modules first
     if result and result ~= generic then
@@ -318,7 +294,9 @@ function rule.apis()
         ,   "rule.on_clean"
         ,   "rule.on_package"
         ,   "rule.on_install"
+        ,   "rule.on_installcmd"
         ,   "rule.on_uninstall"
+        ,   "rule.on_uninstallcmd"
         ,   "rule.on_linkcmd"
         ,   "rule.on_buildcmd"
         ,   "rule.on_buildcmd_file"
@@ -327,6 +305,7 @@ function rule.apis()
         ,   "rule.before_run"
         ,   "rule.before_test"
         ,   "rule.before_load"
+        ,   "rule.before_config"
         ,   "rule.before_link"
         ,   "rule.before_build"
         ,   "rule.before_build_file"
@@ -334,7 +313,9 @@ function rule.apis()
         ,   "rule.before_clean"
         ,   "rule.before_package"
         ,   "rule.before_install"
+        ,   "rule.before_installcmd"
         ,   "rule.before_uninstall"
+        ,   "rule.before_uninstallcmd"
         ,   "rule.before_linkcmd"
         ,   "rule.before_buildcmd"
         ,   "rule.before_buildcmd_file"
@@ -343,6 +324,7 @@ function rule.apis()
         ,   "rule.after_run"
         ,   "rule.after_test"
         ,   "rule.after_load"
+        ,   "rule.after_config"
         ,   "rule.after_link"
         ,   "rule.after_build"
         ,   "rule.after_build_file"
@@ -350,7 +332,9 @@ function rule.apis()
         ,   "rule.after_clean"
         ,   "rule.after_package"
         ,   "rule.after_install"
+        ,   "rule.after_installcmd"
         ,   "rule.after_uninstall"
+        ,   "rule.after_uninstallcmd"
         ,   "rule.after_linkcmd"
         ,   "rule.after_buildcmd"
         ,   "rule.after_buildcmd_file"
@@ -363,7 +347,9 @@ end
 function rule.new(name, info, opt)
     opt = opt or {}
     local instance = table.inherit(_instance)
-    instance._NAME = name
+    if name then
+        instance:name_set(name)
+    end
     instance._INFO = info
     instance._PACKAGE = opt.package
     if opt.package then

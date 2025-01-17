@@ -72,7 +72,7 @@ function _checkout(package, resource_name, resource_url, resource_revision)
     local longpaths = package:policy("platform.longpaths")
 
     -- clone whole history and tags
-    git.clone(resource_url, {longpaths = longpaths, outputdir = resourcedir})
+    git.clone(resource_url, {treeless = true, checkout = false, longpaths = longpaths, outputdir = resourcedir})
 
     -- attempt to checkout the given version
     git.checkout(resource_revision, {repodir = resourcedir})
@@ -113,6 +113,8 @@ function _download(package, resource_name, resource_url, resource_hash)
         if localfile and os.isfile(localfile) then
             -- we can use local resource from the search directories directly if network is too slow
             os.cp(localfile, resource_file)
+        elseif os.isfile(resource_url) then
+            os.cp(resource_url, resource_file)
         elseif resource_url:find(string.ipattern("https-://")) or resource_url:find(string.ipattern("ftps-://")) then
             http.download(resource_url, resource_file, {
                 insecure = global.get("insecure-ssl"),
@@ -133,7 +135,8 @@ function _download(package, resource_name, resource_url, resource_hash)
     local resourcedir_tmp = resourcedir .. ".tmp"
     os.tryrm(resourcedir_tmp)
     local extension = archive.extension(resource_file)
-    if archive.extract(resource_file, resourcedir_tmp) then
+    local ok = try {function() archive.extract(resource_file, resourcedir_tmp); return true end}
+    if ok then
         os.tryrm(resourcedir)
         os.mv(resourcedir_tmp, resourcedir)
     elseif extension and extension ~= "" then

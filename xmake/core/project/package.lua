@@ -69,6 +69,12 @@ function _instance:name()
     return self._NAME
 end
 
+-- get the full name
+function _instance:fullname()
+    local namespace = self:namespace()
+    return namespace and namespace .. "::" .. self:name() or self:name()
+end
+
 -- get the package version
 function _instance:version()
 
@@ -105,6 +111,11 @@ end
 -- get the require string
 function _instance:requirestr()
     return self:get("__requirestr")
+end
+
+-- get the namespace
+function _instance:namespace()
+    return self:get("__namespace")
 end
 
 -- get the require configuration from the given name
@@ -161,23 +172,77 @@ function _instance:components_deps()
     return self:get("__components_deps")
 end
 
--- get other extra information from package/on_fetch
+-- get user extra configuration from package/on_fetch
+-- @see https://github.com/xmake-io/xmake/issues/3106#issuecomment-1330143922
 --
 -- e.g.
 --
 -- @code
 -- package("xxx")
 --     on_fetch(function (package)
---         return {includedirs = "", links = "", extra = {foo = ""}}
+--         return {includedirs = "", links = "", extras = {foo = ""}}
 --     end)
 --
 -- @endcode
-function _instance:extra(name)
-    local extra = self:get("extra")
-    if extra and name then
-        extra = extra[name]
+--
+-- we can also get extra configuration from package/add_xxx
+--
+-- e.g.
+--
+-- @code
+-- package("xxx")
+--     add_linkgroups("foo", {group = true})
+--
+-- target:pkg("xxx"):extraconf("linkgroups", "foo", "group")
+-- @endcode
+--
+-- extras = {
+--     linkgroups = {
+--         z = {
+--             group = true
+--         }
+--     }
+-- }
+--
+function _instance:extraconf(name, item, key)
+    local extraconfs = self:get("extras")
+    if not extraconfs then
+        return
     end
-    return extra
+
+    -- get configuration
+    local extraconf = extraconfs[name]
+
+    -- get configuration value
+    local value = extraconf
+    if item then
+        value = extraconf and extraconf[item] or nil
+        if value == nil and extraconf and type(item) == "table" then
+            value = extraconf[table.concat(item, "_")]
+        end
+        if value and key then
+            value = value[key]
+        end
+    end
+    return value
+end
+
+-- add extra configuration
+function _instance:extraconf_add(name, item)
+    local extraconfs = self:get("extras")
+    if not extraconfs then
+        extraconfs = {}
+    end
+
+    local extraconf = extraconfs[name]
+    if extraconf ~= nil then
+        extraconf = table.wrap(extraconf)
+        table.join2(extraconf, item)
+    else
+        extraconf = item
+    end
+    extraconfs[name] = extraconf
+    self:set("extras", extraconfs)
 end
 
 -- get order dependencies of the given component
@@ -216,8 +281,17 @@ end
 -- add the value to the requires info
 function _instance:add(name_or_info, ...)
     if type(name_or_info) == "string" then
-        local info = table.wrap(self._INFO[name_or_info])
-        self._INFO[name_or_info] = table.unwrap(table.unique(table.join(info, ...)))
+        local name = name_or_info
+        if name == "extras" then
+            for _, extraconf in ipairs({...}) do
+                for k, v in pairs(extraconf) do
+                    self:extraconf_add(k, v)
+                end
+            end
+        else
+            local info = table.wrap(self._INFO[name])
+            self._INFO[name] = table.unwrap(table.unique(table.join(info, ...)))
+        end
     elseif table.is_dictionary(name_or_info) then
         for name, info in pairs(table.join(name_or_info, ...)) do
             self:add(name, info)
@@ -233,6 +307,11 @@ end
 -- enable or disable this require info
 function _instance:enable(enabled)
     self:set("__enabled", enabled)
+end
+
+-- get environments
+function _instance:envs()
+    return self:get("envs")
 end
 
 -- get the given rule
@@ -301,7 +380,7 @@ end
 -- we need to sort package set keys by this string
 -- @see https://github.com/xmake-io/xmake/pull/2971#issuecomment-1290052169
 function _instance:__tostring()
-    return "<package: " .. self:name() .. ">"
+    return "<package: " .. self:fullname() .. ">"
 end
 
 -- get cache

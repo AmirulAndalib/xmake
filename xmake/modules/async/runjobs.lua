@@ -40,12 +40,12 @@ end
 -- runjobs("test", function () os.sleep(10000) end, { progress = { chars = {'/','\'} } }) -- see module utils.progress
 --
 -- local jobs = jobpool.new()
--- local root = jobs:addjob("job/root", function (idx, total)
---   print(idx, total)
+-- local root = jobs:addjob("job/root", function (index, total, opt)
+--   print(index, total, opt.progress)
 -- end)
 -- for i = 1, 3 do
---     local job = jobs:addjob("job/" .. i, function (idx, total)
---         print(idx, total)
+--     local job = jobs:addjob("job/" .. i, function (index, total, opt)
+--         print(index, total, opt.progress)
 --     end, {rootjob = root})
 -- end
 -- runjobs("test", jobs, {comax = 6, timeout = 1000, on_timer = function (running_jobs_indices) end})
@@ -56,7 +56,7 @@ end
 function main(name, jobs, opt)
 
     -- init options
-    op = opt or {}
+    opt = opt or {}
     local total = opt.total or (type(jobs) == "table" and jobs:size()) or 1
     local comax = opt.comax or math.min(total, 4)
     local distcc = opt.distcc
@@ -154,10 +154,28 @@ function main(name, jobs, opt)
     -- run jobs
     local index = 0
     local count = 0
-    local count_as_index = opt.count_as_index
-    local priority_prev = 0
-    local priority_curr = 0
-    local job_pending = nil
+    local abort = false
+    local abort_errors
+    local progress_wrapper = {}
+    local job_pending
+    progress_wrapper.current = function ()
+        return count
+    end
+    progress_wrapper.total = function ()
+        return total
+    end
+    progress_wrapper.percent = function ()
+        if total and total > 0 then
+            return math.floor((count * 100) / total)
+        else
+            return 0
+        end
+    end
+    debug.setmetatable(progress_wrapper, {
+        __tostring = function ()
+            return string.format("%d%%", progress_wrapper.percent())
+        end
+    })
     while index < total do
         scheduler.co_group_begin(group_name, function (co_group)
             local freemax = comax - #co_group
@@ -170,27 +188,14 @@ function main(name, jobs, opt)
             while index < total_max do
 
                 -- uses job pool?
+                local job
                 local jobname
                 local distccjob = false
                 if not jobs_cb then
 
-                    -- get job priority
-                    local job, priority
-                    if job_pending then
-                        job = job_pending
-                        priority = priority_prev
-                    else
-                        job, priority = jobs:pop()
-                    end
+                    -- get free job
+                    job = job_pending and job_pending or jobs:getfree()
                     if not job then
-                        break
-                    end
-
-                    -- priority changed? we need to wait all running jobs exited
-                    priority_curr = priority or priority_prev
-                    assert(priority_curr >= priority_prev, "runjobs: invalid priority(%d < %d)!", priority_curr, priority_prev)
-                    if priority_curr > priority_prev then
-                        job_pending = job
                         break
                     end
 
@@ -218,6 +223,9 @@ function main(name, jobs, opt)
                     try
                     {
                         function()
+                            if stop then
+                                return
+                            end
                             if distcc then
                                 local co_running = scheduler.co_running()
                                 if co_running then
@@ -229,8 +237,8 @@ function main(name, jobs, opt)
                                 if opt.curdir then
                                     os.cd(opt.curdir)
                                 end
-                                jobfunc(count_as_index and count or i, total)
                                 count = count + 1
+                                jobfunc(i, total, {progress = progress_wrapper})
                             end
                             running_jobs_indices[i] = nil
                         end,
@@ -247,13 +255,30 @@ function main(name, jobs, opt)
                                     progress_helper:stop()
                                 end
 
-                                -- do exit callback
-                                if opt.on_exit then
-                                    opt.on_exit(errors)
+                                -- we need re-throw this errors outside scheduler
+                                abort = true
+                                if abort_errors == nil then
+                                    abort_errors = errors
                                 end
 
-                                -- re-throw this errors and abort scheduler
-                                raise(errors)
+                                -- kill all waited objects in this group
+                                local waitobjs = scheduler.co_group_waitobjs(group_name)
+                                if waitobjs:size() > 0 then
+                                    for _, obj in waitobjs:keys() do
+                                        -- TODO, kill pipe is not supported now
+                                        if obj.kill then
+                                            obj:kill()
+                                        end
+                                    end
+                                end
+                            end
+                        },
+                        finally
+                        {
+                            function ()
+                                if job then
+                                    jobs:remove(job)
+                                end
                             end
                         }
                     }
@@ -261,14 +286,8 @@ function main(name, jobs, opt)
             end
         end)
 
-        -- only need one job exited if be same priority
-        if priority_curr == priority_prev then
-            scheduler.co_group_wait(group_name, {limit = 1})
-        else
-            -- need to wait all running jobs exited first if be different priority
-            scheduler.co_group_wait(group_name)
-            priority_prev = priority_curr
-        end
+        -- wait for free jobs
+        scheduler.co_group_wait(group_name, {limit = 1})
     end
 
     -- wait all jobs exited
@@ -293,6 +312,16 @@ function main(name, jobs, opt)
 
     -- do exit callback
     if opt.on_exit then
-        opt.on_exit()
+        opt.on_exit(abort_errors)
+    end
+
+    -- re-throw abort errors
+    --
+    -- @note we cannot throw it in coroutine,
+    -- because his causes a direct exit from the entire runloop and
+    -- a quick escape from nested try-catch blocks and coroutines groups.
+    -- so we can not catch runjobs errors, e.g. build fails
+    if abort then
+        raise(abort_errors)
     end
 end

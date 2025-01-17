@@ -20,6 +20,8 @@
 
 -- imports
 import("lib.detect.pkgconfig")
+import("lib.detect.find_library")
+import("private.core.base.is_cross")
 import("package.manager.system.find_package", {alias = "find_package_from_system"})
 
 -- find package from the pkg-config package manager
@@ -28,9 +30,10 @@ import("package.manager.system.find_package", {alias = "find_package_from_system
 -- @param opt   the options, e.g. {verbose = true, version = "1.12.x")
 --
 function main(name, opt)
-
-    -- init options
     opt = opt or {}
+    if is_cross(opt.plat, opt.arch) then
+        return
+    end
 
     -- get library info
     local libinfo = pkgconfig.libinfo(name, opt)
@@ -63,6 +66,38 @@ function main(name, opt)
         result.ldflags     = libinfo.ldflags
         result.shflags     = libinfo.shflags
         result.version     = libinfo.version
+    end
+
+    -- find libfiles
+    if result and libinfo then
+        local libdirs = libinfo.linkdirs
+        if not libdirs then
+            local pcfile = pkgconfig.pcfile(name, opt)
+            if not pcfile and name:startswith("lib") then
+                pcfile = pkgconfig.pcfile(name:sub(4), opt)
+            end
+            if pcfile then
+                libdirs = path.directory(pcfile)
+                if path.filename(libdirs) == "pkgconfig" then
+                    libdirs = path.directory(libdirs)
+                end
+            end
+        end
+        if libdirs and libinfo.links then
+            for _, link in ipairs(libinfo.links) do
+                local info = find_library(link, libdirs, {plat = opt.plat})
+                if info and info.linkdir and info.filename then
+                    result.libfiles = result.libfiles or {}
+                    table.insert(result.libfiles, path.join(info.linkdir, info.filename))
+                    if info.kind then
+                        result[info.kind] = true
+                    end
+                end
+            end
+        end
+        if result.libfiles then
+            result.libfiles = table.unique(result.libfiles)
+        end
     end
     return result
 end

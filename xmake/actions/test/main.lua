@@ -30,10 +30,19 @@ import("async.runjobs")
 import("private.action.run.runenvs")
 import("private.service.remote_build.action", {alias = "remote_build_action"})
 import("actions.build.main", {rootdir = os.programdir(), alias = "build_action"})
+import("utils.progress")
 
 -- test target
 function _do_test_target(target, opt)
     opt = opt or {}
+
+    -- early out: results were computed during build
+    if opt.build_should_fail or opt.build_should_pass then
+        if opt.errors then
+            vprint(opt.errors)
+        end
+        return opt.passed
+    end
 
     -- get run environments
     local envs = opt.runenvs
@@ -48,21 +57,37 @@ function _do_test_target(target, opt)
     local rundir = opt.rundir or target:rundir()
     local targetfile = path.absolute(target:targetfile())
     local runargs = table.wrap(opt.runargs or target:get("runargs"))
-    local outfile = os.tmpfile()
-    local errfile = os.tmpfile()
-    local ok, syserrors = os.execv(targetfile, runargs, {try = true, curdir = rundir, envs = envs, stdout = outfile, stderr = errfile})
+    local autogendir = path.join(target:autogendir(), "tests")
+    local logname = opt.name:gsub("[/\\>=<|%*]", "_")
+    local outfile = path.absolute(path.join(autogendir, logname .. ".out"))
+    local errfile = path.absolute(path.join(autogendir, logname .. ".err"))
+    os.tryrm(outfile)
+    os.tryrm(errfile)
+    os.mkdir(autogendir)
+    local run_timeout = opt.run_timeout
+    local ok, syserrors = os.execv(targetfile, runargs, {try = true, timeout = run_timeout,
+        curdir = rundir, envs = envs, stdout = outfile, stderr = errfile})
     local outdata = os.isfile(outfile) and io.readfile(outfile) or ""
+    local errdata = os.isfile(errfile) and io.readfile(errfile) or ""
+    if outdata and #outdata > 0 then
+        opt.stdout = outdata
+    end
+    if errdata and #errdata > 0 then
+        opt.stderr = errdata
+    end
     if opt.trim_output then
         outdata = outdata:trim()
     end
     if ok ~= 0 then
-        local errdata = os.isfile(errfile) and io.readfile(errfile)
-        errors = errdata or errors
         if not errors or #errors == 0 then
             if ok ~= nil then
-                errors = string.format("run failed, exit code: %d", ok)
+                if syserrors then
+                    errors = string.format("run %s failed, exit code: %d, exit error: %s", opt.name, ok, syserrors)
+                else
+                    errors = string.format("run %s failed, exit code: %d", opt.name, ok)
+                end
             else
-                errors = string.format("run failed, exit error: %s", syserrors and syserrors or "unknown reason")
+                errors = string.format("run %s failed, exit error: %s", opt.name, syserrors and syserrors or "unknown reason")
             end
         end
     end
@@ -139,9 +164,15 @@ function _do_test_target(target, opt)
                 end
             end
         end
-        return passed, errors
+        if errors and #errors > 0 then
+            opt.errors = errors
+        end
+        return passed
     end
-    return false, errors
+    if errors and #errors > 0 then
+        opt.errors = errors
+    end
+    return false
 end
 
 -- test target
@@ -149,17 +180,16 @@ function _on_test_target(target, opt)
 
     -- build target with rules
     local passed
-    local errors
     local done = false
     for _, r in ipairs(target:orderules()) do
         local on_test = r:script("test")
         if on_test then
-            passed, errors = on_test(target, opt)
+            passed = on_test(target, opt)
             done = true
         end
     end
     if done then
-        return passed, errors
+        return passed
     end
 
     -- do test
@@ -211,21 +241,34 @@ function _run_test(target, test)
 
     -- run the target scripts
     local passed
-    local errors
     for i = 1, 5 do
         local script = scripts[i]
         if script ~= nil then
-            local ok, errs = script(target, test)
+            local ok = script(target, test)
             if i == 3 then
                 passed = ok
-                errors = errs
             end
         end
     end
 
     -- leave the environments of the target packages
     os.setenvs(oldenvs)
-    return passed, errors
+    return passed
+end
+
+function _show_output(testinfo, kind)
+    local output = testinfo[kind]
+    if output then
+        if option.get("diagnosis") then
+            local target = testinfo.target
+            local autogendir = path.join(target:autogendir(), "tests")
+            local logfile = path.join(autogendir, testinfo.name .. "." .. kind .. ".log")
+            io.writefile(logfile, output)
+            print("%s: %s", kind, logfile)
+        elseif option.get("verbose") then
+            cprint("%s: %s", kind, output)
+        end
+    end
 end
 
 -- run tests
@@ -246,31 +289,29 @@ function _run_tests(tests)
     -- do test
     local spent = os.mclock()
     print("running tests ...")
-    local report = {passed = 0, total = #ordertests}
-    local jobs = tonumber(option.get("jobs") or "1")
-    runjobs("run_tests", function (index)
+    local report = {passed = 0, total = #ordertests, tests = {}}
+    local jobs = tonumber(option.get("jobs")) or os.default_njob()
+    runjobs("run_tests", function (index, total, opt)
         local testinfo = ordertests[index]
         if testinfo then
+            progress.show(opt.progress, "running.test %s", testinfo.name)
+
             local target = testinfo.target
             testinfo.target = nil
             local spent = os.mclock()
-            local passed, errors = _run_test(target, testinfo)
+            local passed = _run_test(target, testinfo)
             spent = os.mclock() - spent
             if passed then
                 report.passed = report.passed + 1
             end
-            local status_color = passed and "${color.success}" or "${color.failure}"
-            local progress_format = status_color .. theme.get("text.build.progress_format") .. ":${clear} "
-            if option.get("verbose") then
-                progress_format = progress_format .. "${dim}"
-            end
-            local progress = math.floor(index * 100 / #ordertests)
-            local padding = maxwidth - #testinfo.name
-            cprint(progress_format .. "%s%s .................................... " .. status_color .. "%s${clear} ${bright}%0.3fs",
-                progress, testinfo.name, (" "):rep(padding), passed and "passed" or "failed", spent / 1000)
-            if not passed and errors and (option.get("verbose") or option.get("diagnosis")) then
-                cprint(errors)
-            end
+            table.insert(report.tests, {
+                target = target,
+                name = testinfo.name,
+                passed = passed,
+                spent = spent,
+                stdout = testinfo.stdout,
+                stderr = testinfo.stderr,
+                errors = testinfo.errors})
 
             -- stop it if be failed?
             if not passed then
@@ -291,12 +332,109 @@ function _run_tests(tests)
     spent = os.mclock() - spent
     local passed_rate = math.floor(report.passed * 100 / report.total)
     print("")
+    print("report of tests:")
+    for idx, testinfo in ipairs(report.tests) do
+        local status_color = testinfo.passed and "${color.success}" or "${color.failure}"
+        local progress_format = status_color .. theme.get("text.build.progress_format") .. ":${clear} "
+        if option.get("verbose") or option.get("diagnosis") then
+            progress_format = progress_format .. "${dim}"
+        end
+        local padding = maxwidth - #testinfo.name
+        local progress_percent = math.floor(idx * 100 / #report.tests)
+        cprint(progress_format .. "%s%s .................................... " .. status_color .. "%s${clear} ${bright}%0.3fs",
+            progress_percent, testinfo.name, (" "):rep(padding), testinfo.passed and "passed" or "failed", testinfo.spent / 1000)
+        _show_output(testinfo, "stdout")
+        _show_output(testinfo, "stderr")
+        _show_output(testinfo, "errors")
+    end
     cprint("${color.success}%d%%${clear} tests passed, ${color.failure}%d${clear} tests failed out of ${bright}%d${clear}, spent ${bright}%0.3fs",
         passed_rate, report.total - report.passed, report.total, spent / 1000)
     local return_zero = project.policy("test.return_zero_on_failure")
     if not return_zero and report.passed < report.total then
         raise()
     end
+end
+
+-- try to build the given target
+function _try_build_target(targetname)
+    local errors
+    local passed = try {
+        function ()
+            build_action.build_targets(targetname)
+            return true
+        end,
+        catch {
+            function (errs)
+                errors = tostring(errs)
+            end
+        }
+    }
+    return passed, errors
+end
+
+-- get tests, export this for the `project` plugin
+function get_tests()
+    local tests = {}
+    local group_pattern = option.get("group")
+    if group_pattern then
+        group_pattern = "^" .. path.pattern(group_pattern) .. "$"
+    end
+    for _, target in ipairs(project.ordertargets()) do
+        for _, name in ipairs(target:get("tests")) do
+            local extra = target:extraconf("tests", name)
+            local testname = target:name() .. "/" .. name
+            local testinfo = {name = testname, target = target}
+            if extra then
+                table.join2(testinfo, extra)
+                if extra.files then
+                    local target_new = target:clone()
+                    local scriptdir = target:scriptdir()
+                    target_new:name_set(target:name() .. "_" .. name)
+                    for _, file in ipairs(extra.files) do
+                        file = path.absolute(file, scriptdir)
+                        file = path.relative(file, os.projectdir())
+                        target_new:add("files", file, {defines = extra.defines,
+                                                       cflags = extra.cflags,
+                                                       cxflags = extra.cxflags,
+                                                       cxxflags = extra.cxxflags,
+                                                       undefines = extra.undefines,
+                                                       languages = extra.languages})
+                        project.target_add(target_new)
+                    end
+                    for _, file in ipairs(extra.remove_files) do
+                        file = path.absolute(file, scriptdir)
+                        file = path.relative(file, os.projectdir())
+                        target_new:remove("files", file)
+                    end
+                    if extra.kind then
+                        target_new:set("kind", kind)
+                    end
+                    if extra.frameworks then
+                        target_new:add("frameworks", extra.frameworks)
+                    end
+                    if extra.links then
+                        target_new:add("links", extra.links)
+                    end
+                    if extra.syslinks then
+                        target_new:add("syslinks", extra.syslinks)
+                    end
+                    if extra.packages then
+                        target_new:add("packages", extra.packages)
+                    end
+                    testinfo.target = target_new
+                end
+            end
+            if not testinfo.group then
+                testinfo.group = target:get("group")
+            end
+
+            local group = testinfo.group
+            if (not group_pattern) or (group_pattern and group and group:match(group_pattern)) then
+                tests[testname] = testinfo
+            end
+        end
+    end
+    return tests
 end
 
 function main()
@@ -306,41 +444,14 @@ function main()
         return remote_build_action()
     end
 
-    -- lock the whole project
-    project.lock()
-
     -- load config first
     task.run("config", {}, {disable_dump = true})
 
-    -- load targets
-    project.load_targets()
+    -- lock the whole project
+    project.lock()
 
     -- get tests
-    local tests = {}
-    local group_pattern = option.get("group")
-    if group_pattern then
-        group_pattern = "^" .. path.pattern(group_pattern) .. "$"
-    end
-    for _, target in ipairs(project.ordertargets()) do
-        if target:is_binary() or target:script("run") then
-            for _, name in ipairs(target:get("tests")) do
-                local extra = target:extraconf("tests", name)
-                local testname = target:name() .. "/" .. name
-                local testinfo = {name = testname, target = target}
-                if extra then
-                    table.join2(testinfo, extra)
-                end
-                if not testinfo.group then
-                    testinfo.group = target:get("group")
-                end
-
-                local group = testinfo.group
-                if (not group_pattern) or (group_pattern and group and group:match(group_pattern)) then
-                    tests[testname] = testinfo
-                end
-            end
-        end
-    end
+    local tests = get_tests()
     local test_patterns = option.get("tests")
     if test_patterns then
         local tests_new = {}
@@ -361,9 +472,24 @@ function main()
     -- build targets with the given tests first
     local targetnames = {}
     for _, testinfo in table.orderpairs(tests) do
-        table.insert(targetnames, testinfo.target:name())
+        local targetname = testinfo.target:name()
+        if testinfo.build_should_pass then
+            local passed, errors = _try_build_target(targetname)
+            testinfo.passed = passed
+            testinfo.errors = errors
+        elseif testinfo.build_should_fail then
+            local built, _ = _try_build_target(targetname)
+            testinfo.passed = not built
+            if built then
+                testinfo.errors = "Build succeeded when failure was expected"
+            end
+        else
+            table.insert(targetnames, targetname)
+        end
     end
-    build_action.build_targets(targetnames)
+    if #targetnames > 0 then
+        build_action.build_targets(targetnames)
+    end
 
     -- run tests
     _run_tests(tests)
@@ -374,4 +500,3 @@ function main()
     -- unlock the whole project
     project.unlock()
 end
-

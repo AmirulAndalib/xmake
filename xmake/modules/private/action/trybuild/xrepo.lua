@@ -50,7 +50,7 @@ function detect()
     local packagename = dirname
     local version = semver.match(dirname)
     if version then
-        local pos = dirname:find(version:rawstr(), 1, true)
+        local pos = dirname:find("v" .. version:rawstr(), 1, true) or dirname:find(version:rawstr(), 1, true)
         if pos then
             packagename = dirname:sub(1, pos - 1)
             if packagename:endswith("-") or packagename:endswith("_") then
@@ -65,19 +65,12 @@ function detect()
 
     -- search packages
     local result
-    local packages_found = search_packages(packagename, {require_version = version and version:rawstr() or nil})
+    local packages_found = search_packages(packagename, {description = false, require_version = version and version:rawstr() or nil})
     for name, packages in pairs(packages_found) do
         for _, package in ipairs(packages) do
-            if package.name == packagename then
+            if package.name == packagename or packagename:levenshtein(package.name) < 3 then
                 result = package
                 break
-            end
-        end
-    end
-    if not result then
-        for name, packages in pairs(packages_found) do
-            if #packages > 0 then
-                result = packages[1]
             end
         end
     end
@@ -118,9 +111,10 @@ function _get_common_configs(argv)
     if config.get("toolchain") then
         table.insert(argv, "--toolchain=" .. config.get("toolchain"))
     end
-    if config.get("vs_runtime") then
+    local runtimes = config.get("runtimes") or config.get("vs_runtime")
+    if runtimes then
         table.insert(argv, "-f")
-        table.insert(argv, "vs_runtime='" .. config.get("vs_runtime") .. "'")
+        table.insert(argv, "runtimes='" .. runtimes .. "'")
     end
 end
 
@@ -141,6 +135,21 @@ function _get_install_configs(argv)
     -- android
     if config.get("ndk") then
         table.insert(argv, "--ndk=" .. config.get("ndk"))
+    end
+    if option.get("ndk_sdkver") then
+        table.insert(argv, "--ndk_sdkver=" .. option.get("ndk_sdkver"))
+    end
+    if option.get("android_sdk") then
+        table.insert(argv, "--android_sdk=" .. option.get("android_sdk"))
+    end
+    if option.get("build_toolver") then
+        table.insert(argv, "--build_toolver=" .. option.get("build_toolver"))
+    end
+    if option.get("ndk_stdcxx") then
+        table.insert(argv, "--ndk_stdcxx=" .. option.get("ndk_stdcxx"))
+    end
+    if option.get("ndk_cxxstl") then
+        table.insert(argv, "--ndk_cxxstl=" .. option.get("ndk_cxxstl"))
     end
 
     -- mingw

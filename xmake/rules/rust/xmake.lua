@@ -40,27 +40,44 @@ rule("rust.build")
             target:data_set("inherit.links.exportlinks", false)
         elseif cratetype == "cdylib" then
             assert(target:is_shared(), "target(%s) must be shared kind for cratetype(cdylib)!", target:name())
-            target:add("shflags", "--crate-type=cdylib")
-            target:add("shflags", "-C prefer-dynamic")
+            target:add("shflags", "--crate-type=cdylib", {force = true})
+            target:add("shflags", "-C prefer-dynamic", {force = true})
         elseif target:is_static() then
             target:set("extension", ".rlib")
-            target:add("arflags", "--crate-type=lib")
+            target:add("arflags", "--crate-type=lib", {force = true})
             target:data_set("inherit.links.deplink", false)
         elseif target:is_shared() then
-            target:add("shflags", "--crate-type=dylib")
+            target:add("shflags", "--crate-type=dylib", {force = true})
             -- fix cannot satisfy dependencies so `std` only shows up once
             -- https://github.com/rust-lang/rust/issues/19680
             --
             -- but it will link dynamic @rpath/libstd-xxx.dylib,
             -- so we can no longer modify and set other rpath paths
-            target:add("shflags", "-C prefer-dynamic")
+            target:add("shflags", "-C prefer-dynamic", {force = true})
         elseif target:is_binary() then
-            target:add("ldflags", "--crate-type=bin")
+            target:add("ldflags", "--crate-type=bin", {force = true})
         end
 
         -- set edition
         local edition = target:values("rust.edition") or "2018"
         target:add("rcflags", "--edition", edition, {force = true})
+
+        -- set abort panic for no_std
+        -- https://github.com/xmake-io/xmake/issues/4929
+        local no_std = false
+        local sourcebatch = target:sourcebatches()["rust.build"]
+        if sourcebatch then
+            for _, sourcefile in ipairs(sourcebatch.sourcefiles) do
+                local content = io.readfile(sourcefile)
+                if content and content:find("#![no_std]", 1, true) then
+                    no_std = true
+                    break
+                end
+            end
+        end
+        if no_std then
+            target:add("rcflags", "-C panic=abort", {force = true})
+        end
     end)
     on_build("build.target")
 

@@ -23,6 +23,7 @@ import("core.base.option")
 import("core.base.hashset")
 import("core.project.project")
 import("private.check.checker")
+import("private.utils.target", {alias = "target_utils"})
 
 -- get the most probable value
 function _get_most_probable_value(value, valueset)
@@ -136,6 +137,20 @@ function _check_target(target, apiname, valueset, level, opt)
             end
         end
     end
+end
+
+-- check flag
+-- @see https://github.com/xmake-io/xmake/issues/3594
+function check_flag(target, toolinst, flagkind, flag)
+    local extraconf = target:extraconf(flagkind)
+    flag = target_utils.flag_belong_to_tool(target, flag, toolinst, extraconf)
+    if flag then
+        extraconf = extraconf and extraconf[flag]
+        if not extraconf or not extraconf.force then
+            return toolinst:has_flags(flag)
+        end
+    end
+    return true
 end
 
 -- check api configuration in targets

@@ -32,6 +32,8 @@ sandbox_core_package_package.installdir = package.installdir
 sandbox_core_package_package.searchdirs = package.searchdirs
 sandbox_core_package_package.targetplat = package.targetplat
 sandbox_core_package_package.targetarch = package.targetarch
+sandbox_core_package_package.apis       = package.apis
+sandbox_core_package_package.new        = package.new
 
 -- load the package from the project file
 function sandbox_core_package_package.load_from_project(packagename)
@@ -52,8 +54,8 @@ function sandbox_core_package_package.load_from_system(packagename)
 end
 
 -- load the package from repositories
-function sandbox_core_package_package.load_from_repository(packagename, repo, packagedir, packagefile)
-    local instance, errors = package.load_from_repository(packagename, repo, packagedir, packagefile)
+function sandbox_core_package_package.load_from_repository(packagename, packagedir, opt)
+    local instance, errors = package.load_from_repository(packagename, packagedir, opt)
     if not instance then
         raise(errors)
     end

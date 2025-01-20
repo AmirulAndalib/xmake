@@ -83,6 +83,8 @@ function nf_symbol(self, level)
             _g.symbol_maps = maps
         end
         return maps[level .. '_' .. kind] or maps[level]
+    elseif (kind == "dcld" or kind == "dcsh") and self:is_plat("windows") and level == "debug" then
+        return "-g"
     end
 end
 
@@ -141,6 +143,20 @@ function nf_linkdir(self, dir)
     end
 end
 
+-- make the framework flag
+function nf_framework(self, framework)
+    if self:is_plat("macosx") then
+        return {"-L-framework", "-L" .. framework}
+    end
+end
+
+-- make the frameworkdir flag
+function nf_frameworkdir(self, frameworkdir)
+    if self:is_plat("macosx") then
+        return {"-L-F" .. path.translate(frameworkdir)}
+    end
+end
+
 -- make the rpathdir flag
 function nf_rpathdir(self, dir)
     if not self:is_plat("windows") then
@@ -157,7 +173,8 @@ function nf_rpathdir(self, dir)
 end
 
 -- make the link arguments list
-function linkargv(self, objectfiles, targetkind, targetfile, flags)
+function linkargv(self, objectfiles, targetkind, targetfile, flags, opt)
+    opt = opt or {}
 
     -- add rpath for dylib (macho), e.g. -install_name @rpath/file.dylib
     local flags_extra = {}
@@ -167,7 +184,11 @@ function linkargv(self, objectfiles, targetkind, targetfile, flags)
     end
 
     -- init arguments
-    return self:program(), table.join(flags, flags_extra, "-of" .. targetfile, objectfiles)
+    local argv = table.join(flags, flags_extra, "-of" .. targetfile, objectfiles)
+    if is_host("windows") and not opt.rawargs then
+        argv = winos.cmdargv(argv, {escape = true})
+    end
+    return self:program(), argv
 end
 
 -- link the target file
@@ -182,8 +203,77 @@ function compargv(self, sourcefile, objectfile, flags)
 end
 
 -- compile the source file
-function compile(self, sourcefile, objectfile, dependinfo, flags)
-    os.mkdir(path.directory(objectfile))
-    os.runv(compargv(self, sourcefile, objectfile, flags))
-end
+function compile(self, sourcefile, objectfile, dependinfo, flags, opt)
 
+    -- ensure the object directory
+    os.mkdir(path.directory(objectfile))
+
+    -- compile it
+    opt = opt or {}
+    local depfile = dependinfo and os.tmpfile() or nil
+    try
+    {
+        function ()
+
+            -- generate includes file
+            local compflags = flags
+            if depfile then
+                compflags = table.join(compflags, "-makedeps=" .. depfile)
+            end
+
+            -- do compile
+            local program, argv = compargv(self, sourcefile, objectfile, compflags)
+            os.iorunv(program, argv, {envs = self:runenvs()})
+        end,
+        catch
+        {
+            function (errors)
+
+                -- try removing the old object file for forcing to rebuild this source file
+                os.tryrm(objectfile)
+
+                -- parse and strip errors
+                local lines = errors and tostring(errors):split('\n', {plain = true}) or {}
+                if not option.get("verbose") then
+
+                    -- find the start line of error
+                    local start = 0
+                    for index, line in ipairs(lines) do
+                        if line:find("Error:", 1, true) or line:find("错误：", 1, true) then
+                            start = index
+                            break
+                        end
+                    end
+
+                    -- get 16 lines of errors
+                    if start > 0 then
+                        lines = table.slice(lines, start, start + ((#lines - start > 16) and 16 or (#lines - start)))
+                    end
+                end
+
+                -- raise compiling errors
+                local results = #lines > 0 and table.concat(lines, "\n") or ""
+                if not option.get("verbose") then
+                    results = results .. "\n  ${yellow}> in ${bright}" .. sourcefile
+                end
+                raise(results)
+            end
+        },
+        finally
+        {
+            function (ok, outdata, errdata)
+
+                -- generate the dependent includes
+                if depfile and os.isfile(depfile) then
+                    if dependinfo then
+                        -- it use makefile/gcc compatiable format
+                        dependinfo.depfiles_gcc = io.readfile(depfile, {continuation = "\\"})
+                    end
+
+                    -- remove the temporary dependent file
+                    os.tryrm(depfile)
+                end
+            end
+        }
+    }
+end

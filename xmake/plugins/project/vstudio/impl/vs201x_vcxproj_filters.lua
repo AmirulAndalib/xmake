@@ -65,6 +65,7 @@ end
 -- make filter
 function _make_filter(filepath, target, vcxprojdir)
     local filter
+    local is_plain = false
     local filegroups = target.filegroups
     if filegroups then
         -- @see https://github.com/xmake-io/xmake/issues/2282
@@ -75,39 +76,48 @@ function _make_filter(filepath, target, vcxprojdir)
             local extraconf = filegroups_extraconf[filegroup] or {}
             local rootdir = extraconf.rootdir
             assert(rootdir, "please set root directory, e.g. add_filegroups(%s, {rootdir = 'xxx'})", filegroup)
-            if not path.is_absolute(rootdir) then
-                rootdir = path.absolute(rootdir, scriptdir)
-            end
-            local fileitem = path.relative(filepath, rootdir)
-            local files = extraconf.files or "**"
-            local mode = extraconf.mode
-            for _, filepattern in ipairs(files) do
-                filepattern = path.pattern(path.absolute(path.join(rootdir, filepattern)))
-                if filepath:match(filepattern) then
-                    if mode == "plain" then
-                        filter = path.normalize(filegroup)
-                    else
-                        -- file tree mode (default)
-                        filter = path.normalize(path.join(filegroup, path.directory(fileitem)))
+            for _, rootdir in ipairs(table.wrap(rootdir)) do
+                if not path.is_absolute(rootdir) then
+                    rootdir = path.absolute(rootdir, scriptdir)
+                end
+                local fileitem = path.relative(filepath, rootdir)
+                local files = extraconf.files or "**"
+                local mode = extraconf.mode
+                for _, filepattern in ipairs(files) do
+                    filepattern = path.pattern(path.absolute(path.join(rootdir, filepattern)))
+                    if filepath:match(filepattern) then
+                        if mode == "plain" then
+                            filter = path.normalize(filegroup)
+                            is_plain = true
+                        else
+                            -- file tree mode (default)
+                            if filegroup ~= "" then
+                                filter = path.normalize(path.join(filegroup, path.directory(fileitem)))
+                            else
+                                filter = path.normalize(path.directory(fileitem))
+                            end
+                        end
+                        goto found_filter
                     end
-                    if filter and filter == '.' then
-                        filter = nil
-                    end
-                    break
+                end
+                -- stop once a rootdir matches
+                if filter then
+                    goto found_filter
                 end
             end
+            ::found_filter::
         end
     end
-    if not filter then
+    if not filter and not is_plain then
         -- use the default filter rule
         filter = path.relative(path.absolute(path.directory(filepath)), target.scriptdir or vcxprojdir)
         -- @see https://github.com/xmake-io/xmake/issues/2039
         if filter then
             filter = _strip_dotdirs(filter)
         end
-        if filter and filter == '.' then
-            filter = nil
-        end
+    end
+    if filter and filter == '.' then
+        filter = nil
     end
     return filter
 end
@@ -118,7 +128,7 @@ function _make_filters(filtersfile, vsinfo, target, vcxprojdir)
     -- add filters
     filtersfile:enter("<ItemGroup>")
         local exists = {}
-        for _, filepath in pairs(table.join(target.sourcefiles, target.headerfiles)) do
+        for _, filepath in pairs(table.join(target.sourcefiles, target.headerfiles or {}, target.extrafiles)) do
             local filter = _make_filter(filepath, target, vcxprojdir)
             while filter and filter ~= '.' do
                 if not exists[filter] then
@@ -164,15 +174,13 @@ function _make_sources(filtersfile, vsinfo, target, vcxprojdir)
     filtersfile:leave("</ItemGroup>")
 end
 
--- make headers
-function _make_headers(filtersfile, vsinfo, target, vcxprojdir)
-
-    -- and headers
+-- make includes
+function _make_includes(filtersfile, vsinfo, target, vcxprojdir)
     filtersfile:enter("<ItemGroup>")
-        for _, headerfile in ipairs(target.headerfiles) do
-            local filter = _make_filter(headerfile, target, vcxprojdir)
+        for _, includefile in ipairs(table.join(target.headerfiles or {}, target.extrafiles)) do
+            local filter = _make_filter(includefile, target, vcxprojdir)
             if filter then
-                filtersfile:enter("<ClInclude Include=\"%s\">", path.relative(path.absolute(headerfile), vcxprojdir))
+                filtersfile:enter("<ClInclude Include=\"%s\">", path.relative(path.absolute(includefile), vcxprojdir))
                 filtersfile:print("<Filter>%s</Filter>", filter)
                 filtersfile:leave("</ClInclude>")
             end
@@ -205,8 +213,8 @@ function make(vsinfo, target)
     -- make sources
     _make_sources(filtersfile, vsinfo, target, vcxprojdir)
 
-    -- make headers
-    _make_headers(filtersfile, vsinfo, target, vcxprojdir)
+    -- make includes
+    _make_includes(filtersfile, vsinfo, target, vcxprojdir)
 
     -- make tailer
     _make_tailer(filtersfile, vsinfo)

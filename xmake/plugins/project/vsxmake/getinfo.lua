@@ -31,9 +31,9 @@ import("core.tool.toolchain")
 import("core.cache.memcache")
 import("core.cache.localcache")
 import("lib.detect.find_tool")
-import("private.action.run.make_runenvs")
+import("private.utils.target", {alias = "target_utils"})
+import("private.action.run.runenvs")
 import("private.action.require.install", {alias = "install_requires"})
-import("actions.config.configheader", {alias = "generate_configheader", rootdir = os.programdir()})
 import("actions.config.configfiles", {alias = "generate_configfiles", rootdir = os.programdir()})
 import("vstudio.impl.vsutils", {rootdir = path.join(os.programdir(), "plugins", "project")})
 
@@ -73,7 +73,7 @@ function _make_dirs(dir)
     return path.joinenv(r)
 end
 
-function _make_arrs(arr)
+function _make_arrs(arr, sep)
     if arr == nil then
         return ""
     end
@@ -82,19 +82,25 @@ function _make_arrs(arr)
     end
     local r = {}
     for k, v in ipairs(arr) do
-        r[k] = _make_arrs(v)
+        r[k] = _make_arrs(v, sep)
     end
     r = table.unique(r)
-    return table.concat(r, ";")
+    return table.concat(r, sep or ";")
 end
 
 -- get values from target
 function _get_values_from_target(target, name)
-    local values = table.wrap(target:get(name))
-    table.join2(values, target:get_from_opts(name))
-    table.join2(values, target:get_from_pkgs(name))
-    table.join2(values, target:get_from_deps(name, {interface = true}))
+    local values = {}
+    for _, value in ipairs((target:get_from(name, "*"))) do
+        table.join2(values, value)
+    end
     return table.unique(values)
+end
+
+-- get flags from target
+function _get_flags_from_target(target, name)
+    local flags = _get_values_from_target(target, name)
+    return target_utils.translate_flags_in_tool(target, name, flags)
 end
 
 -- make target info
@@ -131,11 +137,17 @@ function _make_targetinfo(mode, arch, target)
     targetinfo.configfiledir = _make_dirs(target:get("configdir"))
     targetinfo.includedirs   = _make_dirs(table.join(_get_values_from_target(target, "includedirs") or {}, _get_values_from_target(target, "sysincludedirs")))
     targetinfo.linkdirs      = _make_dirs(_get_values_from_target(target, "linkdirs"))
+    targetinfo.forceincludes = path.joinenv(table.wrap(_get_values_from_target(target, "forceincludes")))
     targetinfo.sourcedirs    = _make_dirs(_get_values_from_target(target, "values.project.vsxmake.sourcedirs"))
     targetinfo.pcheaderfile  = target:pcheaderfile("cxx") or target:pcheaderfile("c")
 
     -- save defines
     targetinfo.defines       = _make_arrs(_get_values_from_target(target, "defines"))
+
+    -- save flags
+    targetinfo.cflags        = _make_arrs(_get_flags_from_target(target, "cflags"), " ")
+    targetinfo.cxflags       = _make_arrs(_get_flags_from_target(target, "cxflags"), " ")
+    targetinfo.cxxflags      = _make_arrs(_get_flags_from_target(target, "cxxflags"), " ")
 
     -- save languages
     targetinfo.languages     = _make_arrs(_get_values_from_target(target, "languages"))
@@ -143,7 +155,7 @@ function _make_targetinfo(mode, arch, target)
         -- fix c++17 to cxx17 for Xmake.props
         targetinfo.languages = targetinfo.languages:replace("c++", "cxx", {plain = true})
     end
-    if target:is_phony() or target:is_headeronly() then
+    if target:is_phony() or target:is_headeronly() or target:is_moduleonly() or target:is_object() then
         return targetinfo
     end
 
@@ -159,8 +171,8 @@ function _make_targetinfo(mode, arch, target)
     end
 
     -- save runenvs
-    local runenvs = {}
-    local addrunenvs, setrunenvs = make_runenvs(target)
+    local targetrunenvs = {}
+    local addrunenvs, setrunenvs = runenvs.make(target)
     for k, v in table.orderpairs(target:pkgenvs()) do
         addrunenvs = addrunenvs or {}
         addrunenvs[k] = table.join(table.wrap(addrunenvs[k]), path.splitenv(v))
@@ -175,25 +187,25 @@ function _make_targetinfo(mode, arch, target)
         -- https://github.com/xmake-io/xmake/issues/3391
         v = table.unique(v)
         if k:upper() == "PATH" then
-            runenvs[k] = _make_dirs(v) .. ";$([System.Environment]::GetEnvironmentVariable('" .. k .. "'))"
+            targetrunenvs[k] = _make_dirs(v) .. ";$([System.Environment]::GetEnvironmentVariable('" .. k .. "'))"
         else
-            runenvs[k] = path.joinenv(v) .. ";$([System.Environment]::GetEnvironmentVariable('" .. k .."'))"
+            targetrunenvs[k] = path.joinenv(v) .. ";$([System.Environment]::GetEnvironmentVariable('" .. k .."'))"
         end
     end
     for k, v in table.orderpairs(setrunenvs) do
         if #v == 1 then
             v = v[1]
             if path.is_absolute(v) and v:startswith(project.directory()) then
-                runenvs[k] = _make_dirs(v)
+                targetrunenvs[k] = _make_dirs(v)
             else
-                runenvs[k] = v[1]
+                targetrunenvs[k] = v[1]
             end
         else
-            runenvs[k] = path.joinenv(v)
+            targetrunenvs[k] = path.joinenv(v)
         end
     end
     local runenvstr = {}
-    for k, v in table.orderpairs(runenvs) do
+    for k, v in table.orderpairs(targetrunenvs) do
         table.insert(runenvstr, k .. "=" .. v)
     end
     targetinfo.runenvs = table.concat(runenvstr, "\n")
@@ -289,88 +301,34 @@ function _make_vsinfo_groups()
     for targetname, target in table.orderpairs(project.targets()) do
         local group_path = target:get("group")
         if group_path and #(group_path:trim()) > 0 then
+            group_path = path.normalize(group_path)
             local group_name = path.filename(group_path)
             local group_names = path.split(group_path)
+            local group_current_path
             for idx, name in ipairs(group_names) do
-                local group = groups["group." .. name] or {}
+                group_current_path = group_current_path and path.join(group_current_path, name) or name
+                local group = groups["group." .. group_current_path] or {}
                 group.group = name
-                group.group_id = hash.uuid4("group." .. name)
+                group.group_id = hash.uuid4("group." .. group_current_path)
                 if idx > 1 then
-                    group_deps["group_dep." .. name] = {current_id = group.group_id, parent_id = hash.uuid4("group." .. group_names[idx - 1])}
+                    group_deps["group_dep." .. group_current_path] = {
+                        current_id = group.group_id,
+                        parent_id = hash.uuid4("group." .. path.directory(group_current_path))}
                 end
-                groups["group." .. name] = group
+                groups["group." .. group_current_path] = group
             end
-            group_deps["group_dep.target." .. targetname] = {current_id = hash.uuid4(targetname), parent_id = groups["group." .. group_name].group_id}
+            group_deps["group_dep.target." .. targetname] = {
+                current_id = hash.uuid4(targetname),
+                parent_id = groups["group." .. group_path].group_id}
         end
     end
     return groups, group_deps
 end
 
--- config target
-function _config_target(target)
-    for _, rule in ipairs(target:orderules()) do
-        local on_config = rule:script("config")
-        if on_config then
-            on_config(target)
-        end
-    end
-    local on_config = target:script("config")
-    if on_config then
-        on_config(target)
-    end
-end
-
--- config targets
-function _config_targets()
-    for _, target in ipairs(project.ordertargets()) do
-        if target:is_enabled() then
-            _config_target(target)
-        end
-    end
-end
-
--- load rules in the required packages for target
-function _load_package_rules_for_target(target)
-    for _, rulename in ipairs(target:get("rules")) do
-        local packagename = rulename:match("@(.-)/")
-        if packagename then
-            local pkginfo = project.required_package(packagename)
-            if pkginfo then
-                local r = pkginfo:rule(rulename)
-                if r then
-                    target:rule_add(r)
-                    for _, dep in pairs(r:deps()) do
-                        target:rule_add(dep)
-                    end
-                end
-            end
-        end
-    end
-end
-
--- load rules in the required packages for targets
--- @see https://github.com/xmake-io/xmake/issues/2374
---
--- @code
--- add_requires("zlib", {system = false})
--- target("test")
---    set_kind("binary")
---    add_files("src/*.cpp")
---    add_packages("zlib")
---    add_rules("@zlib/test")
--- @endcode
---
-function _load_package_rules_for_targets()
-    for _, target in ipairs(project.ordertargets()) do
-        if target:is_enabled() then
-            _load_package_rules_for_target(target)
-        end
-    end
-end
-
 -- make filter
 function _make_filter(filepath, target, vcxprojdir)
     local filter
+    local is_plain = false
     local filegroups = target.filegroups
     if filegroups then
         -- @see https://github.com/xmake-io/xmake/issues/2282
@@ -381,39 +339,48 @@ function _make_filter(filepath, target, vcxprojdir)
             local extraconf = filegroups_extraconf[filegroup] or {}
             local rootdir = extraconf.rootdir
             assert(rootdir, "please set root directory, e.g. add_filegroups(%s, {rootdir = 'xxx'})", filegroup)
-            if not path.is_absolute(rootdir) then
-                rootdir = path.absolute(rootdir, scriptdir)
-            end
-            local fileitem = path.relative(filepath, rootdir)
-            local files = extraconf.files or "**"
-            local mode = extraconf.mode
-            for _, filepattern in ipairs(files) do
-                filepattern = path.pattern(path.absolute(path.join(rootdir, filepattern)))
-                if filepath:match(filepattern) then
-                    if mode == "plain" then
-                        filter = path.normalize(filegroup)
-                    else
-                        -- file tree mode (default)
-                        filter = path.normalize(path.join(filegroup, path.directory(fileitem)))
+            for _, rootdir in ipairs(table.wrap(rootdir)) do
+                if not path.is_absolute(rootdir) then
+                    rootdir = path.absolute(rootdir, scriptdir)
+                end
+                local fileitem = path.relative(filepath, rootdir)
+                local files = extraconf.files or "**"
+                local mode = extraconf.mode
+                for _, filepattern in ipairs(files) do
+                    filepattern = path.pattern(path.absolute(path.join(rootdir, filepattern)))
+                    if filepath:match(filepattern) then
+                        if mode == "plain" then
+                            filter = path.normalize(filegroup)
+                            is_plain = true
+                        else
+                            -- file tree mode (default)
+                            if filegroup ~= "" then
+                                filter = path.normalize(path.join(filegroup, path.directory(fileitem)))
+                            else
+                                filter = path.normalize(path.directory(fileitem))
+                            end
+                        end
+                        goto found_filter
                     end
-                    if filter and filter == '.' then
-                        filter = nil
-                    end
-                    break
+                end
+                -- stop once a rootdir matches
+                if filter then
+                    goto found_filter
                 end
             end
+            ::found_filter::
         end
     end
-    if not filter then
+    if not filter and not is_plain then
         -- use the default filter rule
         filter = path.relative(path.absolute(path.directory(filepath)), vcxprojdir)
         -- @see https://github.com/xmake-io/xmake/issues/2039
         if filter then
             filter = _strip_dotdirs(filter)
         end
-        if filter and filter == '.' then
-            filter = nil
-        end
+    end
+    if filter and filter == '.' then
+        filter = nil
     end
     return filter
 end
@@ -428,6 +395,7 @@ function main(outputdir, vsinfo)
     -- init solution directory
     vsinfo.solution_dir = path.absolute(path.join(outputdir, "vsxmake" .. vsinfo.vstudio_version))
     vsinfo.programdir = _make_dirs(xmake.programdir())
+    vsinfo.programfile = xmake.programfile()
     vsinfo.projectdir = project.directory()
     vsinfo.sln_projectfile = path.relative(project.rootfile(), vsinfo.solution_dir)
     local projectfile = path.filename(project.rootfile())
@@ -497,20 +465,16 @@ function main(outputdir, vsinfo)
             platform.load(config.plat(), arch):check()
 
             -- check project options
-            project.check()
+            project.check_options()
 
             -- install and update requires
             install_requires()
 
-            -- load package rules for targets
-            _load_package_rules_for_targets()
-
-            -- config targets
-            _config_targets()
+            -- load targets
+            project.load_targets()
 
             -- update config files
             generate_configfiles()
-            generate_configheader()
 
             -- ensure to enter project directory
             os.cd(project.directory())
@@ -545,14 +509,32 @@ function main(outputdir, vsinfo)
                 -- save all sourcefiles and headerfiles
                 _target.sourcefiles = table.unique(table.join(_target.sourcefiles or {}, (target:sourcefiles())))
                 _target.headerfiles = table.unique(table.join(_target.headerfiles or {}, (target:headerfiles())))
+                _target.extrafiles = table.unique(table.join(_target.extrafiles or {}, (target:extrafiles())))
 
                 -- sort them to stabilize generation
                 table.sort(_target.sourcefiles)
                 table.sort(_target.headerfiles)
+                table.sort(_target.extrafiles)
 
                 -- save file groups
-                _target.filegroups = target:get("filegroups")
-                _target.filegroups_extraconf = target:extraconf("filegroups")
+                _target.filegroups = table.unique(table.join(_target.filegroups or {}, target:get("filegroups")))
+
+                for filegroup, groupconf in pairs(target:extraconf("filegroups")) do
+                    _target.filegroups_extraconf = _target.filegroups_extraconf or {}
+                    local mergedconf = _target.filegroups_extraconf[filegroup]
+                    if not mergedconf then
+                        mergedconf = {}
+                        _target.filegroups_extraconf[filegroup] = mergedconf
+                    end
+
+                    if groupconf.rootdir then
+                        mergedconf.rootdir = table.unique(table.join(mergedconf.rootdir or {}, table.wrap(groupconf.rootdir)))
+                    end
+                    if groupconf.files then
+                        mergedconf.files = table.unique(table.join(mergedconf.files or {}, table.wrap(groupconf.files)))
+                    end
+                    mergedconf.plain = groupconf.plain or mergedconf.plain
+                end
 
                 -- save deps
                 _target.deps = table.unique(table.join(_target.deps or {}, table.orderkeys(target:deps()), nil))
@@ -567,7 +549,8 @@ function main(outputdir, vsinfo)
         local root = target.absscriptdir or projectdir
         target.sourcefiles = table.imap(target.sourcefiles, function(_, v) return path.relative(v, projectdir) end)
         target.headerfiles = table.imap(target.headerfiles, function(_, v) return path.relative(v, projectdir) end)
-        for _, f in ipairs(table.join(target.sourcefiles, target.headerfiles)) do
+        target.extrafiles = table.imap(target.extrafiles, function(_, v) return path.relative(v, projectdir) end)
+        for _, f in ipairs(table.join(target.sourcefiles, target.headerfiles or {}, target.extrafiles)) do
             local dir = _make_filter(f, target, root)
             local escaped_f = vsutils.escape(f)
             target._paths[f] =
@@ -595,15 +578,15 @@ function main(outputdir, vsinfo)
         end
     end
 
-    -- we need set startup project for default or binary target
+    -- we need to set startup project for default or binary target
     -- @see https://github.com/xmake-io/xmake/issues/1249
     local targetnames = {}
     for targetname, target in table.orderpairs(project.targets()) do
         if target:get("default") == true then
             table.insert(targetnames, 1, targetname)
         elseif target:is_binary() then
-            local first_target = targetnames[1] and project.target(targetnames[1])
-            if not first_target or first_target:is_default() then
+            local first_target = targetnames[1] and project.target(targetnames[1], {namespace = target:namespace()})
+            if not first_target or first_target:get("default") ~= true then
                 table.insert(targetnames, 1, targetname)
             else
                 table.insert(targetnames, targetname)

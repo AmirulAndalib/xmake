@@ -62,11 +62,10 @@ function _check_targets(targetname, group_pattern)
     end
 end
 
--- main
 function main()
 
-    -- local config first
-    config.load()
+    -- load config first
+    task.run("config", {require = false}, {disable_dump = true})
 
     -- check targets first
     local targetname
@@ -114,7 +113,10 @@ function main()
                 if sudo.has() and option.get("admin") then
 
                     -- install target with administrator permission
-                    sudo.execl(path.join(os.scriptdir(), "install_admin.lua"), {targetname or (option.get("all") and "__all" or "__def"), group_pattern, option.get("installdir"), option.get("prefix")})
+                    sudo.execl(path.join(os.scriptdir(), "install_admin.lua"), {
+                        targetname or (option.get("all") and "__all" or "__def"),
+                        group_pattern or "", option.get("installdir") or "",
+                        option.get("prefix")})
                     cprint("${color.success}install ok!")
                     ok = true
                 end

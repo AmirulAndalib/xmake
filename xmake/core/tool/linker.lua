@@ -28,6 +28,7 @@ local utils     = require("base/utils")
 local table     = require("base/table")
 local string    = require("base/string")
 local option    = require("base/option")
+local profiler  = require("base/profiler")
 local config    = require("project/config")
 local sandbox   = require("sandbox/sandbox")
 local language  = require("language/language")
@@ -59,13 +60,10 @@ end
 
 -- add flags from the linker
 function linker:_add_flags_from_linker(flags)
-
-    -- add flags
     local toolkind = self:kind()
     for _, flagkind in ipairs(self:_flagkinds()) do
-
         -- attempt to add special lanugage flags first, e.g. gcldflags, dcarflags
-        table.join2(flags, self:get(toolkind .. 'flags') or self:get(flagkind))
+        table.join2(flags, self:get(toolkind .. "flags") or self:get(flagkind))
     end
 end
 
@@ -90,8 +88,18 @@ function linker._load_tool(targetkind, sourcekinds, target)
             program, toolname, toolchain_info = target:tool(_linkerinfo.linkerkind)
         end
 
+        -- is host?
+        local is_host
+        if target and target.is_host then
+            is_host = target:is_host()
+        end
+
         -- load the linker tool from the linker kind (with cache)
-        linkertool, errors = tool.load(_linkerinfo.linkerkind, {program = program, toolname = toolname, toolchain_info = toolchain_info})
+        linkertool, errors = tool.load(_linkerinfo.linkerkind, {
+            host = is_host,
+            program = program,
+            toolname = toolname,
+            toolchain_info = toolchain_info})
         if linkertool then
             linkerinfo = _linkerinfo
             linkerinfo.program = program
@@ -113,7 +121,7 @@ function linker.load(targetkind, sourcekinds, target)
     -- wrap sourcekinds first
     sourcekinds = table.wrap(sourcekinds)
     if #sourcekinds == 0 then
-        -- we need detect the sourcekinds of all deps if the current target has not any source files
+        -- we need to detect the sourcekinds of all deps if the current target has not any source files
         for _, dep in ipairs(target:orderdeps()) do
             table.join2(sourcekinds, dep:sourcekinds())
         end
@@ -132,68 +140,84 @@ function linker.load(targetkind, sourcekinds, target)
     local linkerinfo = linkerinfo_or_errors
 
     -- init cache key
-    local cachekey = targetkind .. "_" .. linkerinfo.linkerkind .. (linkerinfo.program or "") .. (config.get("arch") or os.arch())
+    local plat = linkertool:plat() or config.plat() or os.host()
+    local arch = linkertool:arch() or config.arch() or os.arch()
+    local cachekey = targetkind .. "_" .. linkerinfo.linkerkind .. (linkerinfo.program or "") .. plat .. arch
+    cachekey = cachekey .. table.concat(sourcekinds, "") -- @see https://github.com/xmake-io/xmake/issues/5360
 
     -- get it directly from cache dirst
     builder._INSTANCES = builder._INSTANCES or {}
-    if builder._INSTANCES[cachekey] then
-        return builder._INSTANCES[cachekey]
-    end
+    local instance = builder._INSTANCES[cachekey]
+    if not instance then
 
-    -- new instance
-    local instance = table.inherit(linker, builder)
+        -- new instance
+        instance = table.inherit(linker, builder)
 
-    -- save linker tool
-    instance._TOOL = linkertool
+        -- save linker tool
+        instance._TOOL = linkertool
 
-    -- load the name flags of archiver
-    local nameflags = {}
-    local nameflags_exists = {}
-    for _, sourcekind in ipairs(sourcekinds) do
+        -- load the name flags of archiver
+        local nameflags = {}
+        local nameflags_exists = {}
+        for _, sourcekind in ipairs(sourcekinds) do
 
-        -- load language
-        local result, errors = language.load_sk(sourcekind)
-        if not result then
-            return nil, errors
-        end
+            -- load language
+            local result, errors = language.load_sk(sourcekind)
+            if not result then
+                return nil, errors
+            end
 
-        -- merge name flags
-        for _, flaginfo in ipairs(table.wrap(result:nameflags()[targetkind])) do
-            local key = flaginfo[1] .. flaginfo[2]
-            if not nameflags_exists[key] then
-                table.insert(nameflags, flaginfo)
-                nameflags_exists[key] = flaginfo
+            -- merge name flags
+            for _, flaginfo in ipairs(table.wrap(result:nameflags()[targetkind])) do
+                local key = flaginfo[1] .. flaginfo[2]
+                if not nameflags_exists[key] then
+                    table.insert(nameflags, flaginfo)
+                    nameflags_exists[key] = flaginfo
+                end
             end
         end
+        instance._NAMEFLAGS = nameflags
+
+        -- init target (optional)
+        instance._TARGET = target
+
+        -- init target kind
+        instance._TARGETKIND = targetkind
+
+        -- init flag kinds
+        instance._FLAGKINDS = {linkerinfo.linkerflag}
+
+        -- add toolchains flags to the linker tool
+        -- add special lanugage flags first, e.g. go.gcldflags or gcc.ldflags or gcldflags or ldflags
+        local toolkind = linkertool:kind()
+        local toolname = linkertool:name()
+        if target and target.toolconfig then
+            for _, flagkind in ipairs(instance:_flagkinds()) do
+                linkertool:add(toolkind .. 'flags', target:toolconfig(toolname .. '.' .. toolkind .. 'flags') or target:toolconfig(toolkind .. 'flags'))
+                linkertool:add(flagkind, target:toolconfig(toolname .. '.' .. flagkind) or target:toolconfig(flagkind))
+            end
+        else
+            for _, flagkind in ipairs(instance:_flagkinds()) do
+                linkertool:add(toolkind .. 'flags', platform.toolconfig(toolname .. '.' .. toolkind .. 'flags') or platform.toolconfig(toolkind .. 'flags'))
+                linkertool:add(flagkind, platform.toolconfig(toolname .. '.' .. flagkind) or platform.toolconfig(flagkind))
+            end
+        end
+
+        -- @note we can't call _load_once before caching the instance,
+        -- it may call has_flags to trigger the concurrent scheduling.
+        --
+        -- this will result in more compiler/linker instances being created at the same time,
+        -- and they will access the same tool instance at the same time.
+        --
+        -- @see https://github.com/xmake-io/xmake/issues/3429
+        builder._INSTANCES[cachekey] = instance
     end
-    instance._NAMEFLAGS = nameflags
 
-    -- init target (optional)
-    instance._TARGET = target
-
-    -- init target kind
-    instance._TARGETKIND = targetkind
-
-    -- init flag kinds
-    instance._FLAGKINDS = {linkerinfo.linkerflag}
-
-    -- save this instance
-    builder._INSTANCES[cachekey] = instance
-
-    -- add toolchains flags to the linker tool
-    -- add special lanugage flags first, e.g. go.gcldflags or gcc.ldflags or gcldflags or ldflags
-    local toolkind = linkertool:kind()
-    local toolname = linkertool:name()
-    if target and target.toolconfig then
-        for _, flagkind in ipairs(instance:_flagkinds()) do
-            linkertool:add(toolkind .. 'flags', target:toolconfig(toolname .. '.' .. toolkind .. 'flags') or target:toolconfig(toolkind .. 'flags'))
-            linkertool:add(flagkind, target:toolconfig(toolname .. '.' .. flagkind) or target:toolconfig(flagkind))
-        end
-    else
-        for _, flagkind in ipairs(instance:_flagkinds()) do
-            linkertool:add(toolkind .. 'flags', platform.toolconfig(toolname .. '.' .. toolkind .. 'flags') or platform.toolconfig(toolkind .. 'flags'))
-            linkertool:add(flagkind, platform.toolconfig(toolname .. '.' .. flagkind) or platform.toolconfig(flagkind))
-        end
+    -- we need to load it at the end because in tool.load().
+    -- because we may need to call has_flags, which requires the full platform toolchain flags
+    local ok, errors = linkertool:_load_once()
+    if not ok then
+        return nil, errors
     end
     return instance
 end
@@ -204,7 +228,10 @@ function linker:link(objectfiles, targetfile, opt)
     local linkflags = opt.linkflags or self:linkflags(opt)
     opt = table.copy(opt)
     opt.target = self:target()
-    return sandbox.load(self:_tool().link, self:_tool(), table.wrap(objectfiles), self:_targetkind(), targetfile, linkflags, opt)
+    profiler:enter(self:name(), "link", targetfile)
+    local ok, errors = sandbox.load(self:_tool().link, self:_tool(), table.wrap(objectfiles), self:_targetkind(), targetfile, linkflags, opt)
+    profiler:leave(self:name(), "link", targetfile)
+    return ok, errors
 end
 
 -- get the link arguments list

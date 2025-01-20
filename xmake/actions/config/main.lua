@@ -30,8 +30,7 @@ import("core.cache.localcache")
 import("scangen")
 import("menuconf", {alias = "menuconf_show"})
 import("configfiles", {alias = "generate_configfiles"})
-import("configheader", {alias = "generate_configheader"})
-import("private.action.require.check", {alias = "check_packages"})
+import("private.action.require.register", {alias = "register_packages"})
 import("private.action.require.install", {alias = "install_packages"})
 import("private.service.remote_build.action", {alias = "remote_build_action"})
 
@@ -52,6 +51,7 @@ function _option_filter(name)
     ,   export      = true
     ,   import      = true
     ,   check       = true
+    ,   menu        = true
     }
     return not options[name]
 end
@@ -90,8 +90,8 @@ function _need_check(changed)
         changed = true
     end
 
-    -- xmake has been updated? force to check config again
-    -- we need clean the dirty config cache of the old version
+    -- Has xmake been updated? force to check config again
+    -- we need to clean the dirty config cache of the old version
     if not changed then
         if os.mtime(path.join(os.programdir(), "core", "main.lua")) > os.mtime(config.filepath()) then
             changed = true
@@ -101,20 +101,23 @@ function _need_check(changed)
 end
 
 -- check target
-function _check_target(target)
-    for _, depname in ipairs(target:get("deps")) do
-        assert(depname ~= target:name(), "the target(%s) cannot depend self!", depname)
-        local deptarget = project.target(depname)
-        assert(deptarget, "unknown target(%s) for %s.deps!", depname, target:name())
-        _check_target(deptarget)
+function _check_target(target, checked_targets)
+    if not checked_targets[target:fullname()] then
+        checked_targets[target:fullname()] = target
+        for _, depname in ipairs(target:get("deps")) do
+            local deptarget = project.target(depname, {namespace = target:namespace()})
+            assert(deptarget, "unknown target(%s) for %s.deps!", depname, target:fullname())
+            _check_target(deptarget, checked_targets)
+        end
     end
 end
 
 -- check targets
 function _check_targets()
     assert(not project.is_loaded(), "project and targets may have been loaded early!")
+    local checked_targets = {}
     for _, target in pairs(project.targets()) do
-        _check_target(target)
+        _check_target(target, checked_targets)
     end
 end
 
@@ -126,6 +129,12 @@ function _check_target_toolchains()
         if target:is_enabled() and (target:get("toolchains") or
                                     not target:is_plat(config.get("plat")) or
                                     not target:is_arch(config.get("arch"))) then
+
+            -- check platform toolchains first
+            -- `target/set_plat()` and target:toolchains() need it
+            target:platform():check()
+
+            -- check target toolchains next
             local target_toolchains = target:get("toolchains")
             if target_toolchains then
                 target_toolchains = hashset.from(table.wrap(target_toolchains))
@@ -134,12 +143,6 @@ function _check_target_toolchains()
                     if not toolchain_inst:check() and target_toolchains:has(toolchain_inst:name()) then
                         raise("toolchain(\"%s\"): not found!", toolchain_inst:name())
                     end
-                end
-            else
-                -- check platform toolchains for `target/set_plat()`
-                local ok, errors = target:platform():check()
-                if not ok then
-                    raise(errors)
                 end
             end
         elseif not target:get("toolset") then
@@ -151,72 +154,6 @@ function _check_target_toolchains()
                 end
             end
             assert(toolchain_found, "target(%s): toolchain not found!", target:name())
-        end
-    end
-end
-
--- config target
-function _config_target(target)
-    local oldenvs = os.addenvs(target:pkgenvs())
-    for _, rule in ipairs(target:orderules()) do
-        local on_config = rule:script("config")
-        if on_config then
-            on_config(target)
-        end
-    end
-    local on_config = target:script("config")
-    if on_config then
-        on_config(target)
-    end
-    if oldenvs then
-        os.setenvs(oldenvs)
-    end
-end
-
--- config targets
-function _config_targets()
-    for _, target in ipairs(project.ordertargets()) do
-        if target:is_enabled() then
-            _config_target(target)
-        end
-    end
-end
-
--- load rules in the required packages for target
-function _load_package_rules_for_target(target)
-    for _, rulename in ipairs(target:get("rules")) do
-        local packagename = rulename:match("@(.-)/")
-        if packagename then
-            local pkginfo = project.required_package(packagename)
-            if pkginfo then
-                local r = pkginfo:rule(rulename)
-                if r then
-                    target:rule_add(r)
-                    for _, dep in pairs(r:deps()) do
-                        target:rule_add(dep)
-                    end
-                end
-            end
-        end
-    end
-end
-
--- load rules in the required packages for targets
--- @see https://github.com/xmake-io/xmake/issues/2374
---
--- @code
--- add_requires("zlib", {system = false})
--- target("test")
---    set_kind("binary")
---    add_files("src/*.cpp")
---    add_packages("zlib")
---    add_rules("@zlib/test")
--- @endcode
---
-function _load_package_rules_for_targets()
-    for _, target in ipairs(project.ordertargets()) do
-        if target:is_enabled() then
-            _load_package_rules_for_target(target)
         end
     end
 end
@@ -275,7 +212,6 @@ function _export_configs()
     end
 end
 
--- main entry
 function main(opt)
 
     -- do action for remote?
@@ -283,7 +219,7 @@ function main(opt)
         return remote_build_action()
     end
 
-    -- avoid to run this task repeatly
+    -- avoid running this task repeatly
     opt = opt or {}
     if _g.configured then return end
     _g.configured = true
@@ -338,7 +274,7 @@ force to build in current directory via run `xmake -P .`]], os.projectdir())
     local importfile = option.get("import")
     if importfile then
         assert(os.isfile(importfile), "%s not found!", importfile)
-        -- we need use readonly, @see https://github.com/xmake-io/xmake/issues/2278
+        -- we need to use readonly, @see https://github.com/xmake-io/xmake/issues/2278
         local import_configs = io.load(importfile)
         if import_configs then
             for name, value in pairs(import_configs) do
@@ -357,7 +293,7 @@ force to build in current directory via run `xmake -P .`]], os.projectdir())
         options = options or options_history
     end
     for name, value in pairs(options) do
-        -- options is changed by argument options?
+        -- Is options changed by argument options?
         options_changed = options_changed or options_history[name] ~= value
         -- @note override it and mark as readonly (highest priority)
         config.set(name, value, {readonly = true})
@@ -417,11 +353,12 @@ force to build in current directory via run `xmake -P .`]], os.projectdir())
             localcache.clear("config")
         end
 
-        -- clear detection cache
+        -- clear some local caches
         localcache.clear("detect")
         localcache.clear("option")
         localcache.clear("package")
         localcache.clear("toolchain")
+        localcache.clear("cxxmodules")
         localcache.set("config", "recheck", true)
         localcache.save()
 
@@ -430,7 +367,7 @@ force to build in current directory via run `xmake -P .`]], os.projectdir())
 
         -- check project options
         if not trybuild then
-            project.check()
+            project.check_options()
         end
     end
 
@@ -446,13 +383,13 @@ force to build in current directory via run `xmake -P .`]], os.projectdir())
         -- check configs
         _check_configs()
 
-        -- install and update packages
+        -- install and register packages
         local require_enable = option.boolean(option.get("require"))
         if (recheck or require_enable) then
             if require_enable ~= false then
                 install_packages()
             else
-                check_packages()
+                register_packages()
             end
         end
 
@@ -460,22 +397,16 @@ force to build in current directory via run `xmake -P .`]], os.projectdir())
         -- otherwise has_package() will be invalid.
         _check_targets()
 
-        -- update the config files
-        generate_configfiles({force = recheck})
-        if recheck then
-            generate_configheader()
-        end
-
         -- check target toolchains
         if recheck then
             _check_target_toolchains()
         end
 
-        -- load package rules for targets
-        _load_package_rules_for_targets()
+        -- load targets
+        project.load_targets({recheck = recheck})
 
-        -- config targets
-        _config_targets()
+        -- update the config files
+        generate_configfiles({force = recheck})
     end
 
     -- dump config
@@ -488,7 +419,7 @@ force to build in current directory via run `xmake -P .`]], os.projectdir())
         _export_configs()
     end
 
-    -- we need save it and enable external working mode
+    -- we need to save it and enable external working mode
     -- if we configure the given project directory
     --
     -- @see https://github.com/xmake-io/xmake/issues/3342

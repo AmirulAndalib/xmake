@@ -68,11 +68,11 @@ function _checkout(package, resource_name, resource_url, resource_revision)
     -- remove temporary directory
     os.rm(resourcedir)
 
-    -- we need enable longpaths on windows
+    -- we need to enable longpaths on windows
     local longpaths = package:policy("platform.longpaths")
 
     -- clone whole history and tags
-    git.clone(resource_url, {longpaths = longpaths, outputdir = resourcedir})
+    git.clone(resource_url, {treeless = true, checkout = false, longpaths = longpaths, outputdir = resourcedir})
 
     -- attempt to checkout the given version
     git.checkout(resource_revision, {repodir = resourcedir})
@@ -100,7 +100,7 @@ function _download(package, resource_name, resource_url, resource_hash)
 
     -- the package file have been downloaded?
     local cached = true
-    if option.get("force") or not os.isfile(resource_file) or resource_hash ~= hash.sha256(resource_file) then
+    if not os.isfile(resource_file) or resource_hash ~= hash.sha256(resource_file) then
 
         -- no cached
         cached = false
@@ -113,6 +113,8 @@ function _download(package, resource_name, resource_url, resource_hash)
         if localfile and os.isfile(localfile) then
             -- we can use local resource from the search directories directly if network is too slow
             os.cp(localfile, resource_file)
+        elseif os.isfile(resource_url) then
+            os.cp(resource_url, resource_file)
         elseif resource_url:find(string.ipattern("https-://")) or resource_url:find(string.ipattern("ftps-://")) then
             http.download(resource_url, resource_file, {
                 insecure = global.get("insecure-ssl"),
@@ -123,7 +125,8 @@ function _download(package, resource_name, resource_url, resource_hash)
 
         -- check hash
         if resource_hash and resource_hash ~= hash.sha256(resource_file) then
-            raise("resource(%s): unmatched checksum!", resource_url)
+            raise("resource(%s): unmatched checksum, current hash(%s) != original hash(%s)", resource_url,
+                hash.sha256(resource_file):sub(1, 8), resource_hash:sub(1, 8))
         end
     end
 
@@ -131,19 +134,26 @@ function _download(package, resource_name, resource_url, resource_hash)
     local resourcedir = package:resourcedir(resource_name)
     local resourcedir_tmp = resourcedir .. ".tmp"
     os.tryrm(resourcedir_tmp)
-    if archive.extract(resource_file, resourcedir_tmp) then
+    local extension = archive.extension(resource_file)
+    local ok = try {function() archive.extract(resource_file, resourcedir_tmp); return true end}
+    if ok then
         os.tryrm(resourcedir)
         os.mv(resourcedir_tmp, resourcedir)
-    else
+    elseif extension and extension ~= "" then
         os.tryrm(resourcedir_tmp)
+        os.tryrm(resourcedir)
         raise("cannot extract %s", resource_file)
+    else
+        -- if it is not archive file, we only need to create empty resource directory and use package:resourcefile(resource_name)
+        os.tryrm(resourcedir)
+        os.mkdir(resourcedir)
     end
 end
 
 -- download all resources of the given package
 function main(package)
 
-    -- we need not download it if we use the precompiled artifacts to install package
+    -- we don't need to download it if we use the precompiled artifacts to install package
     if package:is_precompiled() then
         return
     end

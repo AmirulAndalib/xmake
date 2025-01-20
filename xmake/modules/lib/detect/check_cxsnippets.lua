@@ -56,29 +56,35 @@ end
 -- sigsetjmp{int a = 0; sigsetjmp((void*)a, a);}
 --
 function _funccode(funcinfo)
-
-    -- parse function code
     local code = string.match(funcinfo, ".+{(.+)}")
     if code == nil then
         local pos = funcinfo:find("%(")
         if pos then
             code = funcinfo
         else
-            code = string.format("volatile void* p%s = (void*)&%s;", funcinfo, funcinfo)
+            code = string.format("volatile void* p%s = (void*)&%s; if (p%s) {}", funcinfo, funcinfo, funcinfo)
         end
     end
-
-    -- ok
     return code
 end
 
 -- make source code
 function _sourcecode(snippets, opt)
 
+    -- has main()?
+    local has_main = false
+    for _, snippet in pairs(snippets) do
+        -- find int main(int argc, char** argv) {}
+        if snippet:find("int%s+main%s*%(.-%)%s*{") then
+            has_main = true
+            break
+        end
+    end
+
     -- add includes
     local sourcecode = ""
     local includes = table.wrap(opt.includes)
-    if opt.tryrun and opt.output then
+    if not has_main and opt.tryrun and opt.output then
         table.insert(includes, "stdio.h")
     end
     for _, include in ipairs(includes) do
@@ -91,6 +97,16 @@ function _sourcecode(snippets, opt)
         sourcecode = format("%s\ntypedef %s __type_%s;", sourcecode, typename, typename:gsub("[^%a]", "_"))
     end
     sourcecode = sourcecode .. "\n"
+
+    -- we just add all snippets if has main function
+    -- @see https://github.com/xmake-io/xmake/issues/3527
+    if has_main then
+        for _, snippet in pairs(snippets) do
+            sourcecode = sourcecode .. "\n" .. snippet
+        end
+        sourcecode = sourcecode .. "\n"
+        return sourcecode
+    end
 
     -- add snippets (build only)
     if not opt.tryrun then
@@ -129,7 +145,7 @@ end
 -- @param snippets  the snippets
 -- @param opt       the argument options
 --                  e.g.
---                  { verbose = false, target = [target|option], sourcekind = "[cc|cxx]"
+--                  { verbose = false, target = [target|option], sourcekind = "[cc|cxx|mm|mxx]"
 --                  , types = {"wchar_t", "char*"}, includes = "stdio.h", funcs = {"sigsetjmp", "sigsetjmp((void*)0, 0)"}
 --                  , configs = {defines = "xx", cxflags = ""}
 --                  , tryrun = true, output = true}
@@ -146,6 +162,13 @@ end
 -- local ok, output_or_errors = check_cxsnippets("void test() {}")
 -- local ok, output_or_errors = check_cxsnippets({"void test(){}", "#define TEST 1"}, {types = "wchar_t", includes = "stdio.h"})
 -- local ok, output_or_errors = check_cxsnippets({snippet_name = "void test(){}", "#define TEST 1"}, {types = "wchar_t", includes = "stdio.h"})
+-- local ok, output_or_errors = check_cxsnippets([[
+--  int test() {
+--      return (sizeof(int) == 4)? 0 : -1;
+--  }
+--  int main(int argc, char** argv) {
+--      return test();
+--  }]], {tryrun = true})
 -- @endcode
 --
 function main(snippets, opt)
@@ -192,8 +215,9 @@ function main(snippets, opt)
 
     -- get c/c++ extension
     local extension = ".c"
-    if opt.sourcekind then
-        extension = table.wrap(language.sourcekinds()[opt.sourcekind])[1] or ".c"
+    local sourcekind = opt.sourcekind
+    if sourcekind then
+        extension = table.wrap(language.sourcekinds()[sourcekind])[1] or ".c"
     end
 
     -- make the source file
@@ -215,8 +239,10 @@ function main(snippets, opt)
             if option.get("diagnosis") then
                 cprint("${dim}> %s", compiler.compcmd(sourcefile, objectfile, opt))
             end
+            opt = table.clone(opt)
+            opt.build_warnings = false
             compiler.compile(sourcefile, objectfile, opt)
-            if #links > 0 or opt.tryrun then
+            if #links > 0 or opt.tryrun or opt.binary_match then
                 if option.get("diagnosis") then
                     cprint("${dim}> %s", linker.linkcmd("binary", {"cc", "cxx"}, objectfile, binaryfile, opt))
                 end
@@ -233,6 +259,14 @@ function main(snippets, opt)
                     os.vrun(binaryfile)
                 end
             end
+            local binary_match = opt.binary_match
+            if binary_match then
+                local content = io.readfile(binaryfile, {encoding = "binary"})
+                local match = type(binary_match) == "function" and binary_match(content) or content:match(binary_match)
+                if match ~= nil then
+                    return true, match
+                end
+            end
             return true
         end,
         catch { function (errs) errors = errs end }
@@ -244,7 +278,16 @@ function main(snippets, opt)
 
     -- trace
     if opt.verbose or option.get("verbose") or option.get("diagnosis") then
-        local kind = opt.sourcekind == "cc" and "c" or "c++"
+        local kind = "c"
+        if sourcekind == "cxx" then
+            kind = "c++"
+        elseif sourcekind == "mxx" then
+            kind = "objc++"
+        elseif sourcekind == "cc" then
+            kind = "c"
+        elseif sourcekind == "mm" then
+            kind = "objc"
+        end
         if #includes > 0 then
             cprint("${dim}> checking for %s includes(%s)", kind, table.concat(includes, ", "))
         end

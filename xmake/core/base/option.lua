@@ -64,8 +64,6 @@ end
 
 -- get the top context
 function option._context()
-
-    -- the contexts
     local contexts = option._CONTEXTS
     if contexts then
         return contexts[#contexts]
@@ -74,29 +72,17 @@ end
 
 -- save context
 function option.save(taskname)
-
-    -- init contexts
     option._CONTEXTS = option._CONTEXTS or {}
-
-    -- new a context
     local context = {options = {}, defaults = {}, taskname = taskname}
-
-    -- init defaults
     if taskname then
         context.defaults = option.defaults(taskname) or context.defaults
     end
-
-    -- push this new context to the top stack
     table.insert(option._CONTEXTS, context)
-
-    -- ok
     return context
 end
 
 -- restore context
 function option.restore()
-
-    -- pop it
     if option._CONTEXTS then
         table.remove(option._CONTEXTS)
     end
@@ -658,7 +644,7 @@ function option.show_main()
             table.insert(tablecontent, {{string.format("%s%ss: ", string.sub(category.name, 1, 1):upper(), string.sub(category.name, 2)), style="${reset bright}"}})
 
             -- print tasks
-            for taskname, taskinfo in pairs(category.tasks) do
+            for taskname, taskinfo in table.orderpairs(category.tasks) do
 
                 -- init the task line
                 local taskline = string.format(narrow and "  %s%s" or "    %s%s",

@@ -40,6 +40,7 @@ local config        = require("project/config")
 local project       = require("project/project")
 local localcache    = require("cache/localcache")
 local profiler      = require("base/profiler")
+local debugger      = require("base/debugger")
 
 -- init the option menu
 local menu =
@@ -64,7 +65,7 @@ function main._show_help()
     if option.get("help") then
         option.show_menu(option.taskname())
         return true
-    elseif option.get("version") then
+    elseif option.get("version") and not option.taskname() then
         if menu.title then
             utils.cprint(menu.title)
         end
@@ -102,6 +103,13 @@ function main._find_root(projectfile)
     return projectfile
 end
 
+-- get project directory and project file from the argument option
+--
+-- @note we need to put `-P` in the first argument avoid option.parse() parsing errors
+-- e.g. `xmake f -c -P xxx` will be parsed as `-c=-P`, it's incorrect.
+--
+-- @see https://github.com/xmake-io/xmake/issues/4857
+--
 function main._basicparse()
 
     -- check command
@@ -113,8 +121,29 @@ function main._basicparse()
         xmake._COMMAND_ARGV = xmake._ARGV
     end
 
-    -- parse options
-    return option.parse(xmake._COMMAND_ARGV, task.common_options(), { allow_unknown = true })
+    -- parse options, only parse -P xxx/-F xxx/--project=xxx/--file=xxx
+    local options = {}
+    local argv = xmake._COMMAND_ARGV
+    local idx = 1
+    while idx <= #argv do
+        local arg = argv[idx]
+        if arg == "-P" and idx < #argv then
+            options.project = argv[idx + 1]
+            idx = idx + 1
+        elseif arg == "-F" and idx < #argv then
+            options.file = argv[idx + 1]
+            idx = idx + 1
+        elseif arg:startswith("--project=") then
+            options.project = arg:sub(11)
+        elseif arg:startswith("--file=") then
+            options.file = arg:sub(8)
+        end
+        idx = idx + 1
+        if options.project and options.file then
+            break
+        end
+    end
+    return options
 end
 
 -- get the project configuration from cache if we are in the independent working directory
@@ -139,18 +168,21 @@ end
 -- the init function for main
 function main._init()
 
+    -- start debugger
+    if debugger:enabled() then
+        local ok, errors = debugger:start()
+        if not ok then
+            return false, errors
+        end
+    end
+
     -- disable scheduler first
     scheduler:enable(false)
 
     -- get project directory and project file from the argument option
-    --
-    -- @note we need to put `-P` in the first argument avoid option.parse() parsing errors
-    -- e.g. `xmake f -c -P xxx` will be parsed as `-c=-P`, it's incorrect.
-    --
-    -- maybe we will improve this later
-    local options, err = main._basicparse()
+    local options, errors = main._basicparse()
     if not options then
-        return false, err
+        return false, errors
     end
 
     -- init project paths only for xmake engine
@@ -193,14 +225,6 @@ function main._init()
         xmake._PROJECT_DIR  = path.join(os.tmpdir(), "local")
         xmake._PROJECT_FILE = path.join(xmake._PROJECT_DIR, xmake._NAME .. ".lua")
     end
-
-    -- add the directory of the program file (xmake) to $PATH environment
-    local programfile = os.programfile()
-    if programfile and os.isfile(programfile) then
-        os.addenv("PATH", path.directory(programfile))
-    else
-        os.addenv("PATH", os.programdir())
-    end
     return true
 end
 
@@ -227,6 +251,11 @@ function main._exit(ok, errors)
 
     -- return exit code
     return retval
+end
+
+-- limit root? @see https://github.com/xmake-io/xmake/pull/4513
+function main._limit_root()
+    return not option.get("root") and os.getenv("XMAKE_ROOT") ~= 'y' and os.host() ~= 'haiku'
 end
 
 -- the main entry function
@@ -257,16 +286,14 @@ function main.entry()
     end
 
     -- check run command as root
-    if not option.get("root") and os.getenv("XMAKE_ROOT") ~= 'y' then
+    if main._limit_root() then
         if os.isroot() then
-            if not privilege.store() or os.isroot() then
-                errors = [[Running xmake as root is extremely dangerous and no longer supported.
+            errors = [[Running xmake as root is extremely dangerous and no longer supported.
 As xmake does not drop privileges on installation you would be giving all
 build scripts full access to your system.
 Or you can add `--root` option or XMAKE_ROOT=y to allow run as root temporarily.
-                ]]
-                return main._exit(false, errors)
-            end
+            ]]
+            return main._exit(false, errors)
         end
     end
 

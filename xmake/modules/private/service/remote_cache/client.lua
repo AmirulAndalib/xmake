@@ -50,9 +50,9 @@ function remote_cache_client:init()
     local projectfile = os.projectfile()
     if projectfile and os.isfile(projectfile) and projectdir then
         self._PROJECTDIR = projectdir
-        self._WORKDIR = path.join(project_config.directory(), "remote_cache")
+        self._WORKDIR = path.join(project_config.directory(), "service", "remote_cache")
     else
-        raise("we need enter a project directory with xmake.lua first!")
+        raise("we need to enter a project directory with xmake.lua first!")
     end
 
     -- init sockets
@@ -62,7 +62,7 @@ function remote_cache_client:init()
     -- init timeout
     self._SEND_TIMEOUT = config.get("remote_cache.send_timeout") or config.get("send_timeout") or -1
     self._RECV_TIMEOUT = config.get("remote_cache.recv_timeout") or config.get("recv_timeout") or -1
-    self._CONNECT_TIMEOUT = config.get("remote_cache.connect_timeout") or config.get("connect_timeout") or -1
+    self._CONNECT_TIMEOUT = config.get("remote_cache.connect_timeout") or config.get("connect_timeout") or 10000
 end
 
 -- get class
@@ -77,7 +77,7 @@ function remote_cache_client:connect()
         return
     end
 
-    -- we need user authorization?
+    -- Do we need user authorization?
     local token = config.get("remote_cache.token")
     if not token and self:user() then
 
@@ -136,42 +136,13 @@ function remote_cache_client:disconnect()
         print("%s: has been disconnected!", self)
         return
     end
-    local addr = self:addr()
-    local port = self:port()
-    local sock = socket.connect(addr, port, {timeout = self:connect_timeout()})
-    local session_id = self:session_id()
-    local errors
-    local ok = false
-    print("%s: disconnect %s:%d ..", self, addr, port)
-    if sock then
-        local stream = socket_stream(sock, {send_timeout = self:send_timeout(), recv_timeout = self:recv_timeout()})
-        if stream:send_msg(message.new_disconnect(session_id, {token = self:token()})) and stream:flush() then
-            local msg = stream:recv_msg()
-            if msg then
-                vprint(msg:body())
-                if msg:success() then
-                    ok = true
-                else
-                    errors = msg:errors()
-                end
-            end
-        end
-    else
-        -- server unreachable, but we still disconnect it.
-        wprint("%s: server unreachable!", self)
-        ok = true
-    end
-    if ok then
-        print("%s: disconnected!", self)
-    else
-        print("%s: disconnect %s:%d failed, %s", self, addr, port, errors or "unknown")
-    end
 
     -- update status
     local status = self:status()
     status.token = nil
-    status.connected = not ok
+    status.connected = false
     self:status_save()
+    print("%s: disconnected!", self)
 end
 
 -- pull cache file
@@ -397,7 +368,7 @@ end
 
 -- get the session id, only for unique project
 function remote_cache_client:session_id()
-    return self:status().session_id or hash.uuid():split("-", {plain = true})[1]:lower()
+    return self:status().session_id or hash.uuid(option.get("session")):split("-", {plain = true})[1]:lower()
 end
 
 -- set the given client address
@@ -487,7 +458,7 @@ function is_connected()
             local projectdir = os.projectdir()
             local projectfile = os.projectfile()
             if projectfile and os.isfile(projectfile) and projectdir then
-                local workdir = path.join(project_config.directory(), "remote_cache")
+                local workdir = path.join(project_config.directory(), "service", "remote_cache")
                 local statusfile = path.join(workdir, "status.txt")
                 if os.isfile(statusfile) then
                     local status = io.load(statusfile)

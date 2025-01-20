@@ -20,6 +20,7 @@
 
 -- imports
 import("core.project.project")
+import("core.cache.localcache")
 
 -- register required package environments
 -- envs: bin path for *.dll, program ..
@@ -38,19 +39,19 @@ function _register_required_package_libs(instance, required_package, is_deps)
         if fetchinfo then
             fetchinfo.name = nil
             if is_deps then
-                -- we need only reserve license for root package
+                -- we only need reserve license for root package
                 --
                 -- @note the license compatibility between the root package and
                 -- its dependent packages is guaranteed by the root package itself
                 --
                 fetchinfo.license = nil
 
-                -- we need only some infos for root package
+                -- we only need some infos for root package
                 fetchinfo.version = nil
                 fetchinfo.static  = nil
                 fetchinfo.shared  = nil
                 fetchinfo.installdir = nil
-                fetchinfo.extra = nil
+                fetchinfo.components = nil
             end
 
             -- merge into the root values
@@ -63,6 +64,11 @@ function _register_required_package_libs(instance, required_package, is_deps)
                 required_package:set("__components_deps", instance:components_deps())
                 required_package:set("__components_default", instance:components_default())
                 required_package:set("__components_orderlist", instance:components_orderlist())
+            end
+
+            -- save namespace
+            if instance:namespace() then
+                required_package:set("__namespace", instance:namespace())
             end
 
             -- merge into the components values
@@ -128,6 +134,8 @@ end
 
 -- register all required root packages to local cache
 function main(packages)
+
+    -- register to package cache for add_packages()
     for _, instance in ipairs(packages) do
         if instance:is_toplevel() then
             local required_packagename = instance:alias() or instance:name()
@@ -137,5 +145,21 @@ function main(packages)
             end
         end
     end
+
+    -- register references for `xrepo clean`
+    -- and we use glocal memory cache to save all packages from multiple arch/mode, e.g. `xmake project -m "debug,release" -k vsxmake`
+    -- @see https://github.com/xmake-io/xmake/issues/3679
+    local references = _g.references or {}
+    _g.references = references
+    for _, instance in ipairs(packages) do
+        if not instance:is_system() and not instance:is_thirdparty() then
+            local installdir = instance:installdir({readonly = true})
+            if os.isdir(installdir) then
+                table.insert(references, installdir)
+            end
+        end
+    end
+    localcache.set("references", "packages", table.unique(references))
+    localcache.save("references")
 end
 

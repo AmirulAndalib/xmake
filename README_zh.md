@@ -1,6 +1,6 @@
 <div align="center">
   <a href="https://xmake.io/cn">
-    <img width="160" heigth="160" src="https://tboox.org/static/img/xmake/logo256c.png">
+    <img width="160" height="160" src="https://tboox.org/static/img/xmake/logo256c.png">
   </a>
 
   <h1>xmake</h1>
@@ -25,9 +25,6 @@
     </a>
     <a href="https://www.reddit.com/r/xmake/">
       <img src="https://img.shields.io/badge/chat-on%20reddit-ff3f34.svg?style=flat-square" alt="Reddit" />
-    </a>
-    <a href="https://gitter.im/xmake-io/xmake?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge">
-      <img src="https://img.shields.io/gitter/room/xmake-io/xmake.svg?style=flat-square&colorB=96c312" alt="Gitter" />
     </a>
     <a href="https://t.me/tbooxorg">
       <img src="https://img.shields.io/badge/chat-on%20telegram-blue.svg?style=flat-square" alt="Telegram" />
@@ -85,7 +82,7 @@ Xmake ≈ Make/Ninja + CMake/Meson + Vcpkg/Conan + distcc + ccache/sccache
 ```
 
 
-如果你想要了解更多，请参考：[在线文档](https://xmake.io/#/zh-cn/getting_started), [Github](https://github.com/xmake-io/xmake)以及[Gitee](https://gitee.com/tboox/xmake)，同时也欢迎加入我们的 [社区](https://xmake.io/#/zh-ch/about/contact).
+如果你想要了解更多，请参考：[在线文档](https://xmake.io/#/zh-cn/getting_started), [Github](https://github.com/xmake-io/xmake)以及[Gitee](https://gitee.com/tboox/xmake) 和 [GitCode](https://gitcode.com/xmake-io/xmake)，同时也欢迎加入我们的 [社区](https://xmake.io/#/zh-ch/about/contact).
 
 ![](https://github.com/xmake-io/xmake-docs/raw/master/assets/img/index/xmake-basic-render.gif)
 
@@ -100,19 +97,19 @@ xmake 官方也推出了一些入门课程，带你一步步快速上手 xmake�
 #### 使用curl
 
 ```bash
-bash <(curl -fsSL https://xmake.io/shget.text)
+curl -fsSL https://xmake.io/shget.text | bash
 ```
 
 #### 使用wget
 
 ```bash
-bash <(wget https://xmake.io/shget.text -O -)
+wget https://xmake.io/shget.text -O - | bash
 ```
 
 #### 使用powershell
 
 ```powershell
-Invoke-Expression (Invoke-Webrequest 'https://xmake.io/psget.text' -UseBasicParsing).Content
+irm https://xmake.io/psget.text | iex
 ```
 
 #### 其他安装方式
@@ -137,39 +134,47 @@ add_requires("tbox 1.6.*", "zlib", "libpng ~1.6")
 
 <img src="https://github.com/xmake-io/xmake-docs/raw/master/assets/img/index/package.gif" width="650px" />
 
-## 创建工程
+## 命令行使用
+
+### 创建工程
 
 ```bash
 $ xmake create hello
 $ cd hello
 ```
 
-## 构建工程
+### 构建工程
 
 ```bash
 $ xmake
 ```
 
-## 运行目标
+### 运行目标
 
 ```bash
 $ xmake run console
 ```
 
-## 调试程序
+### 调试程序
 
 ```bash
 $ xmake run -d console
 ```
 
-## 配置平台
+### 运行测试
+
+```bash
+$ xmake test
+```
+
+### 配置平台
 
 ```bash
 $ xmake f -p [windows|linux|macosx|android|iphoneos ..] -a [x86|arm64 ..] -m [debug|release]
 $ xmake
 ```
 
-## 图形化菜单配置
+### 图形化菜单配置
 
 ```bash
 $ xmake f --menu
@@ -225,7 +230,7 @@ $ xmake f --menu
 
 ### 包管理特性
 
-* 官方仓库提供近 700+ 常用包，真正做到全平台一键下载集成编译
+* 官方仓库提供近 800+ 常用包，真正做到全平台一键下载集成编译
 * 全平台包支持，支持交叉编译的依赖包集成
 * 支持包虚拟环境管理和加载，`xrepo env shell`
 * Windows 云端预编译包加速
@@ -236,19 +241,21 @@ $ xmake f --menu
 
 ## 支持平台
 
-* Windows (x86, x64)
+* Windows (x86, x64, arm, arm64, arm64ec)
 * macOS (i386, x86_64, arm64)
-* Linux (i386, x86_64, cross-toolchains ..)
+* Linux (i386, x86_64, arm, arm64, riscv, mips, 390x, sh4 ...)
 * *BSD (i386, x86_64)
 * Android (x86, x86_64, armeabi, armeabi-v7a, arm64-v8a)
 * iOS (armv7, armv7s, arm64, i386, x86_64)
 * WatchOS (armv7k, i386)
 * AppleTVOS (armv7, arm64, i386, x86_64)
+* AppleXROS (arm64, x86_64)
 * MSYS (i386, x86_64)
 * MinGW (i386, x86_64, arm, arm64)
 * Cygwin (i386, x86_64)
-* Wasm (wasm32)
+* Wasm (wasm32, wasm64)
 * Haiku (i386, x86_64)
+* Harmony (x86_64, armeabi-v7a, arm64-v8a)
 * Cross (cross-toolchains ..)
 
 ## 支持工具链
@@ -284,6 +291,7 @@ tinycc        Tiny C Compiler
 emcc          A toolchain for compiling to asm.js and WebAssembly
 icc           Intel C/C++ Compiler
 ifort         Intel Fortran Compiler
+ifx           Intel LLVM Fortran Compiler
 muslcc        The musl-based cross-compilation toolchain
 fpc           Free Pascal Programming Language Compiler
 wasi          WASI-enabled WebAssembly C/C++ toolchain
@@ -297,6 +305,8 @@ dpcpp         Intel LLVM C++ Compiler for data parallel programming model based 
 masm32        The MASM32 SDK
 iverilog      Icarus Verilog
 verilator     Verilator open-source SystemVerilog simulator and lint system
+cosmocc       build-once run-anywhere
+hdk           Harmony SDK
 ```
 
 ## 支持语言
@@ -315,6 +325,11 @@ verilator     Verilator open-source SystemVerilog simulator and lint system
 * Pascal
 * Nim
 * Verilog
+* FASM
+* NASM
+* YASM
+* MASM32
+* Cppfront
 
 ## 支持特性
 
@@ -499,7 +514,7 @@ target("test")
 add_requires("llvm 10.x", {alias = "llvm-10"})
 target("test")
     set_kind("binary")
-    add_files("src/*.c)
+    add_files("src/*.c")
     set_toolchains("llvm@llvm-10")
 ````
 
@@ -511,7 +526,7 @@ target("test")
 add_requires("muslcc")
 target("test")
     set_kind("binary")
-    add_files("src/*.c)
+    add_files("src/*.c")
     set_toolchains("@muslcc")
 ```
 
@@ -651,7 +666,6 @@ with:
 * 社区
   - [Reddit论坛](https://www.reddit.com/r/xmake/)
   - [Telegram群组](https://t.me/tbooxorg)
-  - [Gitter聊天室](https://gitter.im/xmake-io/xmake?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
   - [Discord聊天室](https://discord.gg/xmake)
   - QQ群：343118190, 662147501
 * 源码：[Github](https://github.com/xmake-io/xmake), [Gitee](https://gitee.com/tboox/xmake)
@@ -666,4 +680,7 @@ with:
 * [uael](https://github.com/uael): 提供语义版本跨平台c库 [sv](https://github.com/uael/sv)。
 * [OpportunityLiu](https://github.com/OpportunityLiu): 改进cuda构建, tests框架和ci。
 * [xq144](https://github.com/xq114): 改进 `xrepo env shell`，并贡献大量包到 [xmake-repo](https://github.com/xmake-io/xmake-repo) 仓库。
+* [star-hengxing](https://github.com/star-hengxing): 贡献大量包到 [xmake-repo](https://github.com/xmake-io/xmake-repo) 仓库。
+* [SirLynix](https://github.com/SirLynix): 贡献了许多的包，并且让更多的人知道和了解 xmake。
+* [Arthapz](https://github.com/Arthapz): 贡献新的 C++ Modules 实现。
 

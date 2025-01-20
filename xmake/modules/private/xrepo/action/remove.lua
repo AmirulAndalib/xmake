@@ -31,31 +31,32 @@ function menu_options()
     -- menu options
     local options =
     {
-        {'k', "kind",       "kv", nil, "Enable static/shared library.",
-                                       values = {"static", "shared"}         },
-        {'p', "plat",       "kv", nil, "Set the given platform."             },
-        {'a', "arch",       "kv", nil, "Set the given architecture."         },
-        {'m', "mode",       "kv", nil, "Set the given mode.",
-                                       values = {"release", "debug"}         },
-        {'f', "configs",    "kv", nil, "Set the given extra package configs.",
+        {'k', "kind",            "kv", nil, "Enable static/shared library.",
+                                       values = {"static", "shared"}                            },
+        {'p', "plat",            "kv", nil, "Set the given platform."                           },
+        {'a', "arch",            "kv", nil, "Set the given architecture."                       },
+        {'m', "mode",            "kv", nil, "Set the given mode.",
+                                       values = {"release", "debug"}                            },
+        {'f', "configs",         "kv", nil, "Set the given extra package configs.",
                                        "e.g.",
-                                       "    - xrepo remove -f \"vs_runtime='MD'\" zlib",
-                                       "    - xrepo remove -f \"regex=true,thread=true\" boost"},
-        {nil, "toolchain",  "kv", nil, "Set the toolchain name."          },
-        {},
-        {nil, "all",        "k", nil,  "Remove all packages and ignore extra package configs.",
+                                       "    - xrepo remove -f \"runtimes='MD'\" zlib",
+                                       "    - xrepo remove -f \"regex=true,thread=true\" boost" },
+        {nil, "toolchain",       "kv", nil, "Set the toolchain name."                           },
+        {nil, "toolchain_host",  "kv", nil, "Set the host toolchain name."                      },
+        {                                                                                       },
+        {nil, "all",             "k", nil,  "Remove all packages and ignore extra package configs.",
                                        "If `--all` is enabled, the package name parameter will support lua pattern",
                                        "e.g.",
                                        "    - xrepo remove --all",
                                        "    - xrepo remove --all zlib boost",
-                                       "    - xrepo remove --all zl* boo*"},
-        {nil, "packages",   "vs", nil, "The packages list.",
+                                       "    - xrepo remove --all zl* boo*"                      },
+        {nil, "packages",        "vs", nil, "The packages list.",
                                        "e.g.",
                                        "    - xrepo remove zlib boost",
                                        "    - xrepo remove -p iphoneos -a arm64 \"zlib >=1.2.0\"",
                                        "    - xrepo remove -p android -m debug \"pcre2 10.x\"",
                                        "    - xrepo remove -p mingw -k shared zlib",
-                                       "    - xrepo remove conan::zlib/1.2.11 vcpkg::zlib"}
+                                       "    - xrepo remove conan::zlib/1.2.11 vcpkg::zlib"      }
     }
 
     -- show menu options
@@ -94,7 +95,9 @@ function _remove_packages(packages)
     local rcfiles = {}
     local includes = option.get("includes")
     if includes then
-        table.join2(rcfiles, path.splitenv(includes))
+        for _, includefile in ipairs(path.splitenv(includes)) do
+            table.insert(rcfiles, path.absolute(includefile))
+        end
     end
 
     -- enter working project directory
@@ -106,7 +109,7 @@ function _remove_packages(packages)
     if not os.isdir(workdir) then
         os.mkdir(workdir)
         os.cd(workdir)
-        os.vrunv("xmake", {"create", "-P", "."})
+        os.vrunv(os.programfile(), {"create", "-P", "."})
     else
         os.cd(workdir)
     end
@@ -141,11 +144,14 @@ function _remove_packages(packages)
     if option.get("toolchain") then
         table.insert(config_argv, "--toolchain=" .. option.get("toolchain"))
     end
+    if option.get("toolchain_host") then
+        table.insert(config_argv, "--toolchain_host=" .. option.get("toolchain_host"))
+    end
     local envs = {}
     if #rcfiles > 0 then
         envs.XMAKE_RCFILES = path.joinenv(rcfiles)
     end
-    os.vrunv("xmake", config_argv, {envs = envs})
+    os.vrunv(os.programfile(), config_argv, {envs = envs})
 
     -- do remove
     local require_argv = {"require", "--uninstall"}
@@ -177,14 +183,14 @@ function _remove_packages(packages)
         end
     end
     if not packagefile then
-        -- avoid to override extra configs in add_requires/xmake.lua
+        -- avoid overriding extra configs in add_requires/xmake.lua
         if extra then
             local extra_str = string.serialize(extra, {indent = false, strip = true})
             table.insert(require_argv, "--extra=" .. extra_str)
         end
         table.join2(require_argv, packages)
     end
-    os.vexecv("xmake", require_argv)
+    os.vexecv(os.programfile(), require_argv)
 end
 
 -- main entry

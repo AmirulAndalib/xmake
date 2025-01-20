@@ -18,13 +18,8 @@
 -- @file        load_macosx.lua
 --
 
--- imports
-import("core.project.config")
-
--- main entry
 function main(toolchain)
 
-    -- init flags for architecture
     local arch          = toolchain:arch()
     local target_minver = toolchain:config("target_minver")
     local xcode_sysroot = toolchain:config("xcode_sysroot")
@@ -76,9 +71,8 @@ function main(toolchain)
     end
 
     -- init flags for c/c++
-    toolchain:add("ldflags", "-stdlib=libc++")
-    toolchain:add("shflags", "-stdlib=libc++")
-    toolchain:add("syslinks", "z")
+    toolchain:add("ldflags", "-lz")
+    toolchain:add("shflags", "-lz")
 
     -- init flags for objc/c++ (with ldflags and shflags)
     -- we can use `add_mxflags("-fno-objc-arc")` to override it in xmake.lua

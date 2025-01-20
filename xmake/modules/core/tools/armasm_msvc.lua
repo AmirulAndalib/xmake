@@ -21,6 +21,7 @@
 -- imports
 import("core.base.option")
 import("core.base.global")
+import("core.project.policy")
 import("core.language.language")
 import("utils.progress")
 
@@ -44,20 +45,6 @@ function nf_symbol(self, level)
         end
         return maps[level .. '_' .. kind] or maps[level]
     end
-end
-
--- make the optimize flag
-function nf_optimize(self, level)
-    local maps =
-    {
-        none       = "-O0"
-    ,   fast       = "-O1"
-    ,   faster     = "-O2"
-    ,   fastest    = "-O3"
-    ,   smallest   = "-Os"
-    ,   aggressive = "-Ofast"
-    }
-    return maps[level]
 end
 
 -- make the define flag
@@ -90,7 +77,7 @@ function compargv(self, sourcefile, objectfile, flags)
 end
 
 -- compile the source file
-function compile(self, sourcefile, objectfile, dependinfo, flags)
+function compile(self, sourcefile, objectfile, dependinfo, flags, opt)
 
     -- ensure the object directory
     os.mkdir(path.directory(objectfile))
@@ -134,7 +121,7 @@ function compile(self, sourcefile, objectfile, dependinfo, flags)
             function (ok, warnings)
 
                 -- print some warnings
-                if warnings and #warnings > 0 and (option.get("verbose") or option.get("warning") or global.get("build_warning")) then
+                if warnings and #warnings > 0 and policy.build_warnings(opt) then
                     if progress.showing_without_scroll() then
                         print("")
                     end

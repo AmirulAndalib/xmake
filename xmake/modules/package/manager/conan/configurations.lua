@@ -24,10 +24,12 @@ function main()
     {
         build          = {description = "Use it to choose if you want to build from sources.", default = "missing", values = {"all", "never", "missing", "outdated"}},
         remote         = {description = "Set the conan remote server."},
-        options        = {description = "Set the options values, e.g. OpenSSL:shared=True"},
-        imports        = {description = "Set the imports for conan."},
-        settings       = {description = "Set the build settings for conan."},
-        build_requires = {description = "Set the build requires for conan.", default = "xmake_generator/0.1.0@bincrafters/testing"}
+        options        = {description = "Set the options values, e.g. shared=True"},
+        settings       = {description = "Set the host settings for conan."},
+        settings_host  = {description = "Set the host settings for conan."},
+        settings_build = {description = "Set the build settings for conan."},
+        imports        = {description = "Set the imports for conan 1.x, it has been deprecated in conan 2.x."},
+        build_requires = {description = "Set the build requires for conan."}
     }
 end
 

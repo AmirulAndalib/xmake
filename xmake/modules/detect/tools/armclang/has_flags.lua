@@ -80,7 +80,7 @@ end
 
 -- get extension
 function _get_extension(opt)
-    -- @note we need detect extension for ndk/clang++.exe: warning: treating 'c' input as 'c++' when in C++ mode, this behavior is deprecated [-Wdeprecated]
+    -- @note we need to detect extension for ndk/clang++.exe: warning: treating 'c' input as 'c++' when in C++ mode, this behavior is deprecated [-Wdeprecated]
     return (opt.program:endswith("++") or opt.flagkind == "cxxflags") and ".cpp" or (table.wrap(language.sourcekinds()[opt.toolkind or "cc"])[1] or ".c")
 end
 
@@ -90,7 +90,7 @@ function _check_try_running(flags, opt, islinker)
     -- make an stub source file
     local sourcefile = path.join(os.tmpdir(), "detect", "armclang_has_flags" .. _get_extension(opt))
     if not os.isfile(sourcefile) then
-        io.writefile(sourcefile, "int main(int argc, char** argv)\n{return 0;}")
+        io.writefile(sourcefile, "int main(int argc, char** argv)\n{return 0;}\n")
     end
 
     -- check flags for linker

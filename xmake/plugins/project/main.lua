@@ -31,12 +31,11 @@ import("vstudio.vs")
 import("vsxmake.vsxmake")
 import("clang.compile_flags")
 import("clang.compile_commands")
+import("private.utils.statistics")
+import("private.service.remote_build.action", {alias = "remote_build_action"})
 
 function makers()
-
-    -- the maps
-    return
-    {
+    return {
         make             = makefile.make
     ,   makefile         = makefile.make
     ,   xmakefile        = xmakefile.make
@@ -71,22 +70,26 @@ end
 
 -- make project
 function _make(kind)
-
     local maps = makers()
     assert(maps[kind], "the project kind(%s) is not supported!", kind)
-
-    -- make it
     maps[kind](option.get("outputdir"))
 end
 
--- main
 function main()
+
+    -- do action for remote?
+    if remote_build_action.enabled() then
+        return remote_build_action()
+    end
 
     -- in project generator?
     os.setenv("XMAKE_IN_PROJECT_GENERATOR", "true")
 
     -- config it first
     task.run("config")
+
+    -- post statistics
+    statistics.post()
 
     -- make project
     _make(option.get("kind"))

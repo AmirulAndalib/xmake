@@ -28,14 +28,12 @@ local table       = require("base/table")
 local utils       = require("base/utils")
 local option      = require("base/option")
 local semver      = require("base/semver")
+local profiler    = require("base/profiler")
 local project     = require("project/project")
 local detectcache = require("cache/detectcache")
 local sandbox     = require("sandbox/sandbox")
 local raise       = require("sandbox/modules/raise")
 local scheduler   = require("sandbox/modules/import/core/base/scheduler")
-
--- globals
-local checking  = nil
 
 -- find program version
 --
@@ -55,17 +53,7 @@ local checking  = nil
 -- @endcode
 --
 function sandbox_lib_detect_find_programver.main(program, opt)
-
-    -- init options
     opt = opt or {}
-
-    -- @note avoid detect the same program in the same time leading to deadlock if running in the coroutine (e.g. ccache)
-    local coroutine_running = scheduler.co_running()
-    if coroutine_running then
-        while checking ~= nil and checking == program do
-            scheduler.co_yield()
-        end
-    end
 
     -- init cachekey
     local cachekey = "find_programver"
@@ -73,14 +61,20 @@ function sandbox_lib_detect_find_programver.main(program, opt)
         cachekey = cachekey .. "_" .. opt.cachekey
     end
 
+    -- @see https://github.com/xmake-io/xmake/issues/4645
+    -- @note avoid detect the same program in the same time leading to deadlock if running in the coroutine (e.g. ccache)
+    local lockname = cachekey .. program
+    scheduler.co_lock(lockname)
+
     -- attempt to get result from cache first
     local result = detectcache:get2(cachekey, program)
     if result ~= nil and not opt.force then
+        scheduler.co_unlock(lockname)
         return result and result or nil
     end
 
     -- attempt to get version output info
-    checking = coroutine_running and program or nil
+    profiler:enter("find_programver", program)
     local ok = false
     local outdata = nil
     local command = opt.command
@@ -89,10 +83,12 @@ function sandbox_lib_detect_find_programver.main(program, opt)
         if not ok and outdata and option.get("diagnosis") then
             utils.cprint("${color.warning}checkinfo: ${clear dim}" .. outdata)
         end
+    elseif type(command) == "table" then
+        ok, outdata = os.iorunv(program, command, {envs = opt.envs})
     else
         ok, outdata = os.iorunv(program, {command or "--version"}, {envs = opt.envs})
     end
-    checking = nil
+    profiler:leave("find_programver", program)
 
     -- find version info
     if ok and outdata and #outdata > 0 then
@@ -114,6 +110,7 @@ function sandbox_lib_detect_find_programver.main(program, opt)
     -- save result
     detectcache:set2(cachekey, program, result and result or false)
     detectcache:save()
+    scheduler.co_unlock(lockname)
     return result
 end
 

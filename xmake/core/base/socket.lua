@@ -230,6 +230,12 @@ function _instance:connect(addr, port, opt)
     local ok, errors = io.socket_connect(self:cdata(), addr, port, self:family())
     if ok == 0 then
         opt = opt or {}
+
+        -- trace socket
+        if socket._is_tracing_socket() then
+            print(string.format("%s: connecting %s:%d, timeout: %d", self, addr, port, opt.timeout or -1))
+        end
+
         local events, waiterrs = _instance.wait(self, socket.EV_CONN, opt.timeout or -1)
         if events == socket.EV_CONN then
             ok, errors = io.socket_connect(self:cdata(), addr, port, self:family())
@@ -641,6 +647,20 @@ function _instance:wait(events, timeout)
     return result, errors
 end
 
+-- kill socket
+function _instance:kill()
+
+    -- ensure opened
+    local ok, errors = self:_ensure_opened()
+    if not ok then
+        return false, errors
+    end
+
+    -- kill it
+    io.socket_kill(self:cdata())
+    return true
+end
+
 -- close socket
 function _instance:close()
 
@@ -676,7 +696,7 @@ end
 
 -- tostring(socket)
 function _instance:__tostring()
-    local rawfd = self:rawfd() or "closed"
+    local rawfd = self:cdata() and self:rawfd() or "closed"
     local types = {"tcp", "udp", "icmp"}
     return string.format("<socket: %s%s/%s>", types[self:type()], self:family() == socket.IPV6 and "6" or "4", rawfd)
 end
@@ -686,6 +706,23 @@ function _instance:__gc()
     if self:cdata() and io.socket_close(self:cdata()) then
         self._SOCK = nil
     end
+end
+
+-- trace socket for profile(stuck,trace)?
+function socket._is_tracing_socket()
+    local is_tracing = socket._IS_TRACING_SOCKET
+    if is_tracing == nil then
+        local profile = os.getenv("XMAKE_PROFILE")
+        if profile then
+            profile = profile:trim()
+            if profile == "trace" or profile == "stuck" then
+                is_tracing = true
+            end
+        end
+        is_tracing = is_tracing or false
+        socket._IS_TRACING_SOCKET = is_tracing
+    end
+    return is_tracing
 end
 
 -- open a socket

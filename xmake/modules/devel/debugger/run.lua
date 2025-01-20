@@ -32,6 +32,8 @@ import("detect.tools.find_ollydbg")
 import("detect.tools.find_devenv")
 import("detect.tools.find_vsjitdebugger")
 import("detect.tools.find_renderdoc")
+import("lib.detect.find_tool")
+import("private.action.run.runenvs")
 
 -- run gdb
 function _run_gdb(program, argv, opt)
@@ -224,12 +226,35 @@ function _run_renderdoc(program, argv, opt)
     end
 
     -- build capture settings
+    local environment = {}
+    if opt.addenvs then
+        for name, values in pairs(opt.addenvs) do
+            table.insert(environment, {
+                separator = "Platform style",
+                type = "Append",
+                value = path.joinenv(values),
+                variable = name
+            })
+        end
+    end
+
+    if opt.setenvs then
+        for name, values in pairs(opt.setenvs) do
+            table.insert(environment, {
+                separator = "Platform style",
+                type = "Set",
+                value = path.joinenv(values),
+                variable = name
+            })
+        end
+    end
+
     local settings = {
         rdocCaptureSettings = 1,
         settings = {
             autoStart = false,
             commandLine = table.concat(table.wrap(argv), " "),
-            environment = json.mark_as_array({}),
+            environment = json.mark_as_array(environment),
             executable = program,
             inject = false,
             numQueuedFrames = 0,
@@ -257,7 +282,51 @@ function _run_renderdoc(program, argv, opt)
 
     -- run renderdoc
     opt.detach = true
+    opt.addenvs = nil
+    opt.setenvs = nil
     os.execv(renderdoc, { capturefile }, opt)
+    return true
+end
+
+-- run gede
+function _run_gede(program, argv, opt)
+
+    -- find gede
+    opt = opt or {}
+    -- 'gede --version' return with non-zero code
+    local gede = find_tool("gede", {program = config.get("debugger"), norun = true})
+    if not gede then
+        return false
+    end
+
+    -- patch arguments
+    argv = argv or {}
+    table.insert(argv, 1, program)
+    table.insert(argv, 1, "--args")
+    table.insert(argv, 1, "--no-show-config")
+
+    -- run it
+    os.execv(gede.program, argv, table.join(opt, {exclusive = true}))
+    return true
+end
+
+-- run seergdb
+function _run_seergdb(program, argv, opt)
+
+    -- find seergdb
+    opt = opt or {}
+    local seergdb = find_tool("seergdb", {program = config.get("debugger")})
+    if not seergdb then
+        return false
+    end
+
+    -- patch arguments
+    argv = argv or {}
+    table.insert(argv, 1, program)
+    table.insert(argv, 1, "--start")
+
+    -- run it
+    os.execv(seergdb.program, argv, table.join(opt, {exclusive = true}))
     return true
 end
 
@@ -285,6 +354,8 @@ function main(program, argv, opt)
     ,   {"cudagdb"     , _run_cudagdb}
     ,   {"cudamemcheck", _run_cudamemcheck}
     ,   {"renderdoc"   , _run_renderdoc}
+    ,   {"gede"        , _run_gede}
+    ,   {"seergdb"     , _run_seergdb}
     }
 
     -- for windows target or on windows?

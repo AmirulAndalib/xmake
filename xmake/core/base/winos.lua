@@ -122,20 +122,22 @@ function winos.version()
             winver = verstr:match("%[.-([%d%.]+)]")
             if winver then
                 winver = winver:trim()
-            end
-            local sem_winver = nil
-            local seg = 0
-            for num in winver:gmatch("%d+") do
-                if seg == 0 then
-                    sem_winver = num
-                elseif seg == 3 then
-                    sem_winver = sem_winver .. "+" .. num
-                else
-                    sem_winver = sem_winver .. "." .. num
+                local sem_winver
+                local seg = 0
+                for num in winver:gmatch("%d+") do
+                    if seg == 0 then
+                        sem_winver = num
+                    elseif seg == 3 then
+                        sem_winver = sem_winver .. "+" .. num
+                    else
+                        sem_winver = sem_winver .. "." .. num
+                    end
+                    seg = seg + 1
                 end
-                seg = seg + 1
+                if sem_winver then
+                    winver = semver.new(sem_winver)
+                end
             end
-            winver = semver.new(sem_winver)
         end
         if not winver then
             winver = semver.new("0.0")
@@ -166,9 +168,9 @@ function winos.cmdargv(argv, opt)
     if argn > limit then
         opt = opt or {}
         local argsfile = os.tmpfile(opt.tmpkey or os.args(argv)) .. ".args.txt"
-        local f = io.open(argsfile, 'w', {encoding = "ansi"})
+        local f = io.open(argsfile, 'w', {encoding = os.is_host("windows") and "ansi"})
         if f then
-            -- we need split args file to solve `fatal error LNK1170: line in command file contains 131071 or more characters`
+            -- we need to split args file to solve `fatal error LNK1170: line in command file contains 131071 or more characters`
             -- @see https://github.com/xmake-io/xmake/issues/812
             local idx = 1
             while idx <= #argv do
@@ -177,7 +179,7 @@ function winos.cmdargv(argv, opt)
                 if arg1 then
                     arg1 = tostring(arg1)
                 end
-                -- we need ensure `/name value` in same line,
+                -- we need to ensure `/name value` in same line,
                 -- otherwise cl.exe will prompt that the corresponding parameter value cannot be found
                 --
                 -- e.g.
@@ -186,7 +188,11 @@ function winos.cmdargv(argv, opt)
                 -- -Dxxx
                 -- foo.obj
                 --
-                if idx + 1 <= #argv and arg:find("^[-/]") and not arg1:find("^[-/]") then
+
+                -- if host is not Windows, paths may start with '/', which conflicts with '/<argname>'
+                -- note that checking if the next argument ends with '.json' will only work for /sourceDependencies
+                -- other arguments will remain broken, perhaps we should discuss a better solution
+                if idx + 1 <= #argv and arg:find("^[-/]") and (os.is_host("windows") and (not arg1:find("^[-/]")) or (arg1:endswith(".json"))) then
                     f:write(os.args(arg, {escape = opt.escape}) .. " ")
                     f:write(os.args(arg1, {escape = opt.escape}) .. "\n")
                     idx = idx + 2

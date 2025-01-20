@@ -68,10 +68,14 @@ function _get_apis()
     ,   "toolchain.add_includedirs"
     ,   "toolchain.add_sysincludedirs"
     }
+    apis.groups = {
+        -- target.add_xxx
+        "target.add_linkorders"
+    ,   "target.add_linkgroups"
+    }
     apis.paths = {
         -- target.add_xxx
-        "target.add_headers"    -- TODO deprecated
-    ,   "target.add_headerfiles"
+        "target.add_headerfiles"
     ,   "target.add_linkdirs"
     ,   "target.add_includedirs"
     ,   "target.add_sysincludedirs"

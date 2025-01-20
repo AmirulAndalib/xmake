@@ -64,7 +64,9 @@ end
 
 -- make the compile arguments list
 function compargv(self, sourcefile, objectfile, flags)
-    return self:program(), table.join(sourcefile, "OBJECT(" .. objectfile .. ")", "PRINT(" .. (objectfile:gsub("%.c%.obj", ".lst")) .. ")", flags)
+    local lstfile = objectfile:gsub("%.c%.obj", ".lst")
+    lstfile = lstfile:gsub("%.c%.o$", ".lst")
+    return self:program(), table.join(sourcefile, "OBJECT(" .. objectfile .. ")", "PRINT(" .. lstfile .. ")", flags)
 end
 
 -- compile the source file
@@ -108,7 +110,7 @@ function compile(self, sourcefile, objectfile, dependinfo, flags, opt)
         {
             function (ok, outdata, errdata)
                 -- show warnings?
-                if ok and outdata and #outdata > 0 and policy.build_warnings() then
+                if ok and outdata and #outdata > 0 and policy.build_warnings(opt) then
                     local warnings_count = outdata:match("(%d-) WARNING")
                     if warnings_count and tonumber(warnings_count) > 0 then
                         local lines = outdata:split('\n', {plain = true})

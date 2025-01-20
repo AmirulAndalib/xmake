@@ -50,9 +50,9 @@ function remote_build_client:init()
     local projectfile = os.projectfile()
     if projectfile and os.isfile(projectfile) and projectdir then
         self._PROJECTDIR = projectdir
-        self._WORKDIR = path.join(project_config.directory(), "remote_build")
+        self._WORKDIR = path.join(project_config.directory(), "service", "remote_build")
     else
-        raise("we need enter a project directory with xmake.lua first!")
+        raise("we need to enter a project directory with xmake.lua first!")
     end
 
     -- init filesync
@@ -64,7 +64,7 @@ function remote_build_client:init()
     -- init timeout
     self._SEND_TIMEOUT = config.get("remote_build.send_timeout") or config.get("send_timeout") or -1
     self._RECV_TIMEOUT = config.get("remote_build.recv_timeout") or config.get("recv_timeout") or -1
-    self._CONNECT_TIMEOUT = config.get("remote_build.connect_timeout") or config.get("connect_timeout") or -1
+    self._CONNECT_TIMEOUT = config.get("remote_build.connect_timeout") or config.get("connect_timeout") or 10000
 end
 
 -- get class
@@ -79,7 +79,7 @@ function remote_build_client:connect()
         return
     end
 
-    -- we need user authorization?
+    -- Do we need user authorization?
     local token = config.get("remote_build.token")
     if not token and self:user() then
 
@@ -101,7 +101,7 @@ function remote_build_client:connect()
     local session_id = self:session_id()
     local ok = false
     local errors
-    print("%s: connect %s:%d ..", self, addr, port)
+    cprint("${dim}%s: connect %s:%d ..", self, addr, port)
     if sock then
         local stream = socket_stream(sock, {send_timeout = self:send_timeout(), recv_timeout = self:recv_timeout()})
         if stream:send_msg(message.new_connect(session_id, {token = token})) and stream:flush() then
@@ -117,9 +117,9 @@ function remote_build_client:connect()
         end
     end
     if ok then
-        print("%s: connected!", self)
+        cprint("${dim}%s: connected!", self)
     else
-        print("%s: connect %s:%d failed, %s", self, addr, port, errors or "unknown")
+        cprint("${dim}%s: connect %s:%d failed, %s", self, addr, port, errors or "unknown")
     end
 
     -- update status
@@ -143,42 +143,13 @@ function remote_build_client:disconnect()
         print("%s: has been disconnected!", self)
         return
     end
-    local addr = self:addr()
-    local port = self:port()
-    local sock = socket.connect(addr, port, {timeout = self:connect_timeout()})
-    local session_id = self:session_id()
-    local errors
-    local ok = false
-    print("%s: disconnect %s:%d ..", self, addr, port)
-    if sock then
-        local stream = socket_stream(sock, {send_timeout = self:send_timeout(), recv_timeout = self:recv_timeout()})
-        if stream:send_msg(message.new_disconnect(session_id, {token = self:token()})) and stream:flush() then
-            local msg = stream:recv_msg()
-            if msg then
-                vprint(msg:body())
-                if msg:success() then
-                    ok = true
-                else
-                    errors = msg:errors()
-                end
-            end
-        end
-    else
-        -- server unreachable, but we still disconnect it.
-        wprint("%s: server unreachable!", self)
-        ok = true
-    end
-    if ok then
-        print("%s: disconnected!", self)
-    else
-        print("%s: disconnect %s:%d failed, %s", self, addr, port, errors or "unknown")
-    end
 
     -- update status
     local status = self:status()
     status.token = nil
-    status.connected = not ok
+    status.connected = false
     self:status_save()
+    cprint("${dim}%s: disconnected!", self)
 end
 
 -- sync server files
@@ -191,12 +162,13 @@ function remote_build_client:sync()
     local errors
     local ok = false
     local diff_files
-    print("%s: sync files in %s:%d ..", self, addr, port)
+    local xmakesrc = option.get("xmakesrc")
+    cprint("${dim}%s: sync files in %s:%d ..", self, addr, port)
     while sock do
 
         -- diff files
         local stream = socket_stream(sock, {send_timeout = self:send_timeout(), recv_timeout = self:recv_timeout()})
-        diff_files, errors = self:_diff_files(stream)
+        diff_files, errors = self:_diff_files(stream, {xmakesrc = xmakesrc})
         if not diff_files then
             break
         end
@@ -208,8 +180,9 @@ function remote_build_client:sync()
         -- do sync
         cprint("Uploading files ..")
         local send_ok = false
-        if stream:send_msg(message.new_sync(session_id, diff_files, {token = self:token()}), {compress = true}) and stream:flush() then
-            if self:_send_diff_files(stream, diff_files) then
+        if stream:send_msg(message.new_sync(session_id, diff_files,
+                {token = self:token(), xmakesrc = xmakesrc and true or false}), {compress = true}) and stream:flush() then
+            if self:_send_diff_files(stream, diff_files, {rootdir = xmakesrc}) then
                 send_ok = true
             end
         end
@@ -229,9 +202,9 @@ function remote_build_client:sync()
         break
     end
     if ok then
-        print("%s: sync files ok!", self)
+        cprint("${dim}%s: sync files ok!", self)
     else
-        print("%s: sync files failed in %s:%d, %s", self, addr, port, errors or "unknown")
+        cprint("${dim}%s: sync files failed in %s:%d, %s", self, addr, port, errors or "unknown")
     end
 end
 
@@ -247,7 +220,10 @@ function remote_build_client:pull(filepattern, outputdir)
     if not filepattern:find("*", 1, true) and os.isdir(filepattern) then
         filepattern = path.join(filepattern, "**")
     end
-    print("%s: pull %s in %s:%d ..", self, filepattern, addr, port)
+    if not outputdir then
+        outputdir = os.curdir()
+    end
+    cprint("${dim}%s: pull %s in %s:%d ..", self, filepattern, addr, port)
     local stream = socket_stream(sock, {send_timeout = self:send_timeout(), recv_timeout = self:recv_timeout()})
     if stream:send_msg(message.new_pull(session_id, filepattern, {token = self:token()})) and stream:flush() then
         local fileitems
@@ -280,9 +256,9 @@ function remote_build_client:pull(filepattern, outputdir)
         end
     end
     if ok then
-        print("%s: pull files to %s!", self, outputdir)
+        cprint("${dim}%s: pull files to %s!", self, outputdir)
     else
-        print("%s: pull files failed in %s:%d, %s", self, addr, port, errors or "unknown")
+        cprint("${dim}%s: pull files failed in %s:%d, %s", self, addr, port, errors or "unknown")
     end
 end
 
@@ -295,9 +271,9 @@ function remote_build_client:clean()
     local session_id = self:session_id()
     local errors
     local ok = false
-    print("%s: clean files in %s:%d ..", self, addr, port)
+    cprint("${dim}%s: clean files in %s:%d ..", self, addr, port)
     local stream = socket_stream(sock, {send_timeout = self:send_timeout(), recv_timeout = self:recv_timeout()})
-    if stream:send_msg(message.new_clean(session_id, {token = self:token()})) and stream:flush() then
+    if stream:send_msg(message.new_clean(session_id, {token = self:token(), all = option.get("all")})) and stream:flush() then
         local msg = stream:recv_msg({timeout = -1})
         if msg then
             vprint(msg:body())
@@ -309,9 +285,9 @@ function remote_build_client:clean()
         end
     end
     if ok then
-        print("%s: clean files ok!", self)
+        cprint("${dim}%s: clean files ok!", self)
     else
-        print("%s: clean files failed in %s:%d, %s", self, addr, port, errors or "unknown")
+        cprint("${dim}%s: clean files failed in %s:%d, %s", self, addr, port, errors or "unknown")
     end
 end
 
@@ -327,7 +303,7 @@ function remote_build_client:runcmd(program, argv)
     local buff = bytes(8192)
     local command = os.args(table.join(program, argv))
     local leftstr = ""
-    cprint("%s: run ${bright}%s${clear} in %s:%d ..", self, command, addr, port)
+    cprint("${dim}%s: run '%s' in %s:%d ..", self, command, addr, port)
     local stream = socket_stream(sock, {send_timeout = self:send_timeout(), recv_timeout = self:recv_timeout()})
     if stream:send_msg(message.new_runcmd(session_id, program, argv, {token = self:token()})) and stream:flush() then
         local stdin_opt = {stop = false}
@@ -373,9 +349,9 @@ function remote_build_client:runcmd(program, argv)
         cprint(leftstr)
     end
     if ok then
-        print("%s: run command ok!", self)
+        cprint("${dim}%s: run command ok!", self)
     else
-        print("%s: run command failed in %s:%d, %s", self, addr, port, errors or "unknown")
+        cprint("${dim}%s: run command failed in %s:%d, %s", self, addr, port, errors or "unknown")
     end
     io.flush()
 end
@@ -426,7 +402,7 @@ end
 
 -- get the session id, only for unique project
 function remote_build_client:session_id()
-    return self:status().session_id or hash.uuid():split("-", {plain = true})[1]:lower()
+    return self:status().session_id or hash.uuid(option.get("session")):split("-", {plain = true})[1]:lower()
 end
 
 -- set the given client address
@@ -458,16 +434,24 @@ function remote_build_client:_filesync()
 end
 
 -- diff server files
-function remote_build_client:_diff_files(stream)
+function remote_build_client:_diff_files(stream, opt)
+    opt = opt or {}
     assert(self:is_connected(), "%s: has been not connected!", self)
     print("Scanning files ..")
     local filesync = self:_filesync()
+    if opt.xmakesrc then
+        assert(os.isdir(opt.xmakesrc), "%s: %s not found!", opt.xmakesrc)
+        filesync = new_filesync(opt.xmakesrc, path.join(self:workdir(), "xmakesrc_manifest.txt"))
+        filesync:ignorefiles_add(".git/**")
+    end
     local manifest, filecount = filesync:snapshot()
     local session_id = self:session_id()
     local count = 0
     local result, errors
     cprint("Comparing ${bright}%d${clear} files ..", filecount)
-    if stream:send_msg(message.new_diff(session_id, manifest, {token = self:token()}), {compress = true}) and stream:flush() then
+    if stream:send_msg(message.new_diff(session_id, manifest,
+            {token = self:token(), xmakesrc = opt.xmakesrc and true or false}),
+                {compress = true}) and stream:flush() then
         local msg = stream:recv_msg({timeout = -1})
         if msg and msg:success() then
             result = msg:body().manifest
@@ -475,20 +459,20 @@ function remote_build_client:_diff_files(stream)
                 for _, fileitem in ipairs(result.inserted) do
                     if count < 8 then
                         cprint("    ${green}[+]: ${clear}%s", fileitem)
-                        count = count + 1
                     end
+                    count = count + 1
                 end
                 for _, fileitem in ipairs(result.modified) do
                     if count < 8 then
                         cprint("    ${yellow}[*]: ${clear}%s", fileitem)
-                        count = count + 1
                     end
+                    count = count + 1
                 end
                 for _, fileitem in ipairs(result.removed) do
                     if count < 8 then
                         cprint("    ${red}[-]: ${clear}%s", fileitem)
-                        count = count + 1
                     end
+                    count = count + 1
                 end
                 if count >= 8 then
                     print("    ...")
@@ -503,7 +487,8 @@ function remote_build_client:_diff_files(stream)
 end
 
 -- send diff files
-function remote_build_client:_send_diff_files(stream, diff_files)
+function remote_build_client:_send_diff_files(stream, diff_files, opt)
+    opt = opt or {}
     local count = 0
     local totalsize = 0
     local compressed_size = 0
@@ -511,13 +496,17 @@ function remote_build_client:_send_diff_files(stream, diff_files)
     local time = os.mclock()
     local startime = time
     for _, fileitem in ipairs(diff_files.inserted) do
-        local filesize = os.filesize(fileitem)
+        local filepath = fileitem
+        if opt.rootdir and not path.is_absolute(fileitem) then
+            filepath = path.absolute(fileitem, opt.rootdir)
+        end
+        local filesize = os.filesize(filepath)
         if os.mclock() - time > 1000 then
             cprint("Uploading ${bright}%d%%${clear} ..", math.floor(count * 100 / totalcount))
             time = os.mclock()
         end
         vprint("uploading %s, %d bytes ..", fileitem, filesize)
-        local sent, compressed_real = stream:send_file(fileitem, {compress = filesize > 4096})
+        local sent, compressed_real = stream:send_file(filepath, {compress = filesize > 4096})
         if not sent then
             return false
         end
@@ -526,13 +515,17 @@ function remote_build_client:_send_diff_files(stream, diff_files)
         compressed_size = compressed_size + compressed_real
     end
     for _, fileitem in ipairs(diff_files.modified) do
-        local filesize = os.filesize(fileitem)
+        local filepath = fileitem
+        if opt.rootdir and not path.is_absolute(fileitem) then
+            filepath = path.absolute(fileitem, opt.rootdir)
+        end
+        local filesize = os.filesize(filepath)
         if os.mclock() - time > 1000 then
             cprint("Uploading ${bright}%d%%${clear} ..", math.floor(count * 100 / totalcount))
             time = os.mclock()
         end
         vprint("uploading %s, %d bytes ..", fileitem, filesize)
-        local sent, compressed_real = stream:send_file(fileitem, {compress = filesize > 4096})
+        local sent, compressed_real = stream:send_file(filepath, {compress = filesize > 4096})
         if not sent then
             return false
         end
@@ -596,7 +589,7 @@ function is_connected()
     local projectdir = os.projectdir()
     local projectfile = os.projectfile()
     if projectfile and os.isfile(projectfile) and projectdir then
-        local workdir = path.join(project_config.directory(), "remote_build")
+        local workdir = path.join(project_config.directory(), "service", "remote_build")
         local statusfile = path.join(workdir, "status.txt")
         if os.isfile(statusfile) then
             local status = io.load(statusfile)

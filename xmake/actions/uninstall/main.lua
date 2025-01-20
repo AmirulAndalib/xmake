@@ -26,14 +26,13 @@ import("core.base.privilege")
 import("privilege.sudo")
 import("uninstall")
 
--- main
 function main()
 
-    -- config it first
-    local targetname = option.get("target")
-    task.run("config", {require = "n", verbose = false})
+    -- load config first
+    task.run("config", {require = false}, {disable_dump = true})
 
     -- attempt to uninstall directly
+    local targetname = option.get("target")
     try
     {
         function ()
@@ -69,7 +68,10 @@ function main()
                 if sudo.has() and option.get("admin") then
 
                     -- uninstall target with administrator permission
-                    sudo.execl(path.join(os.scriptdir(), "uninstall_admin.lua"), {targetname or "__all", option.get("installdir"), option.get("prefix")})
+                    sudo.execl(path.join(os.scriptdir(), "uninstall_admin.lua"), {
+                        targetname or "__all",
+                        option.get("installdir") or "",
+                        option.get("prefix")})
 
                     -- trace
                     cprint("${color.success}uninstall ok!")

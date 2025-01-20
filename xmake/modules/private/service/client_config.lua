@@ -22,6 +22,7 @@
 import("core.base.global")
 import("core.base.base64")
 import("core.base.bytes")
+import("core.project.config")
 import("private.service.server_config")
 
 -- get a local server token
@@ -41,7 +42,7 @@ function _generate_configfile()
     local configs = {
         send_timeout = -1,
         recv_timeout = -1,
-        connect_timeout = -1,
+        connect_timeout = 10000,
         remote_build = {
             -- without authorization: "127.0.0.1:9691"
             -- with user authorization: "user@127.0.0.1:9691"
@@ -67,6 +68,13 @@ end
 
 -- get config file path
 function configfile()
+    local projectfile = os.projectfile()
+    if projectfile and os.isfile(projectfile) then
+        local localconf = path.join(config.directory(), "service", "client.conf")
+        if os.isfile(localconf) then
+            return localconf
+        end
+    end
     return path.join(global.directory(), "service", "client.conf")
 end
 

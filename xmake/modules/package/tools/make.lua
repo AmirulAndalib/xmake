@@ -22,11 +22,17 @@
 import("core.base.option")
 import("core.project.config")
 import("lib.detect.find_tool")
+import("private.utils.toolchain", {alias = "toolchain_utils"})
 
 -- translate bin path
 function _translate_bin_path(bin_path)
     if is_host("windows") and bin_path then
-        return bin_path:gsub("\\", "/") .. ".exe"
+        bin_path = bin_path:gsub("\\", "/")
+        local bin_path_lower = bin_path:lower()
+        if not bin_path_lower:endswith(".exe") and not bin_path_lower:endswith(".cmd") and not bin_path_lower:endswith(".bat") then
+            bin_path = bin_path .. ".exe"
+        end
+        return bin_path
     end
     return bin_path
 end
@@ -34,11 +40,18 @@ end
 -- get the build environments
 function buildenvs(package)
     local envs = {}
+    local cflags   = table.join(table.wrap(package:build_getenv("cxflags")), package:build_getenv("cflags"))
+    local cxxflags = table.join(table.wrap(package:build_getenv("cxflags")), package:build_getenv("cxxflags"))
+    local asflags  = table.copy(table.wrap(package:config("asflags")))
+    local ldflags  = table.copy(table.wrap(package:config("ldflags")))
+    local shflags  = table.copy(table.wrap(package:config("shflags")))
+    local runtimes = package:runtimes()
+    if runtimes then
+        table.join2(cxxflags, toolchain_utils.map_compflags_for_package(package, "cxx", "runtime", runtimes))
+        table.join2(ldflags, toolchain_utils.map_linkflags_for_package(package, "binary", {"cxx"}, "runtime", runtimes))
+        table.join2(shflags, toolchain_utils.map_linkflags_for_package(package, "shared", {"cxx"}, "runtime", runtimes))
+    end
     if package:is_plat(os.host()) then
-        local cflags   = table.join(table.wrap(package:config("cxflags")), package:config("cflags"))
-        local cxxflags = table.join(table.wrap(package:config("cxflags")), package:config("cxxflags"))
-        local asflags  = table.copy(table.wrap(package:config("asflags")))
-        local ldflags  = table.copy(table.wrap(package:config("ldflags")))
         if package:is_plat("linux") and package:is_arch("i386") then
             table.insert(cflags,   "-m32")
             table.insert(cxxflags, "-m32")
@@ -49,9 +62,8 @@ function buildenvs(package)
         envs.CXXFLAGS  = table.concat(cxxflags, ' ')
         envs.ASFLAGS   = table.concat(asflags, ' ')
         envs.LDFLAGS   = table.concat(ldflags, ' ')
+        envs.SHFLAGS   = table.concat(shflags, ' ')
     else
-        local cflags   = table.join(table.wrap(package:build_getenv("cxflags")), package:build_getenv("cflags"))
-        local cxxflags = table.join(table.wrap(package:build_getenv("cxflags")), package:build_getenv("cxxflags"))
         envs.CC        = _translate_bin_path(package:build_getenv("cc"))
         envs.CXX       = _translate_bin_path(package:build_getenv("cxx"))
         envs.AS        = _translate_bin_path(package:build_getenv("as"))
@@ -62,14 +74,14 @@ function buildenvs(package)
         envs.RANLIB    = _translate_bin_path(package:build_getenv("ranlib"))
         envs.CFLAGS    = table.concat(cflags, ' ')
         envs.CXXFLAGS  = table.concat(cxxflags, ' ')
-        envs.ASFLAGS   = table.concat(table.wrap(package:build_getenv("asflags")), ' ')
+        envs.ASFLAGS   = table.concat(asflags, ' ')
         envs.ARFLAGS   = table.concat(table.wrap(package:build_getenv("arflags")), ' ')
-        envs.LDFLAGS   = table.concat(table.wrap(package:build_getenv("ldflags")), ' ')
-        envs.SHFLAGS   = table.concat(table.wrap(package:build_getenv("shflags")), ' ')
+        envs.LDFLAGS   = table.concat(ldflags, ' ')
+        envs.SHFLAGS   = table.concat(shflags, ' ')
     end
     local ACLOCAL_PATH = {}
     local PKG_CONFIG_PATH = {}
-    for _, dep in ipairs(package:librarydeps()) do
+    for _, dep in ipairs(package:librarydeps({private = true})) do
         local pkgconfig = path.join(dep:installdir(), "lib", "pkgconfig")
         if os.isdir(pkgconfig) then
             table.insert(PKG_CONFIG_PATH, pkgconfig)
@@ -78,6 +90,9 @@ function buildenvs(package)
         if os.isdir(pkgconfig) then
             table.insert(PKG_CONFIG_PATH, pkgconfig)
         end
+    end
+    -- some binary packages contain it too. e.g. libtool
+    for _, dep in ipairs(package:orderdeps()) do
         local aclocal = path.join(dep:installdir(), "share", "aclocal")
         if os.isdir(aclocal) then
             table.insert(ACLOCAL_PATH, aclocal)
@@ -108,13 +123,11 @@ function make(package, argv, opt)
         end
     end
     assert(program, "make not found!")
-    os.vrunv(program, argv, {envs = runenvs, curdir = opt.curdir})
+    os.vrunv(program, argv or {}, {envs = runenvs, curdir = opt.curdir})
 end
 
 -- build package
 function build(package, configs, opt)
-
-    -- init options
     opt = opt or {}
 
     -- pass configurations
@@ -122,6 +135,7 @@ function build(package, configs, opt)
     local argv = {"-j" .. njob}
     if option.get("verbose") then
         table.insert(argv, "VERBOSE=1")
+        table.insert(argv, "V=1")
     end
     for name, value in pairs(configs) do
         value = tostring(value):trim()
@@ -149,6 +163,7 @@ function install(package, configs, opt)
     local argv = {"install"}
     if option.get("verbose") then
         table.insert(argv, "VERBOSE=1")
+        table.insert(argv, "V=1")
     end
     make(package, argv, opt)
 end

@@ -66,17 +66,16 @@ function _get_configs(package, configs, opt)
     elseif package:is_arch("arm.*") then
         configs.target_cpu = "arm"
     end
-    configs.is_debug = package:is_debug()
-    if not package:is_debug() then
-        configs.symbol_level = 0
+    if configs.is_debug == nil then
+        configs.is_debug = package:is_debug() and true or false
     end
     return configs
 end
 
 -- get msvc
 function _get_msvc(package)
-    local msvc = toolchain.load("msvc", {plat = package:plat(), arch = package:arch()})
-    assert(msvc:check(), "vs not found!") -- we need check vs envs if it has been not checked yet
+    local msvc = package:toolchain("msvc")
+    assert(msvc:check(), "vs not found!") -- we need to check vs envs if it has been not checked yet
     return msvc
 end
 

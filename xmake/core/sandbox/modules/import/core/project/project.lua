@@ -70,9 +70,11 @@ sandbox_core_project.policy               = project.policy
 sandbox_core_project.tmpdir               = project.tmpdir
 sandbox_core_project.tmpfile              = project.tmpfile
 sandbox_core_project.is_loaded            = project.is_loaded
+sandbox_core_project.apis                 = project.apis
+sandbox_core_project.namespaces           = project.namespaces
 
 -- check project options
-function sandbox_core_project.check()
+function sandbox_core_project.check_options()
 
     -- get project options
     local options = {}
@@ -97,22 +99,22 @@ function sandbox_core_project.check()
         if opt then
             -- check deps of this option first
             for _, dep in ipairs(opt:orderdeps()) do
-                if not checked[dep:name()] then
+                if not checked[dep:fullname()] then
                     dep:check()
-                    checked[dep:name()] = true
+                    checked[dep:fullname()] = true
                 end
             end
             -- check this option
-            if not checked[opt:name()] then
+            if not checked[opt:fullname()] then
                 opt:check()
-                checked[opt:name()] = true
+                checked[opt:fullname()] = true
             end
         end
     end
 
     -- check all options
     local jobs = baseoption.get("jobs") or os.default_njob()
-    import("private.async.runjobs", {anonymous = true})("check_options", instance:fork(checktask):script(), {total = #options, comax = jobs})
+    import("async.runjobs", {anonymous = true})("check_options", instance:fork(checktask):script(), {total = #options, comax = jobs})
 
     -- save all options to the cache file
     option.save()
@@ -122,6 +124,99 @@ function sandbox_core_project.check()
     if not ok then
         raise(errors)
     end
+end
+
+-- config target
+function sandbox_core_project._config_target(target, opt)
+    for _, rule in ipairs(table.wrap(target:orderules())) do
+        local before_config = rule:script("config_before")
+        if before_config then
+            before_config(target, opt)
+        end
+    end
+
+    for _, rule in ipairs(table.wrap(target:orderules())) do
+        local on_config = rule:script("config")
+        if on_config then
+            on_config(target, opt)
+        end
+    end
+    local on_config = target:script("config")
+    if on_config then
+        on_config(target, opt)
+    end
+
+    for _, rule in ipairs(table.wrap(target:orderules())) do
+        local after_config = rule:script("config_after")
+        if after_config then
+            after_config(target, opt)
+        end
+    end
+end
+
+-- config targets
+--
+-- @param opt   the extra option, e.g. {recheck = false}
+--
+-- on_config(target, opt)
+--    -- @see https://github.com/xmake-io/xmake/issues/4173#issuecomment-1712843956
+--    if opt.recheck then
+--        target:has_cfuncs(...)
+--    end
+-- end
+--
+function sandbox_core_project._config_targets(opt)
+    opt = opt or {}
+    for _, target in ipairs(table.wrap(project.ordertargets())) do
+        if target:is_enabled() then
+            sandbox_core_project._config_target(target, opt)
+        end
+    end
+end
+
+-- load rules in the required packages for target
+function sandbox_core_project._load_package_rules_for_target(target)
+    for _, rulename in ipairs(table.wrap(target:get("rules"))) do
+        local packagename = rulename:match("@(.-)/")
+        if packagename then
+            local pkginfo = project.required_package(packagename)
+            if pkginfo then
+                local r = pkginfo:rule(rulename)
+                if r then
+                    target:rule_add(r)
+                    for _, dep in pairs(table.wrap(r:deps())) do
+                        target:rule_add(dep)
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- load rules in the required packages for targets
+-- @see https://github.com/xmake-io/xmake/issues/2374
+--
+-- @code
+-- add_requires("zlib", {system = false})
+-- target("test")
+--    set_kind("binary")
+--    add_files("src/*.cpp")
+--    add_packages("zlib")
+--    add_rules("@zlib/test")
+-- @endcode
+--
+function sandbox_core_project._load_package_rules_for_targets()
+    for _, target in ipairs(table.wrap(project.ordertargets())) do
+        if target:is_enabled() then
+            sandbox_core_project._load_package_rules_for_target(target)
+        end
+    end
+end
+
+-- load project targets
+function sandbox_core_project.load_targets(opt)
+    sandbox_core_project._load_package_rules_for_targets()
+    sandbox_core_project._config_targets(opt)
 end
 
 -- get the filelock of the whole project directory
@@ -169,6 +264,28 @@ function sandbox_core_project.chdir(projectdir, projectfile)
     xmake._PROJECT_DIR = path.directory(projectfile)
     xmake._WORKING_DIR = xmake._PROJECT_DIR
     config._DIRECTORY = nil
+end
+
+-- get scope
+function sandbox_core_project.scope(scopename)
+    local cachekey = "scope." .. scopename
+    local scope = project._memcache():get(cachekey)
+    if not scope then
+
+        -- load the project file first if has not been loaded?
+        local ok, errors = project._load()
+        if not ok then
+            raise("load project failed, %s", errors or "unknown")
+        end
+
+        -- load scope
+        scope, errors = project._load_scope(scopename, true, false)
+        if not scope then
+            raise("load scope(%s) failed, %s", scopename, errors or "unknown")
+        end
+        project._memcache():set(cachekey, scope)
+    end
+    return scope
 end
 
 -- return module

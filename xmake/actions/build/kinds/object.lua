@@ -23,32 +23,9 @@ import("core.base.option")
 import("core.project.rule")
 import("core.project.config")
 import("core.project.project")
-import("private.async.runjobs")
+import("async.runjobs")
 import("private.utils.batchcmds")
-
--- get rule
--- @note we need get rule from target first, because we maybe will inject and replace builtin rule in target
-function _get_rule(target, rulename)
-    local ruleinst = assert(target:rule(rulename) or project.rule(rulename) or rule.rule(rulename), "unknown rule: %s", rulename)
-    return ruleinst
-end
-
--- get max depth of rule
-function _get_rule_max_depth(target, ruleinst, depth)
-    local max_depth = depth
-    for _, depname in ipairs(ruleinst:get("deps")) do
-        local dep = _get_rule(target, depname)
-        local dep_depth = depth
-        if ruleinst:extraconf("deps", depname, "order") then
-            dep_depth = dep_depth + 1
-        end
-        local cur_depth = _get_rule_max_depth(target, dep, dep_depth)
-        if cur_depth > max_depth then
-            max_depth = cur_depth
-        end
-    end
-    return max_depth
-end
+import("private.utils.rule_groups")
 
 -- has scripts for the custom rule
 function _has_scripts_for_rule(ruleinst, suffix)
@@ -114,7 +91,7 @@ function _add_batchjobs_for_rule(batchjobs, rootjob, target, sourcebatch, suffix
 
     -- get rule
     local rulename = assert(sourcebatch.rulename, "unknown rule for sourcebatch!")
-    local ruleinst = _get_rule(target, rulename)
+    local ruleinst = rule_groups.get_rule(target, rulename)
 
     -- add batch jobs for xx_build_files
     local scriptname = "build_files" .. (suffix and ("_" .. suffix) or "")
@@ -123,8 +100,8 @@ function _add_batchjobs_for_rule(batchjobs, rootjob, target, sourcebatch, suffix
         if ruleinst:extraconf(scriptname, "batch") then
             script(target, batchjobs, sourcebatch, {rootjob = rootjob, distcc = ruleinst:extraconf(scriptname, "distcc")})
         else
-            batchjobs:addjob("rule/" .. rulename .. "/" .. scriptname, function (index, total)
-                script(target, sourcebatch, {progress = (index * 100) / total})
+            batchjobs:addjob("rule/" .. rulename .. "/" .. scriptname, function (index, total, opt)
+                script(target, sourcebatch, {progress = opt.progress})
             end, {rootjob = rootjob})
         end
     end
@@ -136,8 +113,8 @@ function _add_batchjobs_for_rule(batchjobs, rootjob, target, sourcebatch, suffix
         if script then
             local sourcekind = sourcebatch.sourcekind
             for _, sourcefile in ipairs(sourcebatch.sourcefiles) do
-                batchjobs:addjob(sourcefile, function (index, total)
-                    script(target, sourcefile, {sourcekind = sourcekind, progress = (index * 100) / total})
+                batchjobs:addjob(sourcefile, function (index, total, opt)
+                    script(target, sourcefile, {sourcekind = sourcekind, progress = opt.progress})
                 end, {rootjob = rootjob, distcc = ruleinst:extraconf(scriptname, "distcc")})
             end
         end
@@ -148,11 +125,11 @@ function _add_batchjobs_for_rule(batchjobs, rootjob, target, sourcebatch, suffix
         scriptname = "buildcmd_files" .. (suffix and ("_" .. suffix) or "")
         script = ruleinst:script(scriptname)
         if script then
-            batchjobs:addjob("rule/" .. rulename .. "/" .. scriptname, function (index, total)
+            batchjobs:addjob("rule/" .. rulename .. "/" .. scriptname, function (index, total, opt)
                 local batchcmds_ = batchcmds.new({target = target})
                 local distcc = ruleinst:extraconf(scriptname, "distcc")
-                script(target, batchcmds_, sourcebatch, {progress = (index * 100) / total, distcc = distcc})
-                batchcmds_:runcmds({dryrun = option.get("dry-run")})
+                script(target, batchcmds_, sourcebatch, {progress = opt.progress, distcc = distcc})
+                batchcmds_:runcmds({changed = target:is_rebuilt(), dryrun = option.get("dry-run")})
             end, {rootjob = rootjob})
         end
     end
@@ -164,10 +141,10 @@ function _add_batchjobs_for_rule(batchjobs, rootjob, target, sourcebatch, suffix
         if script then
             local sourcekind = sourcebatch.sourcekind
             for _, sourcefile in ipairs(sourcebatch.sourcefiles) do
-                batchjobs:addjob(sourcefile, function (index, total)
+                batchjobs:addjob(sourcefile, function (index, total, opt)
                     local batchcmds_ = batchcmds.new({target = target})
-                    script(target, batchcmds_, sourcefile, {sourcekind = sourcekind, progress = (index * 100) / total})
-                    batchcmds_:runcmds({dryrun = option.get("dry-run")})
+                    script(target, batchcmds_, sourcefile, {sourcekind = sourcekind, progress = opt.progress})
+                    batchcmds_:runcmds({changed = target:is_rebuilt(), dryrun = option.get("dry-run")})
                 end, {rootjob = rootjob, distcc = ruleinst:extraconf(scriptname, "distcc")})
             end
         end
@@ -186,7 +163,7 @@ function _add_batchjobs_for_target(batchjobs, rootjob, target, sourcebatch, suff
     --
     local rulename = sourcebatch.rulename
     if rulename then
-        local ruleinst = _get_rule(target, rulename)
+        local ruleinst = rule_groups.get_rule(target, rulename)
         if not ruleinst:script("build_file") and
             not ruleinst:script("build_files") then
             return
@@ -200,8 +177,8 @@ function _add_batchjobs_for_target(batchjobs, rootjob, target, sourcebatch, suff
         if target:extraconf(scriptname, "batch") then
             script(target, batchjobs, sourcebatch, {rootjob = rootjob, distcc = target:extraconf(scriptname, "distcc")})
         else
-            batchjobs:addjob(target:name() .. "/" .. scriptname, function (index, total)
-                script(target, sourcebatch, {progress = (index * 100) / total})
+            batchjobs:addjob(target:name() .. "/" .. scriptname, function (index, total, opt)
+                script(target, sourcebatch, {progress = opt.progress})
             end, {rootjob = rootjob})
         end
         return true
@@ -211,8 +188,8 @@ function _add_batchjobs_for_target(batchjobs, rootjob, target, sourcebatch, suff
         if script then
             local sourcekind = sourcebatch.sourcekind
             for _, sourcefile in ipairs(sourcebatch.sourcefiles) do
-                batchjobs:addjob(sourcefile, function (index, total)
-                    script(target, sourcefile, {sourcekind = sourcekind, progress = (index * 100) / total})
+                batchjobs:addjob(sourcefile, function (index, total, opt)
+                    script(target, sourcefile, {sourcekind = sourcekind, progress = opt.progress})
                 end, {rootjob = rootjob, distcc = target:extraconf(scriptname, "distcc")})
             end
             return true
@@ -227,62 +204,18 @@ function _add_batchjobs_for_group(batchjobs, rootjob, target, group, suffix)
         if item.target then
             _add_batchjobs_for_target(batchjobs, rootjob, target, sourcebatch, suffix)
         end
-        -- override on_xxx script in target? we need ignore rule scripts
+        -- override on_xxx script in target? we need to ignore rule scripts
         if item.rule and (suffix or not _has_scripts_for_target(target, suffix)) then
             _add_batchjobs_for_rule(batchjobs, rootjob, target, sourcebatch, suffix)
         end
     end
 end
 
--- build sourcebatch groups for target
-function _build_sourcebatch_groups_for_target(groups, target, sourcebatches)
-    local group = groups[1]
-    for _, sourcebatch in pairs(sourcebatches) do
-        local rulename = assert(sourcebatch.rulename, "unknown rule for sourcebatch!")
-        local item = group[rulename] or {}
-        item.target = target
-        item.sourcebatch = sourcebatch
-        group[rulename] = item
-    end
-end
-
--- build sourcebatch groups for rules
-function _build_sourcebatch_groups_for_rules(groups, target, sourcebatches)
-    for _, sourcebatch in pairs(sourcebatches) do
-        local rulename = assert(sourcebatch.rulename, "unknown rule for sourcebatch!")
-        local ruleinst = _get_rule(target, rulename)
-        local depth = _get_rule_max_depth(target, ruleinst, 1)
-        local group = groups[depth]
-        if group == nil then
-            group = {}
-            groups[depth] = group
-        end
-        local item = group[rulename] or {}
-        item.rule = ruleinst
-        item.sourcebatch = sourcebatch
-        group[rulename] = item
-    end
-end
-
--- build sourcebatch groups by rule dependencies order, e.g. `add_deps("qt.ui", {order = true})`
---
--- @see https://github.com/xmake-io/xmake/issues/2814
---
-function _build_sourcebatch_groups(target, sourcebatches)
-    local groups = {{}}
-    _build_sourcebatch_groups_for_target(groups, target, sourcebatches)
-    _build_sourcebatch_groups_for_rules(groups, target, sourcebatches)
-    if #groups > 0 then
-        groups = table.reverse(groups)
-    end
-    return groups
-end
-
 -- add batch jobs for building source files
 function add_batchjobs_for_sourcefiles(batchjobs, rootjob, target, sourcebatches)
 
     -- build sourcebatch groups first
-    local groups = _build_sourcebatch_groups(target, sourcebatches)
+    local groups = rule_groups.build_sourcebatch_groups(target, sourcebatches)
 
     -- add batch jobs for build_after
     local groups_root
@@ -319,7 +252,22 @@ function add_batchjobs_for_sourcefiles(batchjobs, rootjob, target, sourcebatches
 end
 
 -- add batch jobs for building object files
-function main(batchjobs, rootjob, target)
+function add_batchjobs_for_object(batchjobs, rootjob, target)
     return add_batchjobs_for_sourcefiles(batchjobs, rootjob, target, target:sourcebatches())
 end
 
+-- add batch jobs for building object target
+function main(batchjobs, rootjob, target)
+
+    -- add a fake link job
+    local job_link = batchjobs:addjob(target:name() .. "/fakelink", function (index, total, opt)
+    end, {rootjob = rootjob})
+
+    -- we only need to return and depend the link job for each target,
+    -- so we can compile the source files for each target in parallel
+    --
+    -- unless call set_policy("build.across_targets_in_parallel", false) to disable to build across targets in parallel.
+    --
+    local job_objects = add_batchjobs_for_object(batchjobs, job_link, target)
+    return target:policy("build.across_targets_in_parallel") == false and job_objects or job_link, job_objects
+end

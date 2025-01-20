@@ -26,23 +26,27 @@ import("core.base.hashset")
 import("lib.detect.find_library")
 
 -- make link for framework
-function _link(target, linkdirs, framework, qt_sdkver)
+function _link(target, linkdirs, framework, qt_sdkver, infix)
     if framework:startswith("Qt") then
         local debug_suffix = "_debug"
         if target:is_plat("windows") then
             debug_suffix = "d"
         elseif target:is_plat("mingw") then
-            debug_suffix = "d"
+            if qt_sdkver:ge("5.15.2") then
+                debug_suffix = ""
+            else
+                debug_suffix = "d"
+            end
         elseif target:is_plat("android") or target:is_plat("linux") then
             debug_suffix = ""
         end
         if qt_sdkver:ge("5.0") then
-            framework = "Qt" .. qt_sdkver:major() .. framework:sub(3) .. (is_mode("debug") and debug_suffix or "")
+            framework = "Qt" .. qt_sdkver:major() .. framework:sub(3) .. infix .. (is_mode("debug") and debug_suffix or "")
         else -- for qt4.x, e.g. QtGui4.lib
             if target:is_plat("windows", "mingw") then
-                framework = "Qt" .. framework:sub(3) .. (is_mode("debug") and debug_suffix or "") .. qt_sdkver:major()
-            else 
-                framework = "Qt" .. framework:sub(3) .. (is_mode("debug") and debug_suffix or "") 
+                framework = "Qt" .. framework:sub(3) .. infix .. (is_mode("debug") and debug_suffix or "") .. qt_sdkver:major()
+            else
+                framework = "Qt" .. framework:sub(3) .. infix .. (is_mode("debug") and debug_suffix or "")
             end
         end
         if target:is_plat("android") then --> -lQt5Core_armeabi/-lQt5CoreDebug_armeabi for 5.14.x
@@ -69,8 +73,12 @@ function _find_static_links_3rd(target, linkdirs, qt_sdkver, libpattern)
     for _, linkdir in ipairs(linkdirs) do
         for _, libpath in ipairs(os.files(path.join(linkdir, libpattern))) do
             local basename = path.basename(libpath)
-            -- we need ignore qt framework libraries, e.g. libQt5xxx.a, Qt5Core.lib ..
-            if not basename:startswith("libQt" .. qt_sdkver:major()) and not basename:startswith("Qt" .. qt_sdkver:major()) then
+            -- we need to ignore qt framework libraries, e.g. libQt5xxx.a, Qt5Core.lib ..
+            -- but bundled library names like libQt5Bundledxxx.a on Qt6.x
+            -- @see https://github.com/xmake-io/xmake/issues/3572
+            if basename:startswith("libQt" .. qt_sdkver:major() .. "Bundled") or (
+                (not basename:startswith("libQt" .. qt_sdkver:major())) and
+                (not basename:startswith("Qt" .. qt_sdkver:major()))) then
                 if (is_mode("debug") and basename:endswith(debug_suffix)) or (not is_mode("debug") and not basename:endswith(debug_suffix)) then
                     table.insert(links, core_target.linkname(path.filename(libpath)))
                 end
@@ -90,6 +98,8 @@ function _add_plugins(target, plugins)
         if plugin.linkdirs then
             target:values_add("qt.linkdirs", table.unpack(table.wrap(plugin.linkdirs)))
         end
+        -- TODO: add prebuilt object files in qt sdk.
+        -- these file is located at plugins/xxx/objects-Release/xxxPlugin_init/xxxPlugin_init.cpp.o
     end
 end
 
@@ -113,6 +123,62 @@ function _get_target_cppversion(target)
     end
 end
 
+-- get frameworks from target
+-- @see https://github.com/xmake-io/xmake/issues/4135
+function _get_frameworks_from_target(target)
+    local values = table.wrap(target:get("frameworks"))
+    for _, value in ipairs((target:get_from("frameworks", "option::*"))) do
+        table.join2(values, value)
+    end
+    for _, value in ipairs((target:get_from("frameworks", "package::*"))) do
+        table.join2(values, value)
+    end
+    for _, value in ipairs((target:get_from("__qt_frameworks", "dep::*", {interface = true}))) do
+        table.join2(values, value)
+    end
+    return table.unique(values)
+end
+
+function _add_qmakeprllibs(target, prlfile, qt)
+    if os.isfile(prlfile) then
+        local contents = io.readfile(prlfile)
+        local envs = {}
+        if contents then
+            for _, prlenv in ipairs(contents:split('\n', {plain = true})) do
+                local kv = prlenv:split('=', {plain = true})
+                if #kv == 2 then
+                    envs[kv[1]:trim()] = kv[2]:trim()
+                end
+            end
+        end
+        if envs.QMAKE_PRL_LIBS_FOR_CMAKE then
+            for _, lib in ipairs(envs.QMAKE_PRL_LIBS_FOR_CMAKE:split(';', {plain = true})) do
+                if lib:startswith("-L") then
+                    local libdir = lib:sub(3)
+                    target:add("linkdirs", libdir)
+                else
+                    if qt.qmldir then
+                        lib = string.gsub(lib, "%$%$%[QT_INSTALL_QML%]", qt.qmldir)
+                    end
+                    if qt.sdkdir then
+                        lib = string.gsub(lib, "%$%$%[QT_INSTALL_PREFIX%]", qt.sdkdir)
+                    end
+                    if qt.pluginsdir then
+                        lib = string.gsub(lib, "%$%$%[QT_INSTALL_PLUGINS%]", qt.pluginsdir)
+                    end
+                    if qt.libdir then
+                        lib = string.gsub(lib, "%$%$%[QT_INSTALL_LIBS%]", qt.libdir)
+                    end
+                    if lib:startswith("-l") then
+                        lib = lib:sub(3)
+                    end
+                    target:add("syslinks", lib)
+                end
+            end
+        end
+    end
+end
+
 -- the main entry
 function main(target, opt)
 
@@ -130,6 +196,25 @@ function main(target, opt)
         raise("Qt SDK version not found, please run `xmake f --qt_sdkver=xxx` to set it.")
     end
 
+    -- get qt sdk infix
+    local infix = ""
+    if qt.mkspecsdir then
+        if os.isfile(path.join(qt.mkspecsdir, "qconfig.pri")) then
+            local qconfig = io.readfile(path.join(qt.mkspecsdir, "qconfig.pri"))
+            if qconfig then
+                qconfig = qconfig:trim():split("\n")
+                for _, line in ipairs(qconfig) do
+                    if line:startswith("QT_LIBINFIX") then
+                        local kv = line:split("=", {plain = true, limit = 2})
+                        if #kv == 2 then
+                            infix = kv[2]:trim()
+                        end
+                    end
+                end
+            end
+        end
+    end
+
     -- add -fPIC
     if not target:is_plat("windows", "mingw") then
         target:add("cxflags", "-fPIC")
@@ -137,6 +222,13 @@ function main(target, opt)
         target:add("asflags", "-fPIC")
     end
 
+    if qt_sdkver:ge("6.0") then
+        -- @see https://github.com/xmake-io/xmake/issues/2071
+        if target:is_plat("windows") then
+            target:add("cxxflags", "/Zc:__cplusplus")
+            target:add("cxxflags", "/permissive-")
+        end
+    end
     -- need c++11 at least
     local languages = target:get("languages")
     local cxxlang = false
@@ -156,11 +248,6 @@ function main(target, opt)
             if (not cppversion) or (tonumber(cppversion) and tonumber(cppversion) < 17) then
                 target:add("languages", "c++17")
             end
-            -- @see https://github.com/xmake-io/xmake/issues/2071
-            if target:is_plat("windows") then
-                target:add("cxxflags", "/Zc:__cplusplus")
-                target:add("cxxflags", "/permissive-")
-            end
         else
             -- add conditionnaly c++11 to avoid for example "cl : Command line warning D9025 : overriding '/std:c++latest' with '/std:c++11'" warning
             if (not cppversion) or (tonumber(cppversion) and tonumber(cppversion) < 11) then
@@ -169,7 +256,7 @@ function main(target, opt)
         end
     end
 
-    -- add defines for the compile mode
+    -- add definitions for the compile mode
     if is_mode("debug") then
         target:add("defines", "QT_QML_DEBUG")
     elseif is_mode("release") then
@@ -202,18 +289,36 @@ function main(target, opt)
         end
     end
 
-    -- backup the user syslinks, we need add them behind the qt syslinks
+    -- backup the user syslinks, we need to add them behind the qt syslinks
     local syslinks_user = target:get("syslinks")
     target:set("syslinks", nil)
 
     -- add qt links and directories
+    target:add("syslinks", target:values("qt.links"))
+    local qtprldirs = {}
     for _, qt_linkdir in ipairs(target:values("qt.linkdirs")) do
         local linkdir = path.join(qt.sdkdir, qt_linkdir)
         if os.isdir(linkdir) then
             target:add("linkdirs", linkdir)
+            table.insert(qtprldirs, linkdir)
         end
     end
-    target:add("syslinks", target:values("qt.links"))
+    for _, qt_link in ipairs(target:values("qt.links")) do
+        for _, qt_libdir in ipairs(qtprldirs) do
+            local prl_file = path.join(qt_libdir, qt_link .. ".prl")
+            _add_qmakeprllibs(target, prl_file, qt)
+        end
+    end
+
+    -- backup qt frameworks
+    local qt_frameworks = target:get("frameworks")
+    if qt_frameworks then
+        target:set("__qt_frameworks", qt_frameworks)
+    end
+    local qt_frameworks_extra = target:extraconf("frameworks")
+    if qt_frameworks_extra then
+        target:extraconf_set("__qt_frameworks", qt_frameworks_extra)
+    end
 
     -- add frameworks
     if opt.frameworks then
@@ -222,7 +327,8 @@ function main(target, opt)
 
     -- do frameworks for qt
     local frameworksset = hashset.new()
-    for _, framework in ipairs(target:get("frameworks")) do
+    local qt_frameworks = _get_frameworks_from_target(target)
+    for _, framework in ipairs(qt_frameworks) do
 
         -- translate qt frameworks
         if framework:startswith("Qt") then
@@ -243,7 +349,7 @@ function main(target, opt)
                     _add_includedirs(target, path.join(qt.includedir, private_dir, qt.sdkver))
                 end
             else
-                -- add defines
+                -- add definitions
                 target:add("defines", "QT_" .. framework:sub(3):upper() .. "_LIB")
 
                 -- add includedirs
@@ -257,19 +363,26 @@ function main(target, opt)
                         _add_includedirs(target, path.join(frameworkdir, "Headers", qt.sdkver, framework))
                         frameworksset:insert(framework)
                     else
-                        target:add("syslinks", _link(target, qt.libdir, framework, qt_sdkver))
+                        local link = _link(target, qt.libdir, framework, qt_sdkver, infix)
+                        target:add("syslinks", link)
+                        _add_qmakeprllibs(target, path.join(qt.libdir, link .. ".prl"), qt)
                         _add_includedirs(target, path.join(qt.includedir, framework))
                         -- e.g. QtGui/5.15.0/QtGui/qpa/qplatformopenglcontext.h
                         _add_includedirs(target, path.join(qt.includedir, framework, qt.sdkver))
                         _add_includedirs(target, path.join(qt.includedir, framework, qt.sdkver, framework))
                     end
                 else
-                    target:add("syslinks", _link(target, qt.libdir, framework, qt_sdkver))
+                    local link = _link(target, qt.libdir, framework, qt_sdkver, infix)
+                    target:add("syslinks", link)
+                    _add_qmakeprllibs(target, path.join(qt.libdir, link .. ".prl"), qt)
                     _add_includedirs(target, path.join(qt.includedir, framework))
                     _add_includedirs(target, path.join(qt.includedir, framework, qt.sdkver))
                     _add_includedirs(target, path.join(qt.includedir, framework, qt.sdkver, framework))
                 end
             end
+        elseif target:is_plat("macosx") then
+            --@see https://github.com/xmake-io/xmake/issues/5336
+            frameworksset:insert(framework)
         end
     end
 
@@ -282,9 +395,18 @@ function main(target, opt)
     end
     target:set("frameworks", local_frameworks)
 
-    -- add some static third-party links if exists, e.g. libqtmain.a, libqtfreetype.q, libqtlibpng.a
+    -- add some static third-party links if exists
     -- and exclude qt framework libraries, e.g. libQt5xxx.a, Qt5xxx.lib
-    target:add("syslinks", _find_static_links_3rd(target, qt.libdir, qt_sdkver, target:is_plat("windows") and "qt*.lib" or "libqt*.a"))
+    local libpattern
+    if qt_sdkver:ge("6.0") then
+        -- e.g. libQt6BundledFreetype.a on Qt6.x
+        -- @see https://github.com/xmake-io/xmake/issues/3572
+        libpattern = target:is_plat("windows") and "Qt*.lib" or "libQt*.a"
+    else
+        -- e.g. libqtmain.a, libqtfreetype.q, libqtlibpng.a on Qt5.x
+        libpattern = target:is_plat("windows") and "qt*.lib" or "libqt*.a"
+    end
+    target:add("syslinks", _find_static_links_3rd(target, qt.libdir, qt_sdkver, libpattern))
 
     -- add user syslinks
     if syslinks_user then
@@ -300,7 +422,6 @@ function main(target, opt)
             target:add("rpathdirs", "@executable_path/Frameworks", qt.libdir)
         else
             target:add("rpathdirs", qt.libdir)
-            _add_includedirs(target, qt.includedir)
 
             -- remove qt frameworks
             local frameworks = table.wrap(target:get("frameworks"))
@@ -312,6 +433,7 @@ function main(target, opt)
             end
             target:set("frameworks", frameworks)
         end
+        _add_includedirs(target, qt.includedir)
         _add_includedirs(target, path.join(qt.mkspecsdir, "macx-clang"))
         target:add("linkdirs", qt.libdir)
     elseif target:is_plat("linux") then
@@ -326,12 +448,20 @@ function main(target, opt)
         _add_includedirs(target, path.join(qt.mkspecsdir, "win32-msvc"))
         target:add("linkdirs", qt.libdir)
         target:add("syslinks", "ws2_32", "gdi32", "ole32", "advapi32", "shell32", "user32", "opengl32", "imm32", "winmm", "iphlpapi")
+        -- for debugger, https://github.com/xmake-io/xmake-vscode/issues/225
+        target:add("runenvs", "PATH", qt.bindir)
     elseif target:is_plat("mingw") then
         target:set("frameworks", nil)
-        -- we need fix it, because gcc maybe does not work on latest mingw when `-isystem D:\a\_temp\msys64\mingw64\include` is passed.
+        -- we need to fix it, because gcc maybe does not work on latest mingw when `-isystem D:\a\_temp\msys64\mingw64\include` is passed.
         -- and qt.includedir will be this path value when Qt sdk directory just is `D:\a\_temp\msys64\mingw64`
         -- @see https://github.com/msys2/MINGW-packages/issues/10761#issuecomment-1044302523
-        if qt.includedir and os.isdir(qt.includedir) then
+        if is_subhost("msys") then
+            local mingw_prefix = os.getenv("MINGW_PREFIX")
+            local mingw_includedir = path.normalize(path.join(mingw_prefix or "/", "include"))
+            if qt.includedir and qt.includedir and path.normalize(qt.includedir) ~= mingw_includedir then
+                _add_includedirs(target, qt.includedir)
+            end
+        else
             _add_includedirs(target, qt.includedir)
         end
         _add_includedirs(target, path.join(qt.mkspecsdir, "win32-g++"))
@@ -349,10 +479,36 @@ function main(target, opt)
         _add_includedirs(target, path.join(qt.mkspecsdir, "wasm-emscripten"))
         target:add("rpathdirs", qt.libdir)
         target:add("linkdirs", qt.libdir)
-        target:add("ldflags", "-s WASM=1", "-s FETCH=1", "-s FULL_ES2=1", "-s FULL_ES3=1", "-s USE_WEBGL2=1", "--bind")
-        target:add("ldflags", "-s ERROR_ON_UNDEFINED_SYMBOLS=1", "-s EXTRA_EXPORTED_RUNTIME_METHODS=[\"UTF16ToString\",\"stringToUTF16\"]", "-s ALLOW_MEMORY_GROWTH=1")
-        target:add("shflags", "-s WASM=1", "-s FETCH=1", "-s FULL_ES2=1", "-s FULL_ES3=1", "-s USE_WEBGL2=1", "--bind")
-        target:add("shflags", "-s ERROR_ON_UNDEFINED_SYMBOLS=1", "-s EXTRA_EXPORTED_RUNTIME_METHODS=[\"UTF16ToString\",\"stringToUTF16\"]", "-s ALLOW_MEMORY_GROWTH=1")
+        -- add prebuilt object files in qt sdk.
+        -- these files are located at lib/objects-Release/xxxmodule_resources_x/.rcc/xxxmodule.cpp.o
+        for _, framework in ipairs(qt_frameworks) do
+            local prefix = framework
+            if framework:startswith("Qt") then
+                prefix = framework:sub(3)
+            end
+            for _, filepath in ipairs(os.files(path.join(qt.libdir, "objects-*", prefix .. "_resources_*", ".rcc", "*.o"))) do
+                table.insert(target:objectfiles(), filepath)
+            end
+        end
+        target:add("ldflags", "-s FETCH=1", "-s ERROR_ON_UNDEFINED_SYMBOLS=1", "-s ALLOW_MEMORY_GROWTH=1", "--bind")
+        target:add("shflags", "-s FETCH=1", "-s ERROR_ON_UNDEFINED_SYMBOLS=1", "-s ALLOW_MEMORY_GROWTH=1", "--bind")
+        if qt_sdkver:ge("6.0") then
+            -- @see https://github.com/xmake-io/xmake/issues/4137
+            target:add("ldflags", "-s MAX_WEBGL_VERSION=2", "-s WASM_BIGINT=1", "-s DISABLE_EXCEPTION_CATCHING=1")
+            target:add("ldflags", "-sASYNCIFY_IMPORTS=qt_asyncify_suspend_js,qt_asyncify_resume_js")
+            target:add("ldflags", "-s EXPORTED_RUNTIME_METHODS=UTF16ToString,stringToUTF16,JSEvents,specialHTMLTargets")
+            target:add("ldflags", "-s MODULARIZE=1", "-s EXPORT_NAME=createQtAppInstance")
+            target:add("shflags", "-s MAX_WEBGL_VERSION=2", "-s WASM_BIGINT=1", "-s DISABLE_EXCEPTION_CATCHING=1")
+            target:add("shflags", "-sASYNCIFY_IMPORTS=qt_asyncify_suspend_js,qt_asyncify_resume_js")
+            target:add("shflags", "-s EXPORTED_RUNTIME_METHODS=UTF16ToString,stringToUTF16,JSEvents,specialHTMLTargets")
+            target:add("shflags", "-s MODULARIZE=1", "-s EXPORT_NAME=createQtAppInstance")
+            target:set("extension", ".js")
+        else
+            target:add("ldflags", "-s WASM=1", "-s FULL_ES2=1", "-s FULL_ES3=1", "-s USE_WEBGL2=1")
+            target:add("ldflags", "-s EXPORTED_RUNTIME_METHODS=[\"UTF16ToString\",\"stringToUTF16\"]")
+            target:add("shflags", "-s WASM=1", "-s FULL_ES2=1", "-s FULL_ES3=1", "-s USE_WEBGL2=1")
+            target:add("shflags", "-s EXPORTED_RUNTIME_METHODS=[\"UTF16ToString\",\"stringToUTF16\"]")
+        end
     end
 
     -- is gui application?
@@ -362,10 +518,12 @@ function main(target, opt)
             target:add("defines", "_WINDOWS")
             local subsystem = false
             for _, ldflag in ipairs(target:get("ldflags")) do
-                ldflag = ldflag:lower()
-                if ldflag:find("[/%-]subsystem:") then
-                    subsystem = true
-                    break
+                if type(ldflag) == "string" then
+                    ldflag = ldflag:lower()
+                    if ldflag:find("[/%-]subsystem:") then
+                        subsystem = true
+                        break
+                    end
                 end
             end
             -- maybe user will set subsystem to console
@@ -375,6 +533,12 @@ function main(target, opt)
         elseif target:is_plat("mingw") then
             target:add("ldflags", "-mwindows", {force = true})
         end
+    end
+
+    -- set default runtime
+    -- @see https://github.com/xmake-io/xmake/issues/4161
+    if not target:get("runtimes") then
+        target:set("runtimes", is_mode("debug") and "MDd" or "MD")
     end
 end
 

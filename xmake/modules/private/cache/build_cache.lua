@@ -21,10 +21,12 @@
 -- imports
 import("core.base.bytes")
 import("core.base.hashset")
+import("core.base.global")
 import("core.cache.memcache")
 import("core.project.config")
 import("core.project.policy")
 import("core.project.project")
+import("utils.ci.is_running", {alias = "ci_is_running"})
 import("private.service.client_config")
 import("private.service.remote_cache.client", {alias = "remote_cache_client"})
 
@@ -54,7 +56,7 @@ function is_enabled(target)
     local result = _memcache():get2("enabled", key)
     if result == nil then
         -- target may be option instance
-        if target and target.policy then
+        if result == nil and target and target.policy then
             result = target:policy("build.ccache")
         end
         if result == nil and os.isfile(os.projectfile()) then
@@ -62,6 +64,24 @@ function is_enabled(target)
             if policy ~= nil then
                 result = policy
             end
+        end
+        -- disable ccache on ci
+        if result == nil and ci_is_running() then
+            local action_build_cache = _g._ACTION_BUILD_CACHE
+            if action_build_cache == nil then
+                action_build_cache = os.getenv("XMAKE_ACTION_BUILD_CACHE")
+                _g._ACTION_BUILD_CACHE = action_build_cache or false
+            end
+            -- we cannot disable it if github-action-setup-xmake/build-cache is enabled
+            if not action_build_cache then
+                result = false
+            end
+        end
+        -- disable ccache for msvc, because cl.exe preprocessor is too slower
+        -- @see https://github.com/xmake-io/xmake/issues/3532
+        if result == nil and is_host("windows") and
+            target and target.has_tool and target:has_tool("cxx", "cl") then
+            result = false
         end
         if result == nil then
             result = config.get("ccache")
@@ -113,8 +133,18 @@ end
 
 -- get cache root directory
 function rootdir()
-    local cachedir = config.get("ccachedir")
-    return cachedir or path.join(config.buildir(), ".build_cache")
+    local cachedir = _g.cachedir
+    if not cachedir then
+        cachedir = config.get("ccachedir")
+        if not cachedir and project.policy("build.ccache.global_storage") then
+            cachedir = path.join(global.directory(), ".build_cache")
+        end
+        if not cachedir then
+            cachedir = path.join(config.buildir(), ".build_cache")
+        end
+        _g.cachedir = path.absolute(cachedir)
+    end
+    return cachedir
 end
 
 -- clean cached files
@@ -128,34 +158,41 @@ end
 
 -- get hit rate
 function hitrate()
-    local hit_count = (_g.hit_count or 0)
+    local cache_hit_count = (_g.cache_hit_count or 0)
     local total_count = (_g.total_count or 0)
     if total_count > 0 then
-        return math.floor(hit_count * 100 / total_count)
+        return math.floor(cache_hit_count * 100 / total_count)
     end
     return 0
 end
 
 -- dump stats
 function dump_stats()
-    local hit_count = (_g.hit_count or 0)
     local total_count = (_g.total_count or 0)
+    local cache_hit_count = (_g.cache_hit_count or 0)
+    local cache_miss_count = total_count - cache_hit_count
     local newfiles_count = (_g.newfiles_count or 0)
     local remote_hit_count = (_g.remote_hit_count or 0)
     local remote_newfiles_count = (_g.remote_newfiles_count or 0)
     local preprocess_error_count = (_g.preprocess_error_count or 0)
     local compile_fallback_count = (_g.compile_fallback_count or 0)
+    local compile_total_time = (_g.compile_total_time or 0)
+    local cache_hit_total_time = (_g.cache_hit_total_time or 0)
+    local cache_miss_total_time = (_g.cache_miss_total_time or 0)
     vprint("")
     vprint("build cache stats:")
     vprint("cache directory: %s", rootdir())
     vprint("cache hit rate: %d%%", hitrate())
-    vprint("cache hit: %d", hit_count)
-    vprint("cache miss: %d", total_count - hit_count)
+    vprint("cache hit: %d", cache_hit_count)
+    vprint("cache hit total time: %0.3fs", cache_hit_total_time / 1000.0)
+    vprint("cache miss: %d", cache_miss_count)
+    vprint("cache miss total time: %0.3fs", cache_miss_total_time / 1000.0)
     vprint("new cached files: %d", newfiles_count)
     vprint("remote cache hit: %d", remote_hit_count)
     vprint("remote new cached files: %d", remote_newfiles_count)
     vprint("preprocess failed: %d", preprocess_error_count)
     vprint("compile fallback count: %d", compile_fallback_count)
+    vprint("compile total time: %0.3fs", compile_total_time / 1000.0)
     vprint("")
 end
 
@@ -165,16 +202,16 @@ function get(cachekey)
     local objectfile_cached = path.join(rootdir(), cachekey:sub(1, 2):lower(), cachekey)
     local objectfile_infofile = objectfile_cached .. ".txt"
     if os.isfile(objectfile_cached) then
-        _g.hit_count = (_g.hit_count or 0) + 1
+        _g.cache_hit_count = (_g.cache_hit_count or 0) + 1
         return objectfile_cached, objectfile_infofile
     elseif remote_cache_client.is_connected() then
-        try
+        return try
         {
             function ()
                 if not remote_cache_client.singleton():unreachable() then
                     local exists, extrainfo = remote_cache_client.singleton():pull(cachekey, objectfile_cached)
                     if exists and os.isfile(objectfile_cached) then
-                        _g.hit_count = (_g.hit_count or 0) + 1
+                        _g.cache_hit_count = (_g.cache_hit_count or 0) + 1
                         _g.remote_hit_count = (_g.remote_hit_count or 0) + 1
                         if extrainfo then
                             io.save(objectfile_infofile, extrainfo)
@@ -246,21 +283,26 @@ function build(program, argv, opt)
     local cppinfo = preprocess(program, argv, opt)
     if cppinfo then
         local cachekey = cachekey(program, cppinfo, opt.envs)
+        local cache_hit_start_time = os.mclock()
         local objectfile_cached, objectfile_infofile = get(cachekey)
         if objectfile_cached then
             os.cp(objectfile_cached, cppinfo.objectfile)
-            -- we need update mtime for incremental compilation
+            -- we need to update mtime for incremental compilation
             -- @see https://github.com/xmake-io/xmake/issues/2620
             os.touch(cppinfo.objectfile, {mtime = os.time()})
-            -- we need get outdata/errdata to show warnings,
+            -- we need to get outdata/errdata to show warnings,
             -- @see https://github.com/xmake-io/xmake/issues/2452
             if objectfile_infofile and os.isfile(objectfile_infofile) then
                 local extrainfo = io.load(objectfile_infofile)
                 cppinfo.outdata = extrainfo.outdata
                 cppinfo.errdata = extrainfo.errdata
             end
+            _g.cache_hit_total_time = (_g.cache_hit_total_time or 0) + (os.mclock() - cache_hit_start_time)
         else
             -- do compile
+            local preprocess_outdata = cppinfo.outdata
+            local preprocess_errdata = cppinfo.errdata
+            local compile_start_time = os.mclock()
             local compile_fallback = opt.compile_fallback
             if compile_fallback then
                 local ok = try {function () compile(program, cppinfo, opt); return true end}
@@ -275,6 +317,14 @@ function build(program, argv, opt)
             else
                 compile(program, cppinfo, opt)
             end
+            -- if no compiler output, we need use preprocessor output, because it maybe contains warning output
+            if not cppinfo.outdata or #cppinfo.outdata == 0 then
+                cppinfo.outdata = preprocess_outdata
+            end
+            if not cppinfo.errdata or #cppinfo.errdata == 0 then
+                cppinfo.errdata = preprocess_errdata
+            end
+            _g.compile_total_time = (_g.compile_total_time or 0) + (os.mclock() - compile_start_time)
             if cachekey then
                 local extrainfo
                 if cppinfo.outdata and #cppinfo.outdata ~= 0 then
@@ -285,7 +335,9 @@ function build(program, argv, opt)
                     extrainfo = extrainfo or {}
                     extrainfo.errdata = cppinfo.errdata
                 end
+                local cache_miss_start_time = os.mclock()
                 put(cachekey, cppinfo.objectfile, extrainfo)
+                _g.cache_miss_total_time = (_g.cache_miss_total_time or 0) + (os.mclock() - cache_miss_start_time)
             end
         end
         os.rm(cppinfo.cppfile)

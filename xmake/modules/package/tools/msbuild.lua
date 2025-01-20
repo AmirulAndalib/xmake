@@ -20,30 +20,81 @@
 
 -- imports
 import("core.base.option")
+import("core.project.config")
+import("core.project.project")
 import("core.tool.toolchain")
 import("lib.detect.find_tool")
+import("private.utils.upgrade_vsproj")
+import("private.utils.toolchain", {alias = "toolchain_utils"})
+
+-- get the number of parallel jobs
+function _get_parallel_njobs(opt)
+    return opt.jobs or option.get("jobs") or tostring(os.default_njob())
+end
 
 -- get msvc
 function _get_msvc(package)
-    local msvc = toolchain.load("msvc", {plat = package:plat(), arch = package:arch()})
-    assert(msvc:check(), "vs not found!") -- we need check vs envs if it has been not checked yet
+    local msvc = package:toolchain("msvc")
+    assert(msvc:check(), "vs not found!") -- we need to check vs envs if it has been not checked yet
     return msvc
+end
+
+-- get msvc run environments
+function _get_msvc_runenvs(package)
+    return os.joinenvs(_get_msvc(package):runenvs())
+end
+
+-- get vs arch
+function _get_vsarch(package)
+    local arch = package:arch()
+    if arch == 'x86' or arch == 'i386' then return "Win32" end
+    if arch == 'x86_64' then return "x64" end
+    if arch:startswith('arm64') then return "ARM64" end
+    if arch:startswith('arm') then return "ARM" end
+    return arch
+end
+
+-- get configs
+function _get_configs(package, configs, opt)
+    local jobs = _get_parallel_njobs(opt)
+    configs = configs or {}
+    local configs_str = string.serialize(configs, {indent = false, strip = true})
+    table.insert(configs, "-nologo")
+    table.insert(configs, (jobs ~= nil and format("-m:%d", jobs) or "-m"))
+    if not configs_str:find("p:Configuration=", 1, true) then
+        table.insert(configs, "-p:Configuration=" .. (package:is_debug() and "Debug" or "Release"))
+    end
+    if not configs_str:find("p:Platform=", 1, true) then
+        table.insert(configs, "-p:Platform=" .. _get_vsarch(package))
+    end
+    if not configs_str:find("p:PlatformToolset=", 1, true) then
+        local vs_toolset = toolchain_utils.get_vs_toolset_ver(_get_msvc(package):config("vs_toolset") or config.get("vs_toolset"))
+        if vs_toolset then
+            table.insert(configs, "/p:PlatformToolset=" .. vs_toolset)
+        end
+    end
+    if project.policy("package.msbuild.multi_tool_task") or package:policy("package.msbuild.multi_tool_task") then
+        table.insert(configs, "/p:UseMultiToolTask=true")
+        table.insert(configs, "/p:EnforceProcessCountAcrossBuilds=true")
+        if jobs then
+            table.insert(configs, format("/p:MultiProcMaxCount=%d", jobs))
+        end
+    end
+    return configs
 end
 
 -- get the build environments
 function buildenvs(package, opt)
-    return os.joinenvs(_get_msvc(package):runenvs())
+    return _get_msvc_runenvs(package)
 end
 
 -- build package
 function build(package, configs, opt)
-
-    -- init options
     opt = opt or {}
 
     -- pass configurations
     local argv = {}
-    for name, value in pairs(configs) do
+    for name, value in pairs(_get_configs(package, configs, opt)) do
         value = tostring(value):trim()
         if value ~= "" then
             if type(name) == "number" then
@@ -51,6 +102,15 @@ function build(package, configs, opt)
             else
                 table.insert(argv, name .. "=" .. value)
             end
+        end
+    end
+
+    -- upgrade vs solution file?
+    -- @see https://github.com/xmake-io/xmake/issues/3871
+    if opt.upgrade then
+        local msvc = _get_msvc(package)
+        for _, value in ipairs(opt.upgrade) do
+            upgrade_vsproj.upgrade(value, table.join(opt, {msvc = msvc}))
         end
     end
 

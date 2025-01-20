@@ -25,29 +25,28 @@ rule("win.sdk.resource")
 
 -- define rule: application
 rule("win.sdk.application")
-
-    -- before load
     on_load(function (target)
         target:set("kind", "binary")
     end)
 
-    -- after load
     after_load(function (target)
 
         -- set subsystem: windows
-        if is_plat("mingw") then
+        if target:is_plat("mingw") then
             target:add("ldflags", "-mwindows", {force = true})
         else
             local subsystem = false
             for _, ldflag in ipairs(target:get("ldflags")) do
-                ldflag = ldflag:lower()
-                if ldflag:find("[/%-]subsystem:") then
-                    subsystem = true
-                    break
+                if type(ldflag) == "string" then
+                    ldflag = ldflag:lower()
+                    if ldflag:find("[/%-]subsystem:") then
+                        subsystem = true
+                        break
+                    end
                 end
             end
             if not subsystem then
-                target:add("ldflags", "-subsystem:windows", {force = true})
+                target:add("ldflags", "-subsystem:windows", {force = true, tools = {"link"}})
             end
         end
 
@@ -55,7 +54,7 @@ rule("win.sdk.application")
         target:add("syslinks", "kernel32", "user32", "gdi32", "winspool", "comdlg32", "advapi32")
         target:add("syslinks", "shell32", "ole32", "oleaut32", "uuid", "odbc32", "odbccp32", "comctl32")
         target:add("syslinks", "comdlg32", "setupapi", "shlwapi")
-        if not is_plat("mingw") then
+        if not target:is_plat("mingw") then
             target:add("syslinks", "strsafe")
         end
     end)

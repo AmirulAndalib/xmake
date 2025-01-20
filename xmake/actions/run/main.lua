@@ -26,9 +26,10 @@ import("core.base.global")
 import("core.project.project")
 import("core.platform.platform")
 import("devel.debugger")
-import("private.async.runjobs")
-import("private.action.run.make_runenvs")
+import("async.runjobs")
+import("private.action.run.runenvs")
 import("private.service.remote_build.action", {alias = "remote_build_action"})
+import("lib.detect.find_tool")
 
 -- run target
 function _do_run_target(target)
@@ -44,23 +45,23 @@ function _do_run_target(target)
     -- get the absolute target file path
     local targetfile = path.absolute(target:targetfile())
 
-    -- add run environments
-    local addrunenvs, setrunenvs = make_runenvs(target)
-    for name, values in pairs(addrunenvs) do
-        os.addenv(name, table.unpack(table.wrap(values)))
-    end
-    for name, value in pairs(setrunenvs) do
-        os.setenv(name, table.unpack(table.wrap(value)))
-    end
+    -- get the run environments
+    local addenvs, setenvs = runenvs.make(target)
 
     -- get run arguments
     local args = table.wrap(option.get("arguments") or target:get("runargs"))
 
+    if not is_host("windows") and target:is_plat("windows") then
+        local wine = assert(find_tool("wine"), "wine not found!")
+        table.insert(args, 1, targetfile)
+        targetfile = wine.program
+    end
+
     -- debugging?
     if option.get("debug") then
-        debugger.run(targetfile, args, {curdir = rundir})
+        debugger.run(targetfile, args, {curdir = rundir, addenvs = addenvs, setenvs = setenvs})
     else
-        os.execv(targetfile, args, {curdir = rundir, detach = option.get("detach")})
+        os.execv(targetfile, args, {curdir = rundir, detach = option.get("detach"), addenvs = addenvs, setenvs = setenvs})
     end
 end
 
@@ -82,7 +83,7 @@ function _on_run_target(target)
     _do_run_target(target)
 end
 
--- recursively target add env
+-- recursively add target envs
 function _add_target_pkgenvs(target, targets_added)
     if targets_added[target:name()] then
         return
@@ -176,7 +177,7 @@ function _check_targets(targetname, group_pattern)
         table.insert(targets, target)
     else
         for _, target in ipairs(project.ordertargets()) do
-            if target:is_binary() then
+            if target:is_binary() or target:script("run") then
                 local group = target:get("group")
                 if (target:is_default() and not group_pattern) or option.get("all") or (group_pattern and group and group:match(group_pattern)) then
                     table.insert(targets, target)
@@ -213,6 +214,17 @@ function main()
     -- load config first
     config.load()
 
+    -- Automatically build before running
+    if project.policy("run.autobuild") then
+        -- we need clear the previous config and reload it
+        -- to avoid trigger recheck configs
+        config.clear()
+        task.run("build", {target = option.get("target"), all = option.get("all")})
+    end
+
+    -- load targets
+    project.load_targets()
+
     -- check targets first
     local targetname
     local group_pattern = option.get("group")
@@ -232,7 +244,7 @@ function main()
     else
         local targets = {}
         for _, target in ipairs(project.ordertargets()) do
-            if target:is_binary() then
+            if target:is_binary() or target:script("run") then
                 local group = target:get("group")
                 if (target:is_default() and not group_pattern) or option.get("all") or (group_pattern and group and group:match(group_pattern)) then
                     table.insert(targets, target)

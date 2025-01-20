@@ -23,7 +23,11 @@ import("core.base.option")
 import("core.base.tty")
 import("core.package.package", {alias = "core_package"})
 import("core.project.target")
+import("core.project.project")
+import("core.platform.platform")
 import("lib.detect.find_file")
+import("utils.archive.merge_staticlib")
+import("private.tools.ccache")
 import("private.action.require.impl.actions.test")
 import("private.action.require.impl.actions.patch_sources")
 import("private.action.require.impl.actions.download_resources")
@@ -37,15 +41,17 @@ function _patch_pkgconfig(package)
         return
     end
 
-    -- get lib/pkgconfig/*.pc file
-    local pkgconfigdir = path.join(package:installdir(), "lib", "pkgconfig")
-    local pcfile = os.isdir(pkgconfigdir) and find_file("*.pc", pkgconfigdir) or nil
+    -- get lib/pkgconfig/*.pc or share/pkgconfig/*.pc file
+    local libpkgconfigdir = path.join(package:installdir(), "lib", "pkgconfig")
+    local sharepkgconfigdir = path.join(package:installdir(), "share", "pkgconfig")
+    local pcfile = (os.isdir(libpkgconfigdir) and find_file("*.pc", libpkgconfigdir))
+        or (os.isdir(sharepkgconfigdir) and find_file("*.pc", sharepkgconfigdir)) or nil
     if pcfile then
         return
     end
 
     -- trace
-    pcfile = path.join(pkgconfigdir, package:name() .. ".pc")
+    pcfile = path.join(libpkgconfigdir, package:name() .. ".pc")
     vprint("patching %s ..", pcfile)
 
     -- fetch package
@@ -72,12 +78,15 @@ function _patch_pkgconfig(package)
 
     -- cflags
     local cflags = ""
-    for _, includedir in ipairs(fetchinfo.includedirs) do
+    for _, includedir in ipairs(fetchinfo.includedirs or fetchinfo.sysincludedirs) do
         if includedir ~= path.join(installdir, "include") then
             cflags = cflags .. " -I" .. (includedir:gsub("\\", "/"))
         end
     end
     cflags = cflags .. " -I${includedir}"
+    for _, define in ipairs(fetchinfo.defines) do
+        cflags = cflags .. " -D" .. define
+    end
 
     -- patch a *.pc file
     local file = io.open(pcfile, 'w')
@@ -202,7 +211,7 @@ function _fix_paths_for_precompiled_package(package)
             for _, file in ipairs(os.files(filepattern)) do
                 if remote_prefix then
                     local _, count = io.replace(file, remote_prefix, local_prefix, {plain = true})
-                    -- maybe we need translate path seperator
+                    -- maybe we need to translate path seperator
                     -- @see https://github.com/xmake-io/xmake/discussions/3008
                     if count == 0 and is_host("windows") then
                         io.replace(file, (remote_prefix:gsub("\\", "/")), local_prefix:gsub("\\", "/"), {plain = true})
@@ -217,12 +226,38 @@ function _fix_paths_for_precompiled_package(package)
     end
 end
 
+-- merge static libraries
+-- @see https://github.com/xmake-io/xmake/issues/5894
+function _merge_staticlibs(package)
+    local merge_staticlibs = project.policy("package.merge_staticlibs")
+    if merge_staticlibs == nil then
+        merge_staticlibs = package:policy("package.merge_staticlibs")
+    end
+    if merge_staticlibs and package:is_library()
+        and not package:config("shared") and not package:is_headeronly() and not package:is_moduleonly() then
+        local installdir = package:installdir()
+        local linkdirs = table.wrap(package:get("linkdirs") or "lib")
+        local libfiles = {}
+        for _, linkdir in ipairs(linkdirs) do
+            for _, libfile in ipairs(os.files(path.join(installdir, linkdir, "*"))) do
+                if libfile:endswith(".lib") or libfile:endswith(".a") then
+                    table.insert(libfiles, libfile)
+                end
+            end
+        end
+        if #libfiles > 0 then
+            local linkdir = linkdirs[1]
+            local linkname = package:name()
+            local opt = {plat = package:plat(), arch = package:arch()}
+            local libfile_new = path.join(installdir, linkdir, target.filename(linkname, "static", opt))
 
--- check package toolchains
-function _check_package_toolchains(package)
-    for _, toolchain_inst in pairs(package:toolchains()) do
-        if not toolchain_inst:check() then
-            raise("toolchain(\"%s\"): not found!", toolchain_inst:name())
+            merge_staticlib(package, libfile_new, libfiles)
+            package:set("links", linkname)
+            for _, libfile in ipairs(libfiles) do
+                if libfile ~= libfile_new then
+                    os.rm(libfile)
+                end
+            end
         end
     end
 end
@@ -246,8 +281,8 @@ function _clear_sourcedir(package)
     end
 end
 
--- install the given package
-function main(package)
+-- enter working directory
+function _enter_workdir(package)
 
     -- get working directory of this package
     local workdir = package:cachedir()
@@ -255,7 +290,7 @@ function main(package)
     -- lock this package
     package:lock()
 
-    -- enter the working directory
+    -- enter directory
     local oldir = nil
     local sourcedir = package:sourcedir()
     if sourcedir then
@@ -274,6 +309,102 @@ function main(package)
         os.mkdir(workdir)
         oldir = os.cd(workdir)
     end
+
+    -- we need to copy source codes to the working directory with short path on windows
+    --
+    -- Because the target name and source file path of this project are too long,
+    -- it's absolute path exceeds the windows path length limit.
+    --
+    if is_host("windows") and package:policy("platform.longpaths") then
+        local sourcedir_tmp = os.tmpdir() .. ".dir"
+        os.tryrm(sourcedir_tmp)
+        os.cp(os.curdir(), sourcedir_tmp)
+        os.cd(sourcedir_tmp)
+    end
+
+    return oldir
+end
+
+-- leave working directory
+function _leave_workdir(package, oldir)
+
+    -- clean the empty package directory
+    local installdir = package:installdir()
+    if os.emptydir(installdir) then
+        os.tryrm(installdir)
+    end
+
+    -- unlock this package
+    package:unlock()
+
+    -- leave source codes directory
+    if oldir then
+        os.cd(oldir)
+    end
+
+    -- clean source directory if it is no longer needed
+    _clear_sourcedir(package)
+end
+
+-- enter package install environments
+function _enter_package_installenvs(package)
+    for _, dep in ipairs(package:orderdeps()) do
+        dep:envs_enter()
+    end
+end
+
+-- enter package test environments
+function _enter_package_testenvs(package)
+
+    -- add compiler runtime library directory to $PATH
+    -- @see https://github.com/xmake-io/xmake-repo/pull/3606
+    if is_host("windows") and package:is_plat("windows", "mingw") then -- bin/*.dll for windows
+        local toolchains = package:toolchains()
+        if not toolchains then
+            local platform_inst = platform.load(package:plat(), package:arch())
+            toolchains = platform_inst:toolchains()
+            for _, toolchain_inst in ipairs(toolchains) do
+                if toolchain_inst:check() then
+                    local runenvs = toolchain_inst:runenvs()
+                    if runenvs and runenvs.PATH then
+                        local envs = {PATH = runenvs.PATH}
+                        os.addenvs(envs)
+                    end
+                end
+            end
+        end
+    end
+
+    -- enter package environments
+    for _, dep in ipairs(package:orderdeps()) do
+        dep:envs_enter()
+    end
+    package:envs_enter()
+end
+
+function _enable_ccache(package)
+    if package:is_local() then
+        return
+    end
+
+    if not project.policy("package.build.ccache") then
+        return
+    end
+
+    local ccache = ccache.get()
+    if ccache then
+        local name = path.basename(ccache.program)
+        package:data_set("ccache", name)
+        local ccache_dir = path.join(path.directory(package:cachedir()), name)
+        os.setenv(name:upper() .. "_DIR", ccache_dir)
+    end
+end
+
+
+function main(package)
+
+    -- enter working directory
+    local oldir = _enter_workdir(package)
 
     -- init tipname
     local tipname = package:name()
@@ -298,7 +429,7 @@ function main(package)
             else
 
                 -- build and install package to the install directory
-                local force_reinstall = package:data("force_reinstall") or option.get("force")
+                local force_reinstall = package:policy("package.install_always") or package:data("force_reinstall") or option.get("force")
                 if force_reinstall or not package:manifest_load() then
 
                     -- clear install directory
@@ -311,12 +442,10 @@ function main(package)
                     patch_sources(package)
 
                     -- enter the environments of all package dependencies
-                    for _, dep in ipairs(package:orderdeps()) do
-                        dep:envs_enter()
-                    end
+                    _enter_package_installenvs(package)
 
-                    -- check package toolchains
-                    _check_package_toolchains(package)
+                    -- set package ccache dir
+                    _enable_ccache(package)
 
                     -- do install
                     if script ~= nil then
@@ -324,10 +453,13 @@ function main(package)
                     end
 
                     -- install rules
-                    local rulesdir = path.join(package:scriptdir(), "rules")
-                    if os.isdir(rulesdir) then
+                    local rulesdir = package:rulesdir()
+                    if rulesdir and os.isdir(rulesdir) then
                         os.cp(rulesdir, package:installdir())
                     end
+
+                    -- merge static libraries
+                    _merge_staticlibs(package)
 
                     -- leave the environments of all package dependencies
                     os.setenvs(oldenvs)
@@ -339,10 +471,7 @@ function main(package)
             end
 
             -- enter the package environments
-            for _, dep in ipairs(package:orderdeps()) do
-                dep:envs_enter()
-            end
-            package:envs_enter()
+            _enter_package_testenvs(package)
 
             -- fetch package and force to flush the cache
             local fetchinfo = package:fetch({force = true})
@@ -413,17 +542,21 @@ function main(package)
                     -- failed
                     if not package:requireinfo().optional then
                         if os.isfile(errorfile) then
-                            if errors then
-                                print("")
-                                for idx, line in ipairs(errors:split("\n")) do
-                                    print(line)
-                                    if idx > 16 then
-                                        break
+                            if errors and option.get("diagnosis") then
+                                print(tostring(errors))
+                            else
+                                if errors then
+                                    print("")
+                                    for idx, line in ipairs(errors:split("\n")) do
+                                        print(line)
+                                        if idx > 16 then
+                                            break
+                                        end
                                     end
                                 end
+                                cprint("if you want to get more verbose errors, please see:")
+                                cprint("  -> ${bright}%s", errorfile)
                             end
-                            cprint("if you want to get more verbose errors, please see:")
-                            cprint("  -> ${bright}%s", errorfile)
                         end
                         raise("install failed!")
                     end
@@ -432,19 +565,6 @@ function main(package)
         }
     }
 
-    -- clean the empty package directory
-    local installdir = package:installdir()
-    if os.emptydir(installdir) then
-        os.tryrm(installdir)
-    end
-
-    -- unlock this package
-    package:unlock()
-
-    -- leave source codes directory
-    os.cd(oldir)
-
-    -- clean source directory if it is no longer needed
-    _clear_sourcedir(package)
+    _leave_workdir(package, oldir)
     return ok
 end

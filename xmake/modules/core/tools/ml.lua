@@ -55,7 +55,7 @@ function init(self)
 end
 
 -- make the symbol flags
-function nf_symbols(self, levels, target)
+function nf_symbols(self, levels)
     local flags = nil
     local values = hashset.from(levels)
     if values:has("debug") then
@@ -134,7 +134,7 @@ function compile(self, sourcefile, objectfile, dependinfo, flags)
     try
     {
         function ()
-            -- @note we need not uses vstool.runv to enable unicode output for ml.exe
+            -- @note we don't need to use vstool.runv to enable unicode output for ml.exe
             local program, argv = compargv(self, sourcefile, objectfile, flags)
             os.runv(program, argv, {envs = self:runenvs()})
         end,

@@ -1,11 +1,4 @@
-includes("check_links.lua")
-includes("check_ctypes.lua")
-includes("check_cflags.lua")
-includes("check_cfuncs.lua")
-includes("check_macros.lua")
-includes("check_features.lua")
-includes("check_csnippets.lua")
-includes("check_cincludes.lua")
+includes("@builtin/check")
 
 target("foo")
     set_kind("static")
@@ -13,10 +6,22 @@ target("foo")
     add_includedirs("$(buildir)")
     add_configfiles("config.h.in")
 
+    check_bigendian("IS_BIG_ENDIAN")
     check_ctypes("HAS_WCHAR", "wchar_t")
     check_cincludes("HAS_STRING_H", "string.h")
     check_csnippets("HAS_INT_4", "return (sizeof(int) == 4)? 0 : -1;", {tryrun = true})
+    check_csnippets("HAS_INT_4_IN_MAIN", [[
+    int test() {
+        return (sizeof(int) == 4)? 0 : -1;
+    }
+    int main(int argc, char** argv)
+    {
+        return test();
+    }]], {tryrun = true})
     check_csnippets("INT_SIZE", 'printf("%d", sizeof(int)); return 0;', {output = true, number = true})
+    check_sizeof("LONG_SIZE", "long")
+    check_sizeof("STRING_SIZE", "std::string", {includes = "string"})
+    configvar_check_bigendian("IS_BIG_ENDIAN")
     configvar_check_cincludes("HAS_STRING_AND_STDIO_H", {"string.h", "stdio.h"})
     configvar_check_ctypes("HAS_WCHAR_AND_FLOAT", {"wchar_t", "float"})
     configvar_check_links("HAS_PTHREAD", {"pthread", "m", "dl"})

@@ -30,6 +30,9 @@ local io     = require("base/io")
 local dump   = require("base/dump")
 local text   = require("base/text")
 
+-- save original interfaces
+utils._bin2c = utils._bin2c or utils.bin2c
+
 -- dump values
 function utils.dump(...)
     if option.get("quiet") then
@@ -142,49 +145,25 @@ end
 
 -- print format string with newline
 function utils.print(format, ...)
-
-    -- check
     assert(format)
-
-    -- init message
     local message = string.tryformat(format, ...)
-
-    -- trace
     utils._print(message)
-
-    -- write to the log file
     log:printv(message)
 end
 
 -- print format string without newline
 function utils.printf(format, ...)
-
-    -- check
     assert(format)
-
-    -- init message
     local message = string.tryformat(format, ...)
-
-    -- trace
     utils._iowrite(message)
-
-    -- write to the log file
     log:write(message)
 end
 
 -- print format string and colors with newline
 function utils.cprint(format, ...)
-
-    -- check
     assert(format)
-
-    -- init message
     local message = string.tryformat(format, ...)
-
-    -- trace
     utils._print(colors.translate(message))
-
-    -- write to the log file
     if log:file() then
         log:printv(colors.ignore(message))
     end
@@ -192,17 +171,9 @@ end
 
 -- print format string and colors without newline
 function utils.cprintf(format, ...)
-
-    -- check
     assert(format)
-
-    -- init message
     local message = string.tryformat(format, ...)
-
-    -- trace
     utils._iowrite(colors.translate(message))
-
-    -- write to the log file
     if log:file() then
         log:write(colors.ignore(message))
     end
@@ -237,9 +208,9 @@ end
 
 -- add warning message
 function utils.warning(format, ...)
-
-    -- check
-    assert(format)
+    if option.get("quiet") then
+        return
+    end
 
     -- format message
     local args = table.pack(...)
@@ -268,11 +239,6 @@ function utils.show_warnings()
             utils.cprint("${bright color.warning}${text.warning}: ${color.warning}%s", msg)
         end
     end
-end
-
--- ifelse, a? b : c
-function utils.ifelse(a, b, c)
-    if a then return b else return c end
 end
 
 -- try to call script
@@ -355,6 +321,12 @@ end
 
 function utils.vtable(data, opt)
     utils.vprintf(text.table(data, opt))
+end
+
+-- generate c/c++ code from the binary file
+function utils.bin2c(binaryfile, outputfile, opt)
+    opt = opt or {}
+    return utils._bin2c(binaryfile, outputfile, opt.linewidth or 32, opt.nozeroend or false)
 end
 
 -- return module

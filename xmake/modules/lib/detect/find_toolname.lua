@@ -24,7 +24,7 @@ import("core.sandbox.module")
 
 -- remove some suffix
 --
--- we just remove some known extension, because we need reverse others, e.g. ld.lld, ld64.lld
+-- we just remove some known extension, because we need to reverse others, e.g. ld.lld, ld64.lld
 --
 function _remove_suffix(name)
     local exts = hashset.of("exe", "bat", "sh", "ps1", "ps")
@@ -74,7 +74,7 @@ function _find(program)
     end
 
     -- get file name first
-    name = path.filename(program):lower()
+    local name = path.filename(program):lower()
 
     -- remove arguments: " -xxx" or " --xxx"
     name = name:gsub("%s%-+%w+", " ")
@@ -93,16 +93,21 @@ function _find(program)
     end
 
     -- try last valid name: xxx-xxx-toolname-5
+    --
+    -- e.g.
+    -- arm-none-eabi-gcc-ar -> gcc_ar
+    -- arm-none-eabi-gcc -> gcc
     local partnames = {}
     for partname in name:gmatch("([%a%+]+)") do
         table.insert(partnames, partname)
     end
-    if #partnames > 0 then
-        name = partnames[#partnames]
-    end
-    toolname = name:gsub("%+", "x")
-    if module.find("detect.tools.find_" .. toolname) then
-        return toolname
+    while #partnames > 0 do
+        name = table.concat(partnames, "_")
+        table.remove(partnames, 1)
+        toolname = name:gsub("%+", "x")
+        if module.find("detect.tools.find_" .. toolname) then
+            return toolname
+        end
     end
 end
 

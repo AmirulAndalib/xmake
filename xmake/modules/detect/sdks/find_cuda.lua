@@ -105,11 +105,9 @@ function _find_cuda(sdkdir)
     if is_host("windows") then
         local subdir = is_arch("x64") and "x64" or "Win32"
         table.insert(linkdirs, path.join(sdkdir, "lib", subdir))
-    elseif is_host("linux") and is_arch("x86_64") then
-        table.insert(linkdirs, path.join(sdkdir, "lib64", "stubs"))
+    elseif is_host("linux") and is_arch("x86_64", "arm64") then
         table.insert(linkdirs, path.join(sdkdir, "lib64"))
     else
-        table.insert(linkdirs, path.join(sdkdir, "lib", "stubs"))
         table.insert(linkdirs, path.join(sdkdir, "lib"))
     end
 
@@ -118,7 +116,7 @@ function _find_cuda(sdkdir)
 
     -- get version
     local version = find_programver(path.join(bindir, "nvcc"), {parse = "release (%d+%.%d+),"})
-    
+
     -- find msbuildextensionsdir on windows
     local msbuildextensionsdir
     if is_host("windows") then

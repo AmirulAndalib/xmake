@@ -27,7 +27,7 @@ import("private.action.require.impl.packagenv")
 import("private.action.require.impl.install_packages")
 
 -- generate doxyfile
-function _generate_doxyfile()
+function _generate_doxyfile(doxygen)
 
     -- generate the default doxyfile
     local doxyfile = path.join(project.directory(), "doxyfile")
@@ -89,7 +89,7 @@ function main()
         instance:envs_enter()
     end
 
-    -- we need force to detect and flush detect cache after loading all environments
+    -- we need to force detect and flush detect cache after loading all environments
     if not doxygen then
         doxygen = find_tool("doxygen", {force = true})
     end
@@ -98,7 +98,7 @@ function main()
     -- get doxyfile first
     local doxyfile = "doxyfile"
     if not os.isfile(doxyfile) then
-        doxyfile = _generate_doxyfile()
+        doxyfile = _generate_doxyfile(doxygen)
     end
     assert(os.isfile(doxyfile), "%s not found!", doxyfile)
 
@@ -112,10 +112,11 @@ function main()
     end
 
     -- generate document
-    cprint("generating ..${beer}")
+    cprint("generating ..")
     os.vrunv(doxygen.program, {doxyfile}, {curdir = project.directory()})
 
     -- done
+    local outputdir = option.get("outputdir") or config.buildir()
     cprint("${bright green}result: ${default green}%s/html/index.html", outputdir)
     cprint("${color.success}doxygen ok!")
     os.setenvs(oldenvs)

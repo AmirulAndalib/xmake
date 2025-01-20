@@ -46,7 +46,6 @@ function task.common_options()
         ,   {'D', "diagnosis", "k",  nil,   "Print lots of diagnosis information (backtrace, check info ..) only for developers."
                                         ,   "And we can append -v to get more whole information."
                                         ,   "    e.g. $ xmake -vD"                                      }
-        ,   {nil, "version",   "k",  nil,   "Print the version number and exit."                        }
         ,   {'h', "help",      "k",  nil,   "Print this help message and exit."                         }
         ,   {}
         ,   {'F', "file",      "kv", nil,   "Read a given xmake.lua file."                              }
@@ -150,7 +149,7 @@ function task._translate_menu(menu)
             end
         end
 
-        -- add common options, we need avoid repeat because the main/build task will be inserted twice
+        -- add common options, we need to avoid repeat because the main/build task will be inserted twice
         if not menu._common_options then
             for i, v in ipairs(task.common_options()) do
                 table.insert(options, i, v)
@@ -222,17 +221,12 @@ end
 
 -- bind script with a sandbox instance
 function task._bind_script(interp, script)
-
-    -- make sandbox instance with the given script
-    local instance, errors = sandbox.new(script, interp:filter(), interp:rootdir())
+    local instance, errors = sandbox.new(script, {
+        filter = interp:filter(), rootdir = interp:rootdir(), namespace = interp:namespace()})
     if not instance then
         return nil, errors
     end
-
-    -- check
     assert(instance:script())
-
-    -- update option script
     return instance:script()
 end
 
@@ -374,7 +368,14 @@ end
 -- new a task instance
 function task.new(name, info)
     local instance = table.inherit(task)
-    instance._NAME = name
+    if name then
+        local parts = name:split("::", {plain = true})
+        instance._NAME = parts[#parts]
+        table.remove(parts)
+        if #parts > 0 then
+            instance._NAMESPACE = table.concat(parts, "::")
+        end
+    end
     instance._INFO = info
     return instance
 end
@@ -424,8 +425,6 @@ function task.menu(tasks)
         -- has task menu?
         local taskmenu = taskinst:get("menu")
         if taskmenu then
-
-            -- main?
             if taskinst:get("category") == "main" then
 
                 -- delay to load main menu
@@ -440,22 +439,15 @@ function task.menu(tasks)
                     -- make tasks for the main menu
                     mainmenu.tasks = {}
                     for name, inst in pairs(tasks) do
-
-                        -- has menu?
                         local m = inst:get("menu")
                         if m then
-
-                            -- add task
-                            mainmenu.tasks[name] =
-                            {
+                            mainmenu.tasks[name] = {
                                 category    = inst:get("category")
                             ,   shortname   = m.shortname
                             ,   description = m.description
                             }
                         end
                     end
-
-                    -- ok
                     return mainmenu
                 end
             end
@@ -485,13 +477,24 @@ function task:name()
     return self._NAME
 end
 
+-- get the namespace
+function task:namespace()
+    return self._NAMESPACE
+end
+
+-- get the full name
+function task:fullname()
+    local namespace = self:namespace()
+    return namespace and namespace .. "::" .. self:name() or self:name()
+end
+
 -- run given task
 function task:run(...)
 
     -- check
     local on_run = self:get("run")
     if not on_run then
-        return false, string.format("task(\"%s\"): no run script, please call on_run() first!", self:name())
+        return false, string.format("task(\"%s\"): no run script, please call on_run() first!", self:fullname())
     end
 
     -- save the current directory
@@ -502,8 +505,6 @@ function task:run(...)
 
     -- restore the current directory
     os.cd(curdir)
-
-    -- ok?
     return ok, errors
 end
 

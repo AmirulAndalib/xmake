@@ -51,15 +51,15 @@ function distcc_build_client:init()
     local projectfile = os.projectfile()
     if projectfile and os.isfile(projectfile) and projectdir then
         self._PROJECTDIR = projectdir
-        self._WORKDIR = path.join(project_config.directory(), "distcc_build")
+        self._WORKDIR = path.join(project_config.directory(), "service", "distcc_build")
     else
-        raise("we need enter a project directory with xmake.lua first!")
+        raise("we need to enter a project directory with xmake.lua first!")
     end
 
     -- init timeout
     self._SEND_TIMEOUT = config.get("distcc_build.send_timeout") or config.get("send_timeout") or -1
     self._RECV_TIMEOUT = config.get("distcc_build.recv_timeout") or config.get("recv_timeout") or -1
-    self._CONNECT_TIMEOUT = config.get("distcc_build.connect_timeout") or config.get("connect_timeout") or -1
+    self._CONNECT_TIMEOUT = config.get("distcc_build.connect_timeout") or config.get("connect_timeout") or 10000
 end
 
 -- get class
@@ -146,13 +146,9 @@ function distcc_build_client:disconnect()
     -- do disconnect
     local hosts = self:hosts()
     assert(hosts and #hosts > 0, "hosts not found!")
-    local group_name = tostring(self) .. "/disconnect"
-    scheduler.co_group_begin(group_name, function ()
-        for _, host in ipairs(hosts) do
-            scheduler.co_start(self._disconnect_host, self, host)
-        end
-    end)
-    scheduler.co_group_wait(group_name)
+    for _, host in ipairs(hosts) do
+        self:_disconnect_host(host)
+    end
 
     -- all hosts are connected?
     local connected = true
@@ -179,7 +175,7 @@ function distcc_build_client:maxjobs()
     if maxjobs == nil then
         maxjobs = 0
         for _, host in pairs(self:status().hosts) do
-            maxjobs = maxjobs + host.njob
+            maxjobs = maxjobs + (host.njob or 4)
         end
         self._MAXJOBS = maxjobs
     end
@@ -249,10 +245,10 @@ function distcc_build_client:compile(program, argv, opt)
             local objectfile_cached, objectfile_infofile = build_cache.get(cachekey)
             if objectfile_cached then
                 os.cp(objectfile_cached, cppinfo.objectfile)
-                -- we need update mtime for incremental compilation
+                -- we need to update mtime for incremental compilation
                 -- @see https://github.com/xmake-io/xmake/issues/2620
                 os.touch(cppinfo.objectfile, {mtime = os.time()})
-                -- we need get outdata/errdata to show warnings,
+                -- we need to get outdata/errdata to show warnings,
                 -- @see https://github.com/xmake-io/xmake/issues/2452
                 if objectfile_infofile and os.isfile(objectfile_infofile) then
                     local extrainfo = io.load(objectfile_infofile)
@@ -503,7 +499,7 @@ function distcc_build_client:_session_id(addr, port)
             return host.session_id
         end
     end
-    return hash.uuid():split("-", {plain = true})[1]:lower()
+    return hash.uuid(option.get("session")):split("-", {plain = true})[1]:lower()
 end
 
 -- is connected for the given host
@@ -526,7 +522,7 @@ function distcc_build_client:_connect_host(host)
         return
     end
 
-    -- we need user authorization?
+    -- Do we need user authorization?
     local user = host.user
     local token = host.token
     if not token and user then
@@ -573,13 +569,15 @@ function distcc_build_client:_connect_host(host)
     end
 
     -- update status
-    local status = self:status()
-    status.hosts = status.hosts or {}
-    status.hosts[addr .. ":" .. port] = {
-        addr = addr, port = port, token = token,
-        connected = ok, session_id = session_id,
-        ncpu = ncpu, njob = host.njob or njob}
-    self:status_save()
+    if ok then
+        local status = self:status()
+        status.hosts = status.hosts or {}
+        status.hosts[addr .. ":" .. port] = {
+            addr = addr, port = port, token = token,
+            connected = ok, session_id = session_id,
+            ncpu = ncpu, njob = njob}
+        self:status_save()
+    end
 end
 
 -- disconnect from the host
@@ -591,46 +589,16 @@ function distcc_build_client:_disconnect_host(host)
         return
     end
 
-    -- do disconnect
-    local token = host.token
-    local sock = socket.connect(addr, port, {timeout = self:connect_timeout()})
-    local session_id = self:_session_id(addr, port)
-    local errors
-    local ok = false
-    print("%s: disconnect %s:%d ..", self, addr, port)
-    if sock then
-        local stream = socket_stream(sock, {send_timeout = self:send_timeout(), recv_timeout = self:recv_timeout()})
-        if stream:send_msg(message.new_disconnect(session_id, {token = token})) and stream:flush() then
-            local msg = stream:recv_msg()
-            if msg then
-                vprint(msg:body())
-                if msg:success() then
-                    ok = true
-                else
-                    errors = msg:errors()
-                end
-            end
-        end
-    else
-        -- server unreachable, but we still disconnect it.
-        wprint("%s: server unreachable!", self)
-        ok = true
-    end
-    if ok then
-        print("%s: %s:%d disconnected!", self, addr, port)
-    else
-        print("%s: disconnect %s:%d failed, %s", self, addr, port, errors or "unknown")
-    end
-
     -- update status
     local status = self:status()
     status.hosts = status.hosts or {}
     local host_status = status.hosts[addr .. ":" .. port]
     if host_status then
         host_status.token = nil
-        host_status.connected = not ok
+        host_status.connected = false
     end
     self:status_save()
+    print("%s: %s:%d disconnected!", self, addr, port)
 end
 
 -- clean file for the host
@@ -686,7 +654,7 @@ function is_connected()
             local projectdir = os.projectdir()
             local projectfile = os.projectfile()
             if projectfile and os.isfile(projectfile) and projectdir then
-                local workdir = path.join(project_config.directory(), "distcc_build")
+                local workdir = path.join(project_config.directory(), "service", "distcc_build")
                 local statusfile = path.join(workdir, "status.txt")
                 if os.isfile(statusfile) then
                     local status = io.load(statusfile)

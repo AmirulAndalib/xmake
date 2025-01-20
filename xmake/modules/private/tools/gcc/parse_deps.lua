@@ -19,6 +19,7 @@
 --
 
 -- imports
+import("core.project.config")
 import("core.project.project")
 import("core.base.hashset")
 
@@ -27,6 +28,12 @@ local space_placeholder = "\001"
 
 -- normailize path of a dependecy
 function _normailize_dep(dep, projectdir)
+    -- escape characters, e.g. \#Qt.Widget_pch.h -> #Qt.Widget_pch.h
+    -- @see https://github.com/xmake-io/xmake/issues/4134
+    -- https://github.com/xmake-io/xmake/issues/4273
+    if not is_host("windows") then
+        dep = dep:gsub("\\(.)", "%1")
+    end
     if path.is_absolute(dep) then
         dep = path.translate(dep)
     else
@@ -35,10 +42,23 @@ function _normailize_dep(dep, projectdir)
     if dep:startswith(projectdir) then
         return path.relative(dep, projectdir)
     else
-        -- we need also check header files outside project
+        -- we also need to check header files outside project
         -- https://github.com/xmake-io/xmake/issues/1154
         return dep
     end
+end
+
+-- load module mapper
+function _load_module_mapper(target)
+    local mapper = {}
+    local mapperfile = path.join(config.buildir(), target:name(), "mapper.txt")
+    for line in io.lines(mapperfile) do
+        local moduleinfo = line:split(" ", {plain = true})
+        if #moduleinfo == 2 then
+            mapper[moduleinfo[1]] = moduleinfo[2]
+        end
+    end
+    return mapper
 end
 
 -- parse depsfiles from string
@@ -72,7 +92,7 @@ function main(depsdata, opt)
     local plain = {plain = true}
     line = line:replace("\\ ", space_placeholder, plain)
     for _, includefile in ipairs(line:split(' ', plain)) do -- it will trim all internal spaces without `{strict = true}`
-        -- some gcc toolchains will some invalid paths (e.g. `d\:\xxx`), we need fix it
+        -- some gcc toolchains will some invalid paths (e.g. `d\:\xxx`), we need to fix it
         -- https://github.com/xmake-io/xmake/issues/1196
         if is_host("windows") and includefile:match("^%w\\:") then
             includefile = includefile:replace("\\:", ":", plain)
@@ -94,27 +114,30 @@ function main(depsdata, opt)
             end
         end
     end
+
+    -- translate .c++m module file path
     -- with c++ modules (gcc):
     -- CXX_IMPORTS += bar.c++m cat.c++m\
     --
     -- @see https://github.com/xmake-io/xmake/issues/3000
-    opt = opt or {}
-    if opt.modules_cachedir and line:find("CXX_IMPORTS += ", 1, true) then
+    -- https://github.com/xmake-io/xmake/issues/4215
+    local target = opt and opt.target
+    if target and line:find("CXX_IMPORTS += ", 1, true) then
+        local mapper = _load_module_mapper(target)
         local modulefiles = line:split("CXX_IMPORTS += ", plain)[2]
         if modulefiles then
             for _, modulefile in ipairs(modulefiles:split(' ', plain)) do
-                modulefile = modulefile:replace(".c++m", ".gcm", plain)
-                if #modulefile > 0 then
-                    if not path.is_absolute(modulefile) then
-                        modulefile = path.absolute(modulefile, opt.modules_cachedir)
-                    end
-                    modulefile = _normailize_dep(modulefile, projectdir)
-                    if modulefile then
-                        results:insert(modulefile)
+                if modulefile:endswith(".c++m") then
+                    local modulekey = modulefile:sub(1, #modulefile - 5)
+                    local modulepath = mapper[modulekey]
+                    if modulepath then
+                        modulepath = _normailize_dep(modulepath, projectdir)
+                        results:insert(modulepath)
                     end
                 end
             end
         end
     end
+
     return results:to_array()
 end

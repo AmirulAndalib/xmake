@@ -23,6 +23,7 @@ import("core.base.option")
 import("core.project.config")
 import("core.project.target")
 import("lib.detect.find_tool")
+import("private.core.base.is_cross")
 import("package.manager.pkgconfig.find_package", {alias = "find_package_from_pkgconfig"})
 
 -- find package
@@ -37,7 +38,7 @@ function _find_package(dpkg, name, opt)
             -- get includedirs
             local pos = line:find("include/", 1, true)
             if pos then
-                -- we need not add includedirs, gcc/clang will use /usr/ as default sysroot
+                -- we don't need to add includedirs, gcc/clang will use /usr/ as default sysroot
                 result = result or {}
             end
 
@@ -52,6 +53,11 @@ function _find_package(dpkg, name, opt)
                 result.links = result.links or {}
                 result.linkdirs = result.linkdirs or {}
                 result.libfiles = result.libfiles or {}
+                if line:endswith(".a") then
+                    result.static = true
+                else
+                    result.shared = true
+                end
                 table.insert(result.linkdirs, path.directory(line))
                 table.insert(result.links, target.linkname(path.filename(line), {plat = opt.plat}))
                 table.insert(result.libfiles, path.join(path.directory(line), path.filename(line)))
@@ -61,7 +67,7 @@ function _find_package(dpkg, name, opt)
 
     -- we iterate over each pkgconfig file to extract the required data
     local foundpc = false
-    local pcresult = {includedirs = {}, linkdirs = {}, links = {}}
+    local pcresult = {includedirs = {}, linkdirs = {}, links = {}, libfiles = {}}
     for _, pkgconfig_file in ipairs(pkgconfig_files) do
         local pkgconfig_dir = path.directory(pkgconfig_file)
         local pkgconfig_name = path.basename(pkgconfig_file)
@@ -78,6 +84,13 @@ function _find_package(dpkg, name, opt)
             for _, link in ipairs(pcinfo.links) do
                 table.insert(pcresult.links, link)
             end
+            if not result or not result.libfiles then
+                for _, libfile in ipairs(pcinfo.libfiles) do
+                    table.insert(pcresult.libfiles, libfile)
+                end
+                pcresult.static = pcinfo.static
+                pcresult.shared = pcinfo.shared
+            end
             -- version should be the same if a pacman package contains multiples .pc
             pcresult.version = pcinfo.version
             foundpc = true
@@ -86,6 +99,7 @@ function _find_package(dpkg, name, opt)
     if foundpc == true then
         pcresult.includedirs = table.unique(pcresult.includedirs)
         pcresult.linkdirs = table.unique(pcresult.linkdirs)
+        pcresult.libfiles = table.unique(pcresult.libfiles)
         pcresult.links = table.reverse_unique(pcresult.links)
         result = pcresult
     end
@@ -96,9 +110,9 @@ function _find_package(dpkg, name, opt)
         local statusinfo = try {function () return os.iorunv(dpkg.program, {"--status", name}) end}
         if statusinfo then
             for _, line in ipairs(statusinfo:split("\n", {plain = true})) do
-                -- parse depends, e.g. Depends: libboost1.74-dev
+                -- parse depends, e.g. Depends: libboost1.74-dev, libomp-14-dev (>= 14~)
                 if line:startswith("Depends:") then
-                    local depends = line:sub(9):split("%s+")
+                    local depends = line:sub(9):gsub("%(.-%)", ""):split("%s+")
                     if #depends == 1 then
                         return _find_package(dpkg, depends[1], opt)
                     end
@@ -108,16 +122,30 @@ function _find_package(dpkg, name, opt)
         end
     end
 
-    -- remove repeat
     if result then
         if result.links then
             result.links = table.unique(result.links)
+            if #result.links == 0 then
+                result.links = nil
+            end
         end
         if result.linkdirs then
             result.linkdirs = table.unique(result.linkdirs)
+            if #result.linkdirs == 0 then
+                result.linkdirs = nil
+            end
         end
         if result.includedirs then
             result.includedirs = table.unique(result.includedirs)
+            if #result.includedirs == 0 then
+                result.includedirs = nil
+            end
+        end
+        if result.libfiles then
+            result.libfiles = table.unique(result.libfiles)
+            if #result.libfiles == 0 then
+                result.libfiles = nil
+            end
         end
     end
     return result
@@ -129,19 +157,14 @@ end
 -- @param opt   the options, e.g. {verbose = true, version = "1.12.0")
 --
 function main(name, opt)
-
-    -- check
     opt = opt or {}
-    if not is_host(opt.plat) or os.arch() ~= opt.arch then
+    if is_cross(opt.plat, opt.arch) then
         return
     end
 
-    -- find dpkg
     local dpkg = find_tool("dpkg")
     if not dpkg then
         return
     end
-
-    -- find package
     return _find_package(dpkg, name, opt)
 end

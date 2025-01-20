@@ -18,29 +18,19 @@
 -- @file        xmake.lua
 --
 
--- define platform
 platform("windows")
-
-    -- set os
     set_os("windows")
-
-    -- set hosts
     set_hosts("windows")
+    set_archs("x86", "x64", "arm", "arm64", "arm64ec")
 
-    -- set archs
-    set_archs("x86", "x64", "arm64")
-
-    -- set formats
     set_formats("static", "$(name).lib")
     set_formats("object", "$(name).obj")
     set_formats("shared", "$(name).dll")
     set_formats("binary", "$(name).exe")
     set_formats("symbol", "$(name).pdb")
 
-    -- set toolchains
     set_toolchains("msvc", "clang", "yasm", "nasm", "cuda", "rust", "swift", "go", "gfortran", "zig", "fpc", "nim")
 
-    -- set menu
     set_menu {
                 config =
                 {
@@ -51,7 +41,7 @@ platform("windows")
                                                     , "  e.g. --vs_toolset=14.0"                    }
                 ,   {nil, "vs_sdkver",  "kv", nil,    "The Windows SDK Version of Visual Studio"
                                                     , "  e.g. --vs_sdkver=10.0.15063.0"             }
-                ,   {nil, "vs_runtime", "kv", nil,    "The Runtime library of Visual Studio"
+                ,   {nil, "vs_runtime", "kv", nil,    "The Runtime library of Visual Studio (deprecated, please use --runtimes)"
                                                     , values = {"MT", "MTd", "MD", "MDd"}           }
                 ,   {category = "Cuda SDK Configuration"                                            }
                 ,   {nil, "cuda",       "kv", "auto", "The Cuda SDK Directory"                      }

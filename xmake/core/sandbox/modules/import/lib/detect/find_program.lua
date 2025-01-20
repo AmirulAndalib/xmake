@@ -28,6 +28,7 @@ local option      = require("base/winos")
 local table       = require("base/table")
 local utils       = require("base/utils")
 local option      = require("base/option")
+local profiler    = require("base/profiler")
 local project     = require("project/project")
 local detectcache = require("cache/detectcache")
 local sandbox     = require("sandbox/sandbox")
@@ -35,9 +36,6 @@ local package     = require("package/package")
 local raise       = require("sandbox/modules/raise")
 local vformat     = require("sandbox/modules/vformat")
 local scheduler   = require("sandbox/modules/import/core/base/scheduler")
-
--- globals
-local checking  = nil
 
 -- do check
 function sandbox_lib_detect_find_program._do_check(program, opt)
@@ -49,7 +47,7 @@ function sandbox_lib_detect_find_program._do_check(program, opt)
 
     -- no check script? attempt to run it directly
     if not opt.check then
-        local ok, errors = os.runv(program, {"--version"}, {envs = opt.envs})
+        local ok, errors = os.runv(program, {"--version"}, {envs = opt.envs, shell = opt.shell})
         if not ok and option.get("verbose") and option.get("diagnosis") then
             utils.cprint("${color.warning}checkinfo: ${clear dim}" .. errors)
         end
@@ -60,7 +58,9 @@ function sandbox_lib_detect_find_program._do_check(program, opt)
     local ok = false
     local errors = nil
     if type(opt.check) == "string" then
-        ok, errors = os.runv(program, {opt.check}, {envs = opt.envs})
+        ok, errors = os.runv(program, {opt.check}, {envs = opt.envs, shell = opt.shell})
+    elseif type(opt.check) == "table" then
+        ok, errors = os.runv(program, opt.check, {envs = opt.envs, shell = opt.shell})
     else
         ok, errors = sandbox.load(opt.check, program)
     end
@@ -74,15 +74,19 @@ end
 
 -- check program
 function sandbox_lib_detect_find_program._check(program, opt)
+    opt = opt or {}
     local findname = program
     if os.subhost() == "windows" then
-        if not program:endswith(".exe") and not program:endswith(".cmd") and not program:endswith(".bat") then
+        if not opt.shell and not program:endswith(".exe") and not program:endswith(".cmd") and not program:endswith(".bat") then
             findname = program .. ".exe"
         end
     elseif os.subhost() == "msys" and os.isfile(program) and os.filesize(program) < 256 then
         -- only a sh script on msys2? e.g. c:/msys64/usr/bin/7z
-        -- we need use sh to wrap it, otherwise os.exec cannot run it
-        program = "sh " .. program
+        -- we need to use sh to wrap it, otherwise os.exec cannot run it
+        local program_lower = program:lower()
+        if not program_lower:endswith(".exe") and not program_lower:endswith(".cmd") and not program_lower:endswith(".bat") then
+            program = "sh " .. program
+        end
         findname = program
     end
     if sandbox_lib_detect_find_program._do_check(findname, opt) then
@@ -175,13 +179,18 @@ function sandbox_lib_detect_find_program._find(name, paths, opt)
 
     -- attempt to find it from the given directories
     local program_path = sandbox_lib_detect_find_program._find_from_paths(name, paths, opt)
-    if program_path then
+    if program_path and opt.system ~= false then
         return program_path
     end
 
     -- attempt to find it from the xmake packages
-    if opt.require_version and opt.buildhash then
+    if opt.require_version and opt.buildhash and opt.system ~= true then
         return sandbox_lib_detect_find_program._find_from_packages(name, opt)
+    end
+
+    -- we will not continue to find system program
+    if opt.system == false then
+        return
     end
 
     -- attempt to find it from regists
@@ -219,7 +228,7 @@ function sandbox_lib_detect_find_program._find(name, paths, opt)
     if envpaths then
         table.join2(syspaths, path.splitenv(envpaths))
     end]]
-    if os.host() ~= "windows" then
+    if os.host() ~= "windows" or os.is_subhost("msys", "cygwin") then
         table.insert(syspaths, "/usr/local/bin")
         table.insert(syspaths, "/usr/bin")
     end
@@ -238,6 +247,28 @@ function sandbox_lib_detect_find_program._find(name, paths, opt)
     if program_path_real then
         return program_path_real
     end
+
+    -- attempt to find it use `where.exe program.exe` command
+    --
+    -- and we need to add `.exe` suffix to avoid find some incorrect programs. e.g. pkg-config.bat
+    if os.host() == "windows" then
+        local program_name = name:lower()
+        if not program_name:endswith(".exe") then
+            program_name = program_name .. ".exe"
+        end
+        local ok, wherepaths = os.iorunv("where.exe", {program_name})
+        if ok and wherepaths then
+            for _, program_path in ipairs(wherepaths:split("\n")) do
+                program_path = program_path:trim()
+                if #program_path > 0 then
+                    local program_path_real = sandbox_lib_detect_find_program._check(program_path, opt)
+                    if program_path_real then
+                        return program_path_real
+                    end
+                end
+            end
+        end
+    end
 end
 
 -- find program
@@ -247,6 +278,7 @@ end
 --                    - opt.paths     the program paths (e.g. dirs, paths, winreg paths, script paths)
 --                    - opt.check     the check script or command
 --                    - opt.norun     do not attempt to run program to check program fastly
+--                    - opt.system    true: only find it from system, false: only find it from xmake/packages
 --
 -- @return          the program name or path
 --
@@ -263,16 +295,6 @@ end
 -- @endcode
 --
 function sandbox_lib_detect_find_program.main(name, opt)
-
-    -- @note avoid detect the same program in the same time leading to deadlock if running in the coroutine (e.g. ccache)
-    local coroutine_running = scheduler.co_running()
-    if coroutine_running then
-        while checking ~= nil and checking == name do
-            scheduler.co_yield()
-        end
-    end
-
-    -- init options
     opt = opt or {}
 
     -- init cachekey
@@ -281,9 +303,15 @@ function sandbox_lib_detect_find_program.main(name, opt)
         cachekey = cachekey .. "_" .. opt.cachekey
     end
 
+    -- @see https://github.com/xmake-io/xmake/issues/4645
+    -- @note avoid detect the same program in the same time leading to deadlock if running in the coroutine (e.g. ccache)
+    local lockname = cachekey .. name
+    scheduler.co_lock(lockname)
+
     -- attempt to get result from cache first
     local result = detectcache:get2(cachekey, name)
     if result ~= nil and not opt.force then
+        scheduler.co_unlock(lockname)
         return result and result or nil
     end
 
@@ -300,9 +328,9 @@ function sandbox_lib_detect_find_program.main(name, opt)
     end
 
     -- find executable program
-    checking = coroutine_running and name or nil
+    profiler:enter("find_program", name)
     result = sandbox_lib_detect_find_program._find(name, paths, opt)
-    checking = nil
+    profiler:leave("find_program", name)
 
     -- cache result
     detectcache:set2(cachekey, name, result and result or false)
@@ -316,6 +344,7 @@ function sandbox_lib_detect_find_program.main(name, opt)
             utils.cprint("checking for %s ... ${color.nothing}${text.nothing}", name)
         end
     end
+    scheduler.co_unlock(lockname)
     return result
 end
 

@@ -34,6 +34,7 @@ function _get_triple(arch)
     ,   ["armeabi"]     = "arm-linux-androideabi"   -- removed in ndk r17
     ,   ["armeabi-v7a"] = "arm-linux-androideabi"
     ,   ["arm64-v8a"]   = "aarch64-linux-android"
+    ,   ["riscv64"]     = "riscv64-linux-android"
     ,   i386            = "i686-linux-android"      -- deprecated
     ,   x86             = "i686-linux-android"
     ,   x86_64          = "x86_64-linux-android"
@@ -86,11 +87,12 @@ function _find_ndk_sdkver(sdkdir, bindir, sysroot, arch)
 
     -- get triple
     local triple = _get_triple(arch)
+    assert(triple, "no triple found for arch %s (wrong arch?)", arch)
 
     -- try to select the best compatible version
     local sdkver = "16"
-    if use_llvm or arch == "arm64-v8a" then
-        sdkver = "21"
+    if use_llvm or arch == "arm64-v8a" or arch == "riscv64" then
+        sdkver = (arch == "riscv64") and "35" or "21"
     end
     if sysroot then
         if os.isdir(path.join(sysroot, "usr", "lib", triple, sdkver)) then
@@ -169,6 +171,7 @@ function _find_ndk(sdkdir, arch, ndk_sdkver, ndk_toolchains_ver)
     ,   ["armeabi"]     = "arm-linux-androideabi-" -- removed in ndk r17
     ,   ["armeabi-v7a"] = "arm-linux-androideabi-"
     ,   ["arm64-v8a"]   = "aarch64-linux-android-"
+    ,   ["riscv64"]     = "riscv64-linux-android-"
     ,   i386            = "i686-linux-android-"    -- deprecated
     ,   x86             = "i686-linux-android-"
     ,   x86_64          = "x86_64-linux-android-"
@@ -185,6 +188,7 @@ function _find_ndk(sdkdir, arch, ndk_sdkver, ndk_toolchains_ver)
     ,   ["armeabi"]     = "arm-linux-androideabi-*"
     ,   ["armeabi-v7a"] = "arm-linux-androideabi-*"
     ,   ["arm64-v8a"]   = "aarch64-linux-android-*"
+    ,   ["riscv64"]     = "riscv64-linux-android-*"
     ,   i386            = "x86-*"
     ,   x86             = "x86-*"
     ,   x86_64          = "x86_64-*"
@@ -275,26 +279,20 @@ function main(sdkdir, opt)
     end
 
     -- get arch
-    local arch = opt.arch or config.get("arch") or "armv7-a"
+    local arch = opt.arch or config.get("arch") or "armeabi-v7a"
 
     -- find ndk
     local ndk = _find_ndk(sdkdir or config.get("ndk") or global.get("ndk"), arch, opt.sdkver or config.get("ndk_sdkver"), opt.toolchains_ver or config.get("ndk_toolchains_ver"))
     if ndk and ndk.sdkdir then
-
-        -- save to config
         config.set("ndk", ndk.sdkdir, {force = true, readonly = true})
         config.set("ndkver", ndk.ndkver, {force = true, readonly = true})
         config.set("ndk_sdkver", ndk.sdkver, {force = true, readonly = true})
         config.set("ndk_toolchains_ver", ndk.toolchains_ver, {force = true, readonly = true})
-
-        -- trace
         if opt.verbose or option.get("verbose") then
             cprint("checking for NDK directory ... ${color.success}%s", ndk.sdkdir)
             cprint("checking for SDK version of NDK ... ${color.success}%s", ndk.sdkver)
         end
     else
-
-        -- trace
         if opt.verbose or option.get("verbose") then
             cprint("checking for NDK directory ... ${color.nothing}${text.nothing}")
         end

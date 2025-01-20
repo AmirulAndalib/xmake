@@ -20,34 +20,46 @@
 
 -- imports
 import("core.base.option")
+import("core.base.hashset")
 import("core.tool.toolchain")
 import("lib.detect.find_tool")
 
 -- get configs
 function _get_configs(package, configs)
     local configs = configs or {}
-    table.insert(configs, "target=" .. (package:is_debug() and "debug" or "release"))
-    table.insert(configs, "use_mingw=" .. (package:is_plat("mingw", "cygwin", "msys") and "yes" or "no"))
-    if package:is_plat("android") then
-        local scons_android_arch = "armv7"
-        if package:is_arch("arm64-v8a") then
-            scons_android_arch = "arm64v8"
-        end
-        table.insert(configs, "platform=android")
-        table.insert(configs, "android_arch=" .. scons_android_arch)
-    elseif package:is_plat("iphoneos") then
-        table.insert(configs, "platform=ios")
-        table.insert(configs, "ios_arch=" .. package:arch())
-    elseif package:is_plat("macosx") then
-        table.insert(configs, "platform=osx")
-    elseif package:is_plat("windows", "mingw", "cygwin", "msys") then
-        table.insert(configs, "platform=windows")
-    elseif package:is_plat("linux") then
-        table.insert(configs, "platform=linux")
-    elseif package:is_plat("bsd") then
-        table.insert(configs, "platform=freebsd")
+    local items = hashset.new()
+    for _, item in ipairs(configs) do
+        local name = item:split("=")[1]
+        items:insert(name)
     end
-    if package:is_plat("x86_64", "x86", "i386", "x64") then
+    if not items:has("target") then
+        table.insert(configs, "target=" .. (package:is_debug() and "debug" or "release"))
+    end
+    if not items:has("use_mingw") then
+        table.insert(configs, "use_mingw=" .. (package:is_plat("mingw", "cygwin", "msys") and "yes" or "no"))
+    end
+    if not items:has("platform") then
+        if package:is_plat("android") then
+            local scons_android_arch = "armv7"
+            if package:is_arch("arm64-v8a") then
+                scons_android_arch = "arm64v8"
+            end
+            table.insert(configs, "platform=android")
+            table.insert(configs, "android_arch=" .. scons_android_arch)
+        elseif package:is_plat("iphoneos") then
+            table.insert(configs, "platform=ios")
+            table.insert(configs, "ios_arch=" .. package:arch())
+        elseif package:is_plat("macosx") then
+            table.insert(configs, "platform=osx")
+        elseif package:is_plat("windows", "mingw", "cygwin", "msys") then
+            table.insert(configs, "platform=windows")
+        elseif package:is_plat("linux") then
+            table.insert(configs, "platform=linux")
+        elseif package:is_plat("bsd") then
+            table.insert(configs, "platform=freebsd")
+        end
+    end
+    if not items:has("bits") and package:is_plat("x86_64", "x86", "i386", "x64") then
         table.insert("bits=" .. (package:is_arch("x86", "i386") and "32" or "64"))
     end
     return configs
@@ -63,7 +75,7 @@ function buildenvs(package, opt)
     end
     local ACLOCAL_PATH = {}
     local PKG_CONFIG_PATH = {}
-    for _, dep in ipairs(package:librarydeps()) do
+    for _, dep in ipairs(package:librarydeps({private = true})) do
         local pkgconfig = path.join(dep:installdir(), "lib", "pkgconfig")
         if os.isdir(pkgconfig) then
             table.insert(PKG_CONFIG_PATH, pkgconfig)
@@ -72,6 +84,9 @@ function buildenvs(package, opt)
         if os.isdir(pkgconfig) then
             table.insert(PKG_CONFIG_PATH, pkgconfig)
         end
+    end
+    -- some binary packages contain it too. e.g. libtool
+    for _, dep in ipairs(package:orderdeps()) do
         local aclocal = path.join(dep:installdir(), "share", "aclocal")
         if os.isdir(aclocal) then
             table.insert(ACLOCAL_PATH, aclocal)

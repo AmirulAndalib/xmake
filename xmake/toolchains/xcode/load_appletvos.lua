@@ -18,10 +18,6 @@
 -- @file        load_appletvos.lua
 --
 
--- imports
-import("core.project.config")
-
--- main entry
 function main(toolchain)
 
     -- init architecture
@@ -34,12 +30,12 @@ function main(toolchain)
 
     -- init target minimal version
     local target_minver = toolchain:config("target_minver")
-    local target_minver_flags = (simulator and "-mappletv-simulator-version-min=" or "-mappletvos-version-min=") .. target_minver
+    local target_minver_flags = (simulator and "-mappletvsimulator-version-min=" or "-mappletvos-version-min=") .. target_minver
 
     -- init flags for c/c++
     toolchain:add("cxflags", "-arch", arch, target_minver_flags, "-isysroot", xcode_sysroot)
-    toolchain:add("ldflags", "-arch", arch, "-ObjC", "-lstdc++", "-fobjc-link-runtime", target_minver_flags, "-isysroot", xcode_sysroot)
-    toolchain:add("shflags", "-arch", arch, "-ObjC", "-lstdc++", "-fobjc-link-runtime", target_minver_flags, "-isysroot", xcode_sysroot)
+    toolchain:add("ldflags", "-arch", arch, "-ObjC", "-fobjc-link-runtime", target_minver_flags, "-isysroot", xcode_sysroot)
+    toolchain:add("shflags", "-arch", arch, "-ObjC", "-fobjc-link-runtime", target_minver_flags, "-isysroot", xcode_sysroot)
 
     -- init flags for objc/c++
     toolchain:add("mxflags", "-arch", arch, target_minver_flags, "-isysroot", xcode_sysroot)

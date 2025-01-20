@@ -30,16 +30,10 @@
 -- @endcode
 --
 toolchain("clang-cl")
-
-    -- set homepage
-    set_homepage("https://visualstudio.microsoft.com")
-    set_description("LLVM Clang C/C++ Compiler compatible with msvc")
-
-    -- mark as standalone toolchain
     set_kind("standalone")
+    set_homepage("https://clang.llvm.org/")
+    set_description("LLVM Clang C/C++ Compiler compatible with msvc")
+    set_runtimes("MT", "MTd", "MD", "MDd")
 
-    -- check toolchain
     on_check("check")
-
-    -- load toolchain
     on_load("load")

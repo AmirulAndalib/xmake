@@ -43,28 +43,29 @@ tb_int_t xm_hash_xxhash(lua_State* lua)
     tb_assert_and_check_return_val(lua, 0);
 
     // get mode
-    tb_size_t mode = (tb_size_t)lua_tonumber(lua, 1);
+    tb_size_t mode = (tb_size_t)lua_tointeger(lua, 1);
     if (mode != 64 && mode != 128)
     {
         lua_pushnil(lua);
-        lua_pushfstring(lua, "invalid mode(%d))!", (tb_int_t)mode);
+        lua_pushfstring(lua, "invalid mode(%d)!", (tb_int_t)mode);
         return 2;
     }
 
     // is bytes? get data and size
-    if (lua_isnumber(lua, 2) && lua_isnumber(lua, 3))
+    if (xm_lua_isinteger(lua, 2) && xm_lua_isinteger(lua, 3))
     {
-        tb_byte_t const* data = (tb_byte_t const*)(tb_size_t)(tb_long_t)lua_tonumber(lua, 2);
-        tb_size_t size = (tb_size_t)lua_tonumber(lua, 3);
+        tb_byte_t const* data = (tb_byte_t const*)(tb_size_t)(tb_long_t)lua_tointeger(lua, 2);
+        tb_size_t size = (tb_size_t)lua_tointeger(lua, 3);
         if (!data || !size)
         {
             lua_pushnil(lua);
             lua_pushfstring(lua, "invalid data(%p) and size(%d)!", data, (tb_int_t)size);
             return 2;
         }
+        tb_assert_static(sizeof(lua_Integer) >= sizeof(tb_pointer_t));
 
         // compuate hash
-        tb_byte_t const* buffer;
+        tb_byte_t const* buffer = tb_null;
         XXH64_hash_t value64;
         XXH128_hash_t value128;
         if (mode == 64)
@@ -76,6 +77,12 @@ tb_int_t xm_hash_xxhash(lua_State* lua)
         {
             value128 = XM_XXH3_128bits(data, size);
             buffer = (tb_byte_t const*)&value128;
+        }
+        if (!buffer)
+        {
+            lua_pushnil(lua);
+            lua_pushfstring(lua, "empty buffer!");
+            return 2;
         }
 
         // make xxhash string

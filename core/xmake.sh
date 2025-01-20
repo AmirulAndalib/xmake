@@ -1,7 +1,7 @@
 #!/bin/sh
 
 set_project "xmake"
-set_version "2.7.7" "%Y%m%d"
+set_version "2.9.7" "%Y%m%d"
 
 # set warning all
 set_warnings "all"
@@ -9,7 +9,7 @@ set_warnings "all"
 # set language: c99
 set_languages "c99"
 
-# add defines
+# add definitions
 add_defines "_GNU_SOURCE=1"  "_FILE_OFFSET_BITS=64"  "_LARGEFILE_SOURCE"
 
 # disable some compiler errors
@@ -23,14 +23,10 @@ if is_mode "debug"; then
     set_optimizes "none"
 else
     set_strip "all"
-    set_symbols "hidden"
-    set_optimizes "smallest"
-    # we cannot enable LTO on macOS arm64
-    if is_plat "macosx" && ! is_arch "arm64"; then
-        add_cxflags "-flto"
-        add_mxflags "-flto"
-        add_ldflags "-flto"
+    if ! is_kind "shared"; then
+        set_symbols "hidden"
     fi
+    set_optimizes "smallest"
 fi
 
 # the runtime option, lua or luajit
@@ -42,7 +38,7 @@ option "external" "Always use external dependencies" false
 # the readline option
 option "readline"
     add_links "readline"
-    add_cincludes "readline/readline.h"
+    add_cincludes "stdio.h" "readline/readline.h"
     add_cfuncs "readline"
     add_defines "XM_CONFIG_API_HAVE_READLINE"
 option_end
@@ -56,11 +52,15 @@ option "curses"
 option_end
 
 option_find_curses() {
+    local ncurses="ncurses"
+    if is_plat "mingw"; then
+        ncurses="ncursesw"
+    fi
     local ncurses_ldflags=""
-    ncurses_ldflags=$(pkg-config --libs ncurses 2>/dev/null)
+    ncurses_ldflags=$(pkg-config --libs ${ncurses} 2>/dev/null)
     option "curses"
         if test_nz "${ncurses_ldflags}"; then
-            add_cflags `pkg-config --cflags ncurses 2>/dev/null`
+            add_cflags `pkg-config --cflags ${ncurses} 2>/dev/null`
             add_ldflags "${ncurses_ldflags}"
         else
             add_links "curses"
@@ -91,8 +91,16 @@ option_find_lua() {
     local ldflags=""
     local cflags=""
     option "lua"
+        # detect lua5.4 on debian
         cflags=`pkg-config --cflags lua5.4 2>/dev/null`
         ldflags=`pkg-config --libs lua5.4 2>/dev/null`
+        # detect it on fedora
+        if test_z "${cflags}"; then
+            cflags=`pkg-config --cflags lua 2>/dev/null`
+        fi
+        if test_z "${ldflags}"; then
+            ldflags=`pkg-config --libs lua 2>/dev/null`
+        fi
         if test_z "${cflags}"; then
             cflags="-I/usr/include/lua5.4"
         fi
@@ -200,6 +208,10 @@ option_find_tbox() {
         fi
         add_cflags "${cflags}"
         add_ldflags "${ldflags}"
+        # ubuntu armv7/armel maybe need it
+        if is_plat "linux" && is_arch "armv7" "arm"; then
+            add_ldflags "-latomic"
+        fi
     option_end
 }
 
@@ -216,4 +228,4 @@ if ! has_config "external"; then
     includes "src/tbox"
 fi
 includes "src/xmake"
-includes "src/demo"
+includes "src/cli"

@@ -24,7 +24,7 @@ import("core.base.hashset")
 import("core.project.config")
 import("core.project.project")
 import("private.async.jobpool")
-import("private.async.runjobs")
+import("async.runjobs")
 import("kinds.object")
 
 -- match source files
@@ -80,8 +80,6 @@ function _add_batchjobs(batchjobs, rootjob, target, filepatterns)
     end
     if sourcecount > 0 then
         return object.add_batchjobs_for_sourcefiles(batchjobs, rootjob, target, newbatches)
-    else
-        return rootjob, rootjob
     end
 end
 
@@ -106,8 +104,11 @@ function _add_batchjobs_for_target_and_deps(batchjobs, rootjob, jobrefs, target,
         local targetjob, targetjob_root = _add_batchjobs_for_target(batchjobs, rootjob, target, filepatterns)
         if targetjob and targetjob_root then
             jobrefs[target:name()] = targetjob_root
-            for _, depname in ipairs(target:get("deps")) do
-                _add_batchjobs_for_target_and_deps(batchjobs, targetjob, jobrefs, project.target(depname), filepatterns)
+            if not option.get("shallow") then
+                for _, depname in ipairs(target:get("deps")) do
+                    _add_batchjobs_for_target_and_deps(batchjobs, targetjob, jobrefs,
+                        project.target(depname, {namespace = target:namespace()}), filepatterns)
+                end
             end
         end
     end
@@ -202,7 +203,7 @@ function main(targetname, group_pattern, sourcefiles)
     local batchjobs = _get_batchjobs(targetname, group_pattern, filepatterns)
     if batchjobs and batchjobs:size() > 0 then
         local curdir = os.curdir()
-        runjobs("build_files", batchjobs, {comax = option.get("jobs") or 1, curdir = curdir, count_as_index = true})
+        runjobs("build_files", batchjobs, {comax = option.get("jobs") or 1, curdir = curdir})
         os.cd(curdir)
     else
         wprint("%s not found!", sourcefiles)

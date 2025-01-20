@@ -26,8 +26,9 @@ import("core.platform.platform")
 import("core.package.repository")
 import("devel.git")
 import("net.proxy")
-import("private.async.runjobs")
+import("async.runjobs")
 import("private.action.require.impl.environment")
+import("private.service.remote_build.action", {alias = "remote_build_action"})
 
 function _clear_quick_search_cache(is_global)
     if is_global then
@@ -51,7 +52,7 @@ function _add(name, url, branch, is_global)
     -- clone repository
     if not os.isdir(url) then
         local remoteurl = proxy.mirror(url) or url
-        git.clone(remoteurl, {verbose = option.get("verbose"), branch = branch, outputdir = repodir})
+        git.clone(remoteurl, {verbose = option.get("verbose"), branch = branch, outputdir = repodir, autocrlf = false})
     end
 
     -- add url
@@ -114,13 +115,14 @@ function _update()
                     -- only update the local repository with the remote url
                     if not os.isdir(repo:url()) then
                         vprint("pulling repository(%s): %s to %s ..", repo:name(), repo:url(), repodir)
-                        git.pull({verbose = option.get("verbose"), branch = repo:branch(), repodir = repodir})
+                        git.reset({verbose = option.get("verbose"), repodir = repodir, hard = true})
+                        git.pull({verbose = option.get("verbose"), branch = repo:branch(), repodir = repodir, force = true})
                         io.save(path.join(repodir, "updated"), {})
                     end
                 else
                     vprint("cloning repository(%s): %s to %s ..", repo:name(), repo:url(), repodir)
                     local remoteurl = proxy.mirror(repo:url()) or repo:url()
-                    git.clone(remoteurl, {verbose = option.get("verbose"), branch = repo:branch(), outputdir = repodir})
+                    git.clone(remoteurl, {verbose = option.get("verbose"), branch = repo:branch(), outputdir = repodir, autocrlf = false})
                     io.save(path.join(repodir, "updated"), {})
                 end
                 pulled[repodir] = true
@@ -213,6 +215,11 @@ end
 
 -- main
 function main()
+
+    -- do action for remote?
+    if remote_build_action.enabled() then
+        return remote_build_action()
+    end
 
     -- load project if operate local repositories
     if not option.get("global") then

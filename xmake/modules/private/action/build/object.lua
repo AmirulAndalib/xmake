@@ -24,7 +24,7 @@ import("core.theme.theme")
 import("core.tool.compiler")
 import("core.project.depend")
 import("private.cache.build_cache")
-import("private.async.runjobs")
+import("async.runjobs")
 import("utils.progress")
 import("private.service.distcc_build.client", {alias = "distcc_build_client"})
 
@@ -43,7 +43,7 @@ function _do_build_file(target, sourcefile, opt)
     local compflags = compinst:compflags({target = target, sourcefile = sourcefile, configs = opt.configs})
 
     -- load dependent info
-    local dependinfo = option.get("rebuild") and {} or (depend.load(dependfile) or {})
+    local dependinfo = target:is_rebuilt() and {} or (depend.load(dependfile, {target = target}) or {})
 
     -- dry run?
     local dryrun = option.get("dry-run")
@@ -76,7 +76,11 @@ function _do_build_file(target, sourcefile, opt)
 
     -- trace progress info
     if not opt.quiet then
-        progress.show(opt.progress, "${color.build.object}%scompiling.$(mode) %s", prefix, sourcefile)
+        local filepath = sourcefile
+        if target:namespace() then
+            filepath = target:namespace() .. "::" .. filepath
+        end
+        progress.show(opt.progress, "${color.build.object}%scompiling.$(mode) %s", prefix, filepath)
     end
 
     -- trace verbose info
@@ -90,9 +94,27 @@ function _do_build_file(target, sourcefile, opt)
         dependinfo.files = {}
         assert(compinst:compile(sourcefile, objectfile, {dependinfo = dependinfo, compflags = compflags}))
 
-        -- update files and values to the dependent file
+        -- update files and values to the depfiles
         dependinfo.values = depvalues
-        table.join2(dependinfo.files, sourcefile, target:pcoutputfile("cxx") or {}, target:pcoutputfile("c"))
+        table.insert(dependinfo.files, sourcefile)
+
+        -- add precompiled header to the depfiles when building sourcefile
+        local build_pch
+        local pcxxoutputfile = target:pcoutputfile("cxx")
+        local pcoutputfile = target:pcoutputfile("c")
+        if pcxxoutputfile or pcoutputfile then
+            -- https://github.com/xmake-io/xmake/issues/3988
+            local extension = path.extension(sourcefile)
+            if (extension:startswith(".h") or extension == ".inl") then
+                build_pch = true
+            end
+        end
+        if target:has_sourcekind("cxx") and pcxxoutputfile and not build_pch then
+            table.insert(dependinfo.files, pcxxoutputfile)
+        end
+        if target:has_sourcekind("cc") and pcoutputfile and not build_pch then
+            table.insert(dependinfo.files, pcoutputfile)
+        end
         depend.save(dependinfo, dependfile)
     end
 end
@@ -124,8 +146,8 @@ function main(target, batchjobs, sourcebatch, opt)
         local objectfile = sourcebatch.objectfiles[i]
         local dependfile = sourcebatch.dependfiles[i]
         local sourcekind = assert(sourcebatch.sourcekind, "%s: sourcekind not found!", sourcefile)
-        batchjobs:addjob(sourcefile, function (index, total)
-            local build_opt = table.join({objectfile = objectfile, dependfile = dependfile, sourcekind = sourcekind, progress = (index * 100) / total}, opt)
+        batchjobs:addjob(sourcefile, function (index, total, jobopt)
+            local build_opt = table.join({objectfile = objectfile, dependfile = dependfile, sourcekind = sourcekind, progress = jobopt.progress}, opt)
             build_object(target, sourcefile, build_opt)
         end, {rootjob = rootjob, distcc = opt.distcc})
     end

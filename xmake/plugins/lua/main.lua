@@ -22,6 +22,7 @@
 import("core.base.option")
 import("core.sandbox.module")
 import("core.sandbox.sandbox")
+import("core.project.project")
 
 -- get all lua scripts
 function scripts()
@@ -158,6 +159,9 @@ function _get_args()
 end
 
 function main()
+
+    -- restore to the current working directory
+    os.cd(os.workingdir())
 
     -- list builtin scripts
     if option.get("list") then

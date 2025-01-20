@@ -28,9 +28,11 @@ import("core.cache.memcache")
 import("core.project.project")
 import("core.project.config")
 import("core.tool.toolchain")
+import("core.platform.platform")
 import("core.package.package", {alias = "core_package"})
 import("devel.git")
 import("private.action.require.impl.repository")
+import("private.action.require.impl.search_packages")
 import("private.action.require.impl.utils.requirekey", {alias = "_get_requirekey"})
 
 -- get memcache
@@ -84,6 +86,11 @@ end
 --
 -- {build = true}: always build packages, we do not use the precompiled artifacts
 --
+-- simply configs as string:
+--   add_requires("boost[iostreams,system,thread,key=value] >=1.78.0")
+--   add_requires("boost[iostreams,thread=n] >=1.78.0")
+--   add_requires("libplist[shared,debug,codecs=[foo,bar,zoo]]")
+--
 function _parse_require(require_str)
 
     -- split package and version info
@@ -132,7 +139,8 @@ function _parse_require(require_str)
 end
 
 -- load require info
-function _load_require(require_str, requires_extra, parentinfo)
+function _load_require(require_str, requires_extra, opt)
+    opt = opt or {}
 
     -- parse require
     local packagename, version, reponame = _parse_require(require_str)
@@ -143,22 +151,72 @@ function _load_require(require_str, requires_extra, parentinfo)
         require_extra = requires_extra[require_str] or {}
     end
 
+    -- parse configs from package name, and we need to ignore 3rd package name, e.g. vcpkg::boost[core], ...
+    -- @see https://github.com/xmake-io/xmake/issues/5727#issuecomment-2421040107
+    --
+    -- e.g.
+    --   add_requires("boost[iostreams,system,thread,key=value] >=1.78.0")
+    --   add_requires("libplist[shared,debug,codecs=[foo,bar,zoo]]")
+    --
+    local packagename_raw, configs_str = packagename:match("(.-)%[(.*)%]")
+    if packagename_raw and configs_str and not packagename:find("::", 1, true) then
+        configs_str = configs_str:gsub("%[(.*)%]", function (w)
+            return w:replace(",", ":")
+        end)
+        packagename = packagename_raw
+        local splitinfo = configs_str:split(",", {plain = true})
+        for _, v in ipairs(splitinfo) do
+            local parts = v:split("=", {plain = true})
+            local k = parts[1]
+            v = parts[2]
+            require_extra.configs = require_extra.configs or {}
+            local configs = require_extra.configs
+            if v then
+                if v:find(":", 1 ,true) then
+                    configs[k] = v:split(":", {plain = true})
+                else
+                    configs[k] = option.boolean(v)
+                end
+            else
+                configs[k] = true
+            end
+        end
+    end
+
+    -- resolve require info
+    local resolvedinfo = opt.resolvedinfo
+    local requirepath = opt.requirepath
+    if requirepath then
+        requirepath = requirepath .. "." .. packagename
+    else
+        requirepath = packagename
+    end
+    resolvedinfo = resolvedinfo and resolvedinfo[requirepath]
+    if resolvedinfo then
+        -- resolve the conflict package version
+        if resolvedinfo.version then
+            version = resolvedinfo.version
+        end
+        -- resolve the conflict package configs
+        if resolvedinfo.configs then
+            require_extra.configs = resolvedinfo.configs
+        end
+    end
+
     -- get required building configurations
-    local require_build_configs = require_extra.configs or require_extra.config
+    -- we need to clone a new configs object, because the whole requireinfo will be modified later.
+    -- @see https://github.com/xmake-io/xmake-repo/pull/2067
+    local require_build_configs = table.clone(require_extra.configs or require_extra.config)
     if require_extra.debug then
         require_build_configs = require_build_configs or {}
         require_build_configs.debug = true
     end
 
-    -- require packge in the current host platform
-    if require_extra.host then
-        if is_subhost(core_package.targetplat()) and os.subarch() == core_package.targetarch() then
-            -- we need pass plat/arch to avoid repeat installation
-            -- @see https://github.com/xmake-io/xmake/issues/1579
-        else
-            require_extra.plat = os.subhost()
-            require_extra.arch = os.subarch()
-        end
+    -- vs_runtime is deprecated, we should use runtimes
+    if require_build_configs and require_build_configs.vs_runtime then
+        require_build_configs.runtimes = require_build_configs.vs_runtime
+        require_build_configs.vs_runtime = nil
+        wprint("add_requires(%s): vs_runtime is deprecated, please use runtimes!", require_str)
     end
 
     -- check require options
@@ -167,13 +225,20 @@ function _load_require(require_str, requires_extra, parentinfo)
     "verify", "external", "private", "build", "configs", "version")
     for name, value in pairs(require_extra) do
         if not extra_options:has(name) then
-            print("not found")
             wprint("add_requires(\"%s\") has unknown option: {%s=%s}!", require_str, name, tostring(value))
         end
     end
 
+    -- we always use xmake package, `add_requires("xmake::zlib")`,
+    -- it is equivalent to `add_requires("zlib", {system = false})`
+    if packagename:startswith("xmake::") then
+        packagename = packagename:sub(8)
+        require_extra.system = false
+    end
+
     -- init required item
     local required = {}
+    local parentinfo = opt.parentinfo
     parentinfo = parentinfo or {}
     required.packagename = packagename
     required.requireinfo =
@@ -181,6 +246,7 @@ function _load_require(require_str, requires_extra, parentinfo)
         originstr        = require_str,
         reponame         = reponame,
         version          = require_extra.version or version,
+        host             = require_extra.host,      -- this package is only for host machine
         plat             = require_extra.plat,      -- require package in the given platform
         arch             = require_extra.arch,      -- require package in the given architecture
         targetos         = require_extra.targetos,  -- require package in the given target os
@@ -195,7 +261,8 @@ function _load_require(require_str, requires_extra, parentinfo)
         verify           = require_extra.verify,    -- default: true, we can set false to ignore sha256sum and select any version
         external         = require_extra.external,  -- default: true, we use sysincludedirs/-isystem instead of -I/xxx
         private          = require_extra.private,   -- default: false, private package, only for installation, do not export any links/includes and environments
-        build            = require_extra.build      -- default: false, always build packages, we do not use the precompiled artifacts
+        build            = require_extra.build,     -- default: false, always build packages, we do not use the precompiled artifacts
+        resolvedinfo     = resolvedinfo             -- the resolved info for the conflict version/configs
     }
     return required.packagename, required.requireinfo
 end
@@ -212,9 +279,10 @@ end
 
 -- load package package from repositories
 function _load_package_from_repository(packagename, opt)
+    opt = opt or {}
     local packagedir, repo = repository.packagedir(packagename, opt)
     if packagedir then
-        return core_package.load_from_repository(packagename, repo, packagedir)
+        return core_package.load_from_repository(packagename, packagedir, {plat = opt.plat, arch = opt.arch, repo = repo})
     end
 end
 
@@ -287,23 +355,36 @@ end
 --
 -- orderdeps: a -> b -> c
 --
-function _sort_librarydeps(package)
+function _sort_librarydeps(package, opt)
     -- we must use native deps list instead of package:deps() to generate correct link order
     local orderdeps = {}
     for _, dep in ipairs(package:plaindeps()) do
-        if dep and dep:is_library() and not dep:is_private() then
+        if dep and dep:is_library() and (opt and opt.private or not dep:is_private()) then
             table.insert(orderdeps, dep)
-            table.join2(orderdeps, _sort_librarydeps(dep))
+            table.join2(orderdeps, _sort_librarydeps(dep, opt))
         end
     end
     return orderdeps
+end
+
+-- get builtin configuration default values
+function _get_default_config_value_of(name)
+    local defaults = {
+        debug = false,
+        shared = false,
+        pic = true,
+        lto = false,
+        asan = false
+    }
+    return defaults[name]
 end
 
 -- add some builtin configurations to package
 function _add_package_configurations(package)
     -- we can define configs to override it and it's default value in package()
     if package:extraconf("configs", "debug", "default") == nil then
-        package:add("configs", "debug", {builtin = true, description = "Enable debug symbols.", default = false, type = "boolean"})
+        local default = _get_default_config_value_of("debug")
+        package:add("configs", "debug", {builtin = true, description = "Enable debug symbols.", default = default, type = "boolean"})
     end
     if package:extraconf("configs", "shared", "default") == nil then
         -- we always use static library if it's for wasm platform
@@ -311,14 +392,38 @@ function _add_package_configurations(package)
         if package:is_plat("wasm") then
             readonly = true
         end
-        package:add("configs", "shared", {builtin = true, description = "Build shared library.", default = false, readonly = readonly, type = "boolean"})
+        local default = _get_default_config_value_of("shared")
+        package:add("configs", "shared", {builtin = true, description = "Build shared library.", default = default, readonly = readonly, type = "boolean"})
     end
     if package:extraconf("configs", "pic", "default") == nil then
-        package:add("configs", "pic", {builtin = true, description = "Enable the position independent code.", default = true, type = "boolean"})
+        local default = _get_default_config_value_of("pic")
+        package:add("configs", "pic", {builtin = true, description = "Enable the position independent code.", default = default, type = "boolean"})
     end
     if package:extraconf("configs", "lto", "default") == nil then
         package:add("configs", "lto", {builtin = true, description = "Enable the link-time build optimization.", type = "boolean"})
     end
+    if package:extraconf("configs", "asan", "default") == nil then
+        package:add("configs", "asan", {builtin = true, description = "Enable the address sanitizer.", type = "boolean"})
+    end
+    if package:extraconf("configs", "runtimes", "default") == nil then
+        local values = {"MT", "MTd", "MD", "MDd",
+                        "c++_static", "c++_shared", "stdc++_static", "stdc++_shared"}
+        package:add("configs", "runtimes", {builtin = true, description = "Set the compiler runtimes.", type = "string", values = values, restrict = function (value)
+            local values_set = hashset.from(values)
+            if type(value) ~= "string" then
+                return false
+            end
+            if value then
+                for _, item in ipairs(value:split(",", {plain = true})) do
+                    if not values_set:has(item) then
+                        return false
+                    end
+                end
+            end
+            return true
+        end})
+    end
+    -- deprecated, please use runtimes
     if package:extraconf("configs", "vs_runtime", "default") == nil then
         package:add("configs", "vs_runtime", {builtin = true, description = "Set vs compiler runtime.", values = {"MT", "MTd", "MD", "MDd"}})
     end
@@ -329,6 +434,8 @@ function _add_package_configurations(package)
     package:add("configs", "cxflags", {builtin = true, description = "Set the C/C++ compiler flags."})
     package:add("configs", "cxxflags", {builtin = true, description = "Set the C++ compiler flags."})
     package:add("configs", "asflags", {builtin = true, description = "Set the assembler flags."})
+    package:add("configs", "ldflags", {builtin = true, description = "Set the binary linker flags."})
+    package:add("configs", "shflags", {builtin = true, description = "Set the shared library linker flags."})
 end
 
 -- select package version
@@ -360,10 +467,13 @@ function _select_package_version(package, requireinfo, locked_requireinfo)
     local version = nil
     local require_version = requireinfo.version
     local require_verify  = requireinfo.verify
-    if (not package:get("versions") or require_verify == false) and semver.is_valid(require_version) then
+    if (not package:get("versions") or require_verify == false)
+        and (semver.is_valid(require_version) or semver.is_valid_range(require_version)) then
         -- no version list in package() or need not verify sha256sum? try selecting this version directly
-        -- @see https://github.com/xmake-io/xmake/issues/930
+        -- @see
+        -- https://github.com/xmake-io/xmake/issues/930
         -- https://github.com/xmake-io/xmake/issues/1009
+        -- https://github.com/xmake-io/xmake/issues/3551
         version = require_version
         source = "version"
     elseif #package:versions() > 0 then -- select version?
@@ -406,7 +516,11 @@ function _check_package_configurations(package)
             if config_type ~= nil and type(value) ~= config_type then
                 raise("package(%s %s): invalid type(%s) for config(%s), need type(%s)!", package:displayname(), package:version_str(), type(value), name, config_type)
             end
-            if conf.values then
+            if conf.restrict then
+                if not conf.restrict(value) then
+                    raise("package(%s %s): invalid value(%s) for config(%s)!", package:displayname(), package:version_str(), string.serialize(value, {indent = false}), name)
+                end
+            elseif conf.values then
                 local found = false
                 for _, config_value in ipairs(conf.values) do
                     if tostring(value) == tostring(config_value) then
@@ -418,13 +532,25 @@ function _check_package_configurations(package)
                     raise("package(%s %s): invalid value(%s) for config(%s), please run `xmake require --info %s` to get all valid values!", package:displayname(), package:version_str(), value, name, package:name())
                 end
             end
-            if conf.restrict then
-                if not conf.restrict(value) then
-                    raise("package(%s %s): invalid value(%s) for config(%s)!", package:displayname(), package:version_str(), value, name)
-                end
-            end
         else
             raise("package(%s %s): invalid config(%s), please run `xmake require --info %s` to get all configurations!", package:displayname(), package:version_str(), name, package:name())
+        end
+    end
+end
+
+-- check package toolchains
+function _check_package_toolchains(package)
+    if package:toolchains() then
+        for _, toolchain_inst in pairs(package:toolchains()) do
+            if not toolchain_inst:check() then
+                raise("toolchain(\"%s\"): not found!", toolchain_inst:name())
+            end
+        end
+    else
+        -- maybe this package is host package, it's platform and toolchain has been not checked yet.
+        local platform_inst = platform.load(package:plat(), package:arch(), {host = package:is_host()})
+        if not platform_inst:check() then
+            raise("no any matched platform for this package(%s)!", package:name())
         end
     end
 end
@@ -481,40 +607,92 @@ function _init_requireinfo(requireinfo, package, opt)
                 requireinfo.configs.toolchains = requireinfo.configs.toolchains or get_config("toolchain")
             end
         end
-        requireinfo.configs.vs_runtime = requireinfo.configs.vs_runtime or project.get("target.runtimes")
+        requireinfo.configs.runtimes = requireinfo.configs.runtimes or project.get("target.runtimes")
         if project.policy("package.inherit_external_configs") then
-            requireinfo.configs.vs_runtime = requireinfo.configs.vs_runtime or get_config("vs_runtime")
+            requireinfo.configs.runtimes = requireinfo.configs.runtimes or get_config("runtimes") or get_config("vs_runtime")
         end
-        requireinfo.configs.lto = requireinfo.configs.lto or project.policy("build.optimization.lto")
+        if type(requireinfo.configs.runtimes) == "table" then
+            requireinfo.configs.runtimes = table.concat(requireinfo.configs.runtimes, ",")
+        end
+        if requireinfo.configs.lto == nil then
+            requireinfo.configs.lto = project.policy("build.optimization.lto")
+        end
+        if requireinfo.configs.asan == nil then
+            requireinfo.configs.asan = project.policy("build.sanitizer.address")
+        end
     end
-    -- but we will ignore some configs for buildhash in the headeronly and host/binary package
-    if package:is_headeronly() or (package:is_binary() and not package:is_cross()) then
-        requireinfo.ignored_configs = {"vs_runtime", "toolchains", "lto", "pic"}
+    -- but we will ignore some configs for buildhash in the headeronly, moduleonly and host/binary package
+    -- @note on_test still need these configs, @see https://github.com/xmake-io/xmake/issues/4124
+    if package:is_headeronly() or package:is_moduleonly() or (package:is_binary() and not package:is_cross()) then
+        requireinfo.ignored_configs_for_buildhash = {"runtimes", "toolchains", "lto", "asan", "pic"}
     end
 end
 
 -- finish requireinfo
 function _finish_requireinfo(requireinfo, package)
     requireinfo.configs = requireinfo.configs or {}
-    if not package:is_headeronly() then
-        if requireinfo.configs.vs_runtime == nil and package:is_plat("windows") then
-            requireinfo.configs.vs_runtime = "MT"
+    if package:is_plat("windows") then
+        -- @see https://github.com/xmake-io/xmake/issues/4477#issuecomment-1913249489
+        -- @note its buildhash will be ignored for headeronly
+        local runtimes = requireinfo.configs.runtimes
+        if runtimes then
+            runtimes = runtimes:split(",")
+        else
+            runtimes = {}
         end
+        if not table.contains(runtimes, "MT", "MD", "MTd", "MDd") then
+            local vs_runtime_default = project.policy("build.c++.msvc.runtime")
+            if vs_runtime_default and is_mode("debug") then
+                vs_runtime_default = vs_runtime_default .. "d"
+            end
+            table.insert(runtimes, vs_runtime_default or "MT")
+        end
+        requireinfo.configs.runtimes = table.concat(runtimes, ",")
     end
-    -- we need ensure readonly configs
+    -- we need to ensure readonly configs
     for _, name in ipairs(table.keys(requireinfo.configs)) do
-        if package:extraconf("configs", name, "readonly") then
+        local current = requireinfo.configs[name]
+        local default = package:extraconf("configs", name, "default")
+        local readonly = package:extraconf("configs", name, "readonly")
+        if name == "runtimes" then
+            -- vs_runtime is deprecated, but we need also support it now.
+            if default == nil then
+                default = package:extraconf("configs", "vs_runtime", "default")
+            end
+            if readonly == nil then
+                readonly = package:extraconf("configs", "vs_runtime", "readonly")
+            end
+            if default ~= nil or readonly ~= nil then
+                wprint("please use add_configs(\"runtimes\") instead of add_configs(\"vs_runtime\").")
+            end
+        end
+        if readonly and current ~= default then
+            wprint("configs.%s is readonly in package(%s), it's always %s", name, package:name(), default)
             -- package:config() will use default value after loading package
             requireinfo.configs[name] = nil
         end
+    end
+    -- sync default value to prevent cache mismatch (buildhash)
+    -- @see https://github.com/xmake-io/xmake/pull/4324
+    for k, v in pairs(requireinfo.configs) do
+        local default = _get_default_config_value_of(k)
+        if v == default then
+            requireinfo.configs[k] = nil
+        end
+    end
+
+    -- all binary packages are host package
+    -- we need to synchronize the setup to requireinfo so that all its dependent packages inherit from it.
+    if package:is_binary() then
+        requireinfo.host = true
     end
 end
 
 -- merge requireinfo from `add_requireconfs()`
 --
--- add_requireconfs("*",                         {system = false, configs = {vs_runtime = "MD"}})
--- add_requireconfs("lib*",                      {system = false, configs = {vs_runtime = "MD"}})
--- add_requireconfs("libwebp",                   {system = false, configs = {vs_runtime = "MD"}})
+-- add_requireconfs("*",                         {system = false, configs = {runtimes = "MD"}})
+-- add_requireconfs("lib*",                      {system = false, configs = {runtimes = "MD"}})
+-- add_requireconfs("libwebp",                   {system = false, configs = {runtimes = "MD"}})
 -- add_requireconfs("libpng.zlib",               {system = false, override = true, configs = {cxflags = "-DTEST1"}, version = "1.2.10"})
 -- add_requireconfs("libtiff.*",                 {system = false, configs = {cxflags = "-DTEST2"}})
 -- add_requireconfs("libwebp.**|cmake|autoconf", {system = false, configs = {cxflags = "-DTEST3"}}) -- recursive deps
@@ -538,7 +716,7 @@ function _merge_requireinfo(requireinfo, requirepath)
         end
     end
 
-    -- append requireconf_extra into requireinfo
+    -- Append requireconf_extra into requireinfo
     -- and the configs of add_requires have a higher priority than add_requireconfs.
     --
     -- e.g.
@@ -547,16 +725,20 @@ function _merge_requireinfo(requireinfo, requirepath)
     --
     -- foo and bar will be debug mode
     --
-    -- we can also override the configs of add_requires
+    -- We can also override the configs of add_requires
     --
     -- e.g.
     -- add_requires("zlib 1.2.11")
     -- add_requireconfs("zlib", {override = true, version = "1.2.10"})
     --
-    -- we override the version of zlib to 1.2.10
+    -- We override the version of zlib to 1.2.10
     --
-    if #requireconf_result == 1 then
-        local requireconf_extra = requireconf_result[1].requireconf_extra
+    -- If the same dependency is matched to multiple configurations,
+    -- the configurations are merged by default,
+    -- and if override is set, then it rewrites the previous configurations.
+    --
+    for _, item in ipairs(requireconf_result) do
+        local requireconf_extra = item.requireconf_extra
         if requireconf_extra then
             -- preprocess requireconf_extra, (debug, override ..)
             local override = requireconf_extra.override
@@ -580,18 +762,13 @@ function _merge_requireinfo(requireinfo, requirepath)
                 end
             end
         end
-    elseif #requireconf_result > 1 then
-        local confs = {}
-        for _, item in ipairs(requireconf_result) do
-            table.insert(confs, item.requireconf)
-        end
-        raise("package(%s) will match multiple add_requireconfs(%s)!", requirepath, table.concat(confs, " "))
     end
 end
 
 -- get package key
 function _get_packagekey(packagename, requireinfo, version)
     return _get_requirekey(requireinfo, {name = packagename,
+                                         host = requireinfo.host,
                                          plat = requireinfo.plat,
                                          arch = requireinfo.arch,
                                          kind = requireinfo.kind,
@@ -606,15 +783,15 @@ function _get_packagelock_key(requireinfo)
 end
 
 -- inherit some builtin configs of parent package if these config values are not default value
--- e.g. add_requires("libpng", {configs = {vs_runtime = "MD", pic = false}})
+-- e.g. add_requires("libpng", {configs = {runtimes = "MD", pic = false}})
 --
 function _inherit_parent_configs(requireinfo, package, parentinfo)
     if package:is_library() then
         local requireinfo_configs = requireinfo.configs or {}
         local parentinfo_configs  = parentinfo.configs or {}
         if not requireinfo_configs.shared then
-            if requireinfo_configs.vs_runtime == nil then
-                requireinfo_configs.vs_runtime = parentinfo_configs.vs_runtime
+            if requireinfo_configs.runtimes == nil then
+                requireinfo_configs.runtimes = parentinfo_configs.runtimes
             end
             if requireinfo_configs.pic == nil then
                 requireinfo_configs.pic = parentinfo_configs.pic
@@ -626,9 +803,13 @@ function _inherit_parent_configs(requireinfo, package, parentinfo)
         if parentinfo.arch then
             requireinfo.arch = parentinfo.arch
         end
+        if parentinfo.host then
+            requireinfo.host = parentinfo.host
+        end
         requireinfo_configs.toolchains = requireinfo_configs.toolchains or parentinfo_configs.toolchains
-        requireinfo_configs.vs_runtime = requireinfo_configs.vs_runtime or parentinfo_configs.vs_runtime
+        requireinfo_configs.runtimes = requireinfo_configs.runtimes or parentinfo_configs.runtimes
         requireinfo_configs.lto = requireinfo_configs.lto or parentinfo_configs.lto
+        requireinfo_configs.asan = requireinfo_configs.asan or parentinfo_configs.asan
         requireinfo.configs = requireinfo_configs
     end
 end
@@ -709,6 +890,42 @@ function _select_artifacts(package, artifacts_manifest)
     end
 end
 
+-- select package runtimes
+function _select_package_runtimes(package)
+    local runtimes = package:config("runtimes")
+    if runtimes then
+        local runtimes_supported = hashset.new()
+        local toolchains = package:toolchains() or platform.load(package:plat(), package:arch()):toolchains()
+        if toolchains then
+            for _, toolchain_inst in ipairs(toolchains) do
+                if toolchain_inst:is_standalone() and toolchain_inst:get("runtimes") then
+                    for _, runtime in ipairs(table.wrap(toolchain_inst:get("runtimes"))) do
+                        runtimes_supported:insert(runtime)
+                    end
+                end
+            end
+        end
+        local runtimes_current = {}
+        for _, runtime in ipairs(table.wrap(runtimes:split(",", {plain = true}))) do
+            if runtimes_supported:has(runtime) then
+                table.insert(runtimes_current, runtime)
+            end
+        end
+        -- we need update runtimes for buildhash, configs ...
+        --
+        -- we use configs_overrided to override configs in configs and buildhash,
+        -- but we shouldn't modify requireinfo.configs directly as it affects the package cache key
+        --
+        -- @see https://github.com/xmake-io/xmake/issues/4477#issuecomment-1913185727
+        local requireinfo = package:requireinfo()
+        if requireinfo then
+            requireinfo.configs_overrided = requireinfo.configs_overrided or {}
+            requireinfo.configs_overrided.runtimes = #runtimes_current > 0 and table.concat(runtimes_current, ",") or nil
+            package:_invalidate_configs()
+        end
+    end
+end
+
 -- load required packages
 function _load_package(packagename, requireinfo, opt)
 
@@ -744,13 +961,22 @@ function _load_package(packagename, requireinfo, opt)
     local package
     if os.isfile(os.projectfile()) then
         package = _load_package_from_project(packagename)
+        if package and package:namespace() then
+            packagename = package:namespace() .. "::" .. packagename
+            if displayname then
+                displayname = package:namespace() .. "::" .. displayname
+            end
+        end
     end
 
     -- load package from repositories
     local from_repo = false
     if not package then
         package = _load_package_from_repository(packagename, {
-            name = requireinfo.reponame, locked_repo = locked_requireinfo and locked_requireinfo.repo})
+            plat = requireinfo.plat,
+            arch = requireinfo.arch,
+            name = requireinfo.reponame,
+            locked_repo = locked_requireinfo and locked_requireinfo.repo})
         if package then
             from_repo = true
         end
@@ -771,8 +997,17 @@ function _load_package(packagename, requireinfo, opt)
         package = _load_package_from_system(packagename)
     end
 
-    -- check
-    assert(package, "package(%s) not found!", packagename)
+    -- check unknown package
+    if not package then
+        cprint("${bright color.warning}note: ${clear}the following packages were not found in any repository (check if they are spelled correctly):")
+        local tips
+        local possible_package = get_possible_package(packagename)
+        if possible_package then
+            tips = string.format(", maybe ${bright}%s %s${clear} in %s", possible_package.name, possible_package.version, possible_package.reponame)
+        end
+        cprint("  -> %s%s", packagename, tips or "")
+        raise("package(%s) not found!", packagename)
+    end
 
     -- init requireinfo
     _init_requireinfo(requireinfo, package, {is_toplevel = not opt.parentinfo})
@@ -780,7 +1015,7 @@ function _load_package(packagename, requireinfo, opt)
     -- merge requireinfo from `add_requireconfs()`
     _merge_requireinfo(requireinfo, opt.requirepath)
 
-    -- inherit some builtin configs of parent package, e.g. vs_runtime, pic
+    -- inherit some builtin configs of parent package, e.g. runtimes, pic
     if opt.parentinfo then
         _inherit_parent_configs(requireinfo, package, opt.parentinfo)
     end
@@ -788,10 +1023,24 @@ function _load_package(packagename, requireinfo, opt)
     -- finish requireinfo
     _finish_requireinfo(requireinfo, package)
 
+    -- save require info
+    package:requireinfo_set(requireinfo)
+
+    -- only load toolchain package and its deps
+    if opt.toolchain then
+        if package:is_toplevel() and not package:is_toolchain()then
+            return
+        end
+    end
+
+    -- init urls source
+    package:_init_source()
+
     -- select package version
     local version, source = _select_package_version(package, requireinfo, locked_requireinfo)
     if version then
         package:version_set(version, source)
+        package:data_set("__locked_requireinfo", locked_requireinfo)
     end
 
     -- get package key
@@ -804,11 +1053,13 @@ function _load_package(packagename, requireinfo, opt)
         if requireinfo.is_toplevel and not package_cached:is_toplevel() then
             package_cached:requireinfo().is_toplevel = true
         end
+        -- mark this cached package.requireinfo as override
+        -- @see https://github.com/xmake-io/xmake/issues/4078
+        if requireinfo.override then
+            package_cached:requireinfo().override = true
+        end
         return package_cached
     end
-
-    -- save require info
-    package:requireinfo_set(requireinfo)
 
     -- save display name
     if not displayname then
@@ -834,7 +1085,21 @@ function _load_package(packagename, requireinfo, opt)
     -- check package configurations
     _check_package_configurations(package)
 
-    -- save artifacts info, we need add it at last before buildhash need depend on package configurations
+    -- we need to check package toolchains before on_load and select runtimes,
+    -- because we will call compiler-specific apis in on_load/on_fetch/find_package ..
+    --
+    -- @see https://github.com/xmake-io/xmake/pull/5466
+    -- https://github.com/xmake-io/xmake/issues/4596#issuecomment-2014528801
+    _check_package_toolchains(package)
+
+    -- we need to select package runtimes before computing buildhash
+    -- @see https://github.com/xmake-io/xmake/pull/4630#issuecomment-1910216561
+    _select_package_runtimes(package)
+
+    -- pre-compute the package buildhash
+    package:_compute_buildhash()
+
+    -- save artifacts info, we need to add it at last before buildhash need depend on package configurations
     -- it will switch to install precompiled binary package from xmake-mirror/build-artifacts
     if from_repo and not option.get("build") and not requireinfo.build then
         local artifacts_manifest = repository.artifacts_manifest(packagename, version)
@@ -843,11 +1108,15 @@ function _load_package(packagename, requireinfo, opt)
         end
     end
 
+    -- we need to check package toolchains before on_load,
+    -- because we will call compiler-specific apis in on_load/on_fetch/find_package ..
+    --
+    -- @see https://github.com/xmake-io/xmake/pull/5466
+    -- https://github.com/xmake-io/xmake/issues/4596#issuecomment-2014528801
+    _check_package_toolchains(package)
+
     -- do load
-    local on_load = package:script("load")
-    if on_load then
-        on_load(package)
-    end
+    package:_load()
 
     -- load all components
     for _, component in pairs(package:components()) do
@@ -859,6 +1128,9 @@ function _load_package(packagename, requireinfo, opt)
 
     -- save this package package to cache
     _memcache():set2("packages", packagekey, package)
+
+    -- load ok
+    package:_mark_as_loaded()
     return package
 end
 
@@ -878,7 +1150,7 @@ function _load_packages(requires, opt)
         -- load package
         local requireinfo = requireitem.info
         local requirepath = opt.requirepath and (opt.requirepath .. "." .. requireitem.name) or requireitem.name
-        local package     = _load_package(requireitem.name, requireinfo, table.join(opt, {requirepath = requirepath}))
+        local package = _load_package(requireitem.name, requireinfo, table.join(opt, {requirepath = requirepath}))
 
         -- maybe package not found and optional
         if package then
@@ -888,23 +1160,27 @@ function _load_packages(requires, opt)
                 if package:get("deps") and opt.nodeps ~= true then
 
                     -- load dependent packages and do not load system/3rd packages for package/deps()
-                    local packagedeps = {}
-                    local deps, plaindeps = _load_packages(package:get("deps"), {requirepath = requirepath,
+                    local _, plaindeps = _load_packages(package:get("deps"), {requirepath = requirepath,
                                                         requires_extra = package:extraconf("deps") or {},
                                                         parentinfo = requireinfo,
                                                         nodeps = opt.nodeps,
+                                                        resolvedinfo = opt.resolvedinfo,
                                                         system = false})
-                    for _, dep in ipairs(deps) do
-                        table.insert(packages, dep)
-                        packagedeps[dep:name()] = dep
-                    end
                     for _, dep in ipairs(plaindeps) do
                         dep:parents_add(package)
                     end
-                    package._DEPS = packagedeps
                     package._PLAINDEPS = plaindeps
                     package._ORDERDEPS = table.unique(_sort_packagedeps(package))
                     package._LIBRARYDEPS = table.reverse_unique(_sort_librarydeps(package))
+                    package._LIBRARYDEPS_WITH_PRIVATE = table.reverse_unique(_sort_librarydeps(package, {private = true}))
+                    -- we always need load dependencies everytime
+                    -- @see https://github.com/xmake-io/xmake/issues/4522
+                    local packagedeps = {}
+                    for _, dep in ipairs(package._ORDERDEPS) do
+                        table.insert(packages, dep)
+                        packagedeps[dep:name()] = dep
+                    end
+                    package._DEPS = packagedeps
                 end
             end
 
@@ -931,7 +1207,199 @@ function _get_parents_str(package)
     end
 end
 
--- check dependences conflicts
+-- get require paths
+function _get_requirepaths(package)
+    local requirepaths = {}
+    local parents = package:parents()
+    if parents and #parents > 0 then
+        for _, parent in ipairs(parents) do
+            for _, requirepath in ipairs(_get_requirepaths(parent)) do
+                table.insert(requirepaths, requirepath .. "." .. package:name())
+            end
+        end
+        -- we also need to resolve requires conflict in toplevel, if `package.sync_requires_to_deps` policy is enabled.
+        -- @see https://github.com/xmake-io/xmake/issues/5745#issuecomment-2513951471
+        if project.policy("package.sync_requires_to_deps") then
+            table.insert(requirepaths, package:name())
+        end
+    else
+        table.insert(requirepaths, package:name())
+    end
+    return requirepaths
+end
+
+-- get compatibility key
+function _get_package_compatkey(dep)
+    local key = dep:plat() .. "/" .. dep:arch() .. "/" .. (dep:kind() or "")
+    if dep:is_system() then
+        key = key .. "/system"
+    end
+    local resolve_depconflict = project.policy("package.resolve_depconflict")
+    if resolve_depconflict == nil then
+        resolve_depconflict = dep:policy("package.resolve_depconflict")
+    end
+    if resolve_depconflict == false then
+        if dep:version_str() then
+            key = key .. "/" .. dep:version_str()
+        end
+        local configs = dep:requireinfo().configs
+        if configs then
+            local configs_order = {}
+            for k, v in pairs(configs) do
+                if type(v) == "table" then
+                    v = string.serialize(v, {strip = true, indent = false, orderkeys = true})
+                end
+                table.insert(configs_order, k .. "=" .. tostring(v))
+            end
+            table.sort(configs_order)
+            key = key .. ":" .. string.serialize(configs_order, true)
+        end
+
+    end
+    return key
+end
+
+-- get package compatibility info
+function _get_package_compatinfo(package)
+    local compatinfo = {name = package:name()}
+    if package:data("__locked_requireinfo") then
+        compatinfo.locked = true
+        compatinfo.versions = hashset.from(table.wrap(package:version_str()))
+        return compatinfo
+    end
+
+    -- get compatible version range
+    local requireinfo = package:requireinfo()
+    local require_version = requireinfo.version
+    if require_version then
+        compatinfo.require_version = require_version
+        if semver.is_valid(require_version) or semver.is_valid_range(require_version) then
+            local versions = hashset.new()
+            for _, version in ipairs(package:versions()) do
+                if semver.satisfies(version, require_version) then
+                    versions:insert(version)
+                end
+            end
+            compatinfo.versions = versions
+        elseif require_version == "latest" then
+            compatinfo.versions = hashset.from(table.wrap(package:versions()))
+        else
+            compatinfo.versions = hashset.from(table.wrap(require_version))
+        end
+    else
+        compatinfo.versions = hashset.from(table.wrap(package:versions()))
+    end
+    return compatinfo
+end
+
+-- check and resolve package conflicts
+function _check_and_resolve_package_depconflicts_impl(package, name, deps, resolvedinfo)
+
+    -- check version compatibility
+    local versions
+    for _, dep in ipairs(deps) do
+        local compatinfo = _get_package_compatinfo(dep)
+        assert(compatinfo.versions)
+
+        if versions then
+            for version in versions:items() do
+                if not compatinfo.versions:has(version) then
+                    versions:remove(version)
+                end
+            end
+        else
+            versions = compatinfo.versions
+        end
+    end
+
+    if not versions or versions:empty() then
+        print("package(%s): add_deps(%s, ...)", package:name(), name)
+        for idx, dep in ipairs(deps) do
+            cprint("  ${color.warning}->${clear} %s %s ${dim}%s",
+                dep:displayname(), dep:version_str() or "", get_configs_str(dep))
+        end
+        print("we can use add_requireconfs(\"**.%s\", {override = true, version = \"x.x.x\"}) to override version.", name)
+        raise("package(%s): conflict version dependencies!", name)
+    end
+
+    -- check configs compatibility
+    local prevkey
+    local configs
+    local configs_conflict = false
+    for _, dep in ipairs(deps) do
+        local key = _get_package_compatkey(dep)
+        if prevkey then
+            if prevkey ~= key then
+                configs_conflict = true
+                break
+            end
+        else
+            prevkey = key
+        end
+        local depconfigs = dep:requireinfo().configs
+        if configs and depconfigs then
+            for k, v in pairs(depconfigs) do
+                local oldv = configs[k]
+                if oldv ~= nil then
+                    local v_key = tostring(v)
+                    local oldv_key = tostring(oldv)
+                    if type(v) == "table" then
+                        v_key = string.serialize(v, {strip = true, indent = false, orderkeys = true})
+                    end
+                    if type(oldv) == "table" then
+                        oldv_key = string.serialize(oldv, {strip = true, indent = false, orderkeys = true})
+                    end
+                    if v_key ~= oldv_key then
+                        configs_conflict = true
+                        break
+                    end
+                else
+                    configs[k] = v
+                end
+            end
+        else
+            configs = depconfigs
+        end
+    end
+    if configs_conflict then
+        print("package(%s): add_deps(%s, ...)", package:name(), name)
+        for idx, dep in ipairs(deps) do
+            cprint("  ${color.warning}->${clear} %s %s ${dim}%s",
+                dep:displayname(), dep:version_str() or "", get_configs_str(dep))
+        end
+        print("we can use add_requireconfs(\"**.%s\", {override = true, configs = {}}) to override configs.", name)
+        raise("package(%s): conflict configs dependencies!", name)
+    end
+
+    -- resolve compatible version for all deps
+    if versions and not versions:empty() then
+        local version_best
+        for version in versions:items() do
+            if version_best == nil or semver.compare(version, version_best) > 0 then
+                version_best = version
+            end
+        end
+        if version_best then
+            for _, dep in ipairs(deps) do
+                for _, requirepath in ipairs(_get_requirepaths(dep)) do
+                    resolvedinfo[requirepath] = {version = version_best}
+                end
+            end
+        end
+    end
+
+    -- resolve configs
+    if configs then
+        for _, dep in ipairs(deps) do
+            for _, requirepath in ipairs(_get_requirepaths(dep)) do
+                resolvedinfo[requirepath] = resolvedinfo[requirepath] or {}
+                resolvedinfo[requirepath].configs = configs
+            end
+        end
+    end
+end
+
+-- check and resolve dependencies conflicts
 --
 -- It exists conflict for dependent packages for each root packages? resolve it first
 -- e.g.
@@ -945,15 +1413,19 @@ end
 -- Of course, conflicts caused by `add_packages("foo", "ddd")`
 -- cannot be detected at present and can only be resolved by the user
 --
-function _check_package_depconflicts(package)
-    local packagekeys = {}
+function _check_and_resolve_package_depconflicts(package, resolvedinfo)
+    local some_packagedeps = {}
     for _, dep in ipairs(package:librarydeps()) do
-        local key = _get_packagekey(dep:name(), dep:requireinfo())
-        local prevkey = packagekeys[dep:name()]
-        if prevkey then
-            assert(key == prevkey, "package(%s): conflict dependences with package(%s) in %s!", key, prevkey, package:name())
-        else
-            packagekeys[dep:name()] = key
+        local deps = some_packagedeps[dep:name()]
+        if deps == nil then
+            deps = {}
+            some_packagedeps[dep:name()] = deps
+        end
+        table.insert(deps, dep)
+    end
+    for name, deps in pairs(some_packagedeps) do
+        if #deps > 1 then
+            _check_and_resolve_package_depconflicts_impl(package, name, deps, resolvedinfo)
         end
     end
 end
@@ -977,16 +1449,14 @@ function _compatible_with_previous_librarydeps(package, opt)
         return true
     end
 
-    -- has been checked?
-    local compatible_checked = package:data("librarydeps.compatible_checked")
-    if compatible_checked then
-        return
-    end
-
     -- check strict compatibility for librarydeps?
     local strict_compatibility = project.policy("package.librarydeps.strict_compatibility")
     if strict_compatibility == nil then
         strict_compatibility = package:policy("package.librarydeps.strict_compatibility")
+    end
+    -- and we can disable it manually, @see https://github.com/xmake-io/xmake/pull/3738
+    if strict_compatibility == false then
+       return true
     end
 
     -- compute the buildhash for current librarydeps
@@ -1008,7 +1478,7 @@ function _compatible_with_previous_librarydeps(package, opt)
     if manifest and manifest.librarydeps then
         local deps = manifest.deps or {}
         for _, depname in ipairs(manifest.librarydeps) do
-            if strict_compatibility or (package:dep(depname) and package:dep(depname):policy("package.strict_compatibility")) then
+            if strict_compatibility or (package:dep(depname) and package:dep(depname):policy("package.strict_compatibility")) or depinfos_curr[depname] then
                 local depinfo = deps[depname]
                 if depinfo and depinfo.buildhash then
                     depinfos_prev[depname] = depinfo
@@ -1051,6 +1521,24 @@ function _compatible_with_previous_librarydeps(package, opt)
     return is_compatible
 end
 
+-- get possible package
+function get_possible_package(packagename)
+    local packages_possible = search_packages("*", {description = false})
+    if packages_possible then
+        packages_possible = packages_possible["*"]
+    end
+    local result
+    local distance_min
+    for name, info in pairs(packages_possible) do
+        local distance = packagename:levenshtein(info.name)
+        if distance_min == nil or distance < distance_min and distance < 5 then
+            distance_min = distance
+            result = info
+        end
+    end
+    return result
+end
+
 -- the cache directory
 function cachedir()
     return path.join(global.directory(), "cache", "packages")
@@ -1068,7 +1556,7 @@ function should_install(package, opt)
     if package:exists() and _compatible_with_previous_librarydeps(package, opt) then
         return false
     end
-    -- we need not install it if this package need only be fetched
+    -- we don't need to install it if this package only need to be fetched
     if package:is_fetchonly() then
         return false
     end
@@ -1112,6 +1600,9 @@ function get_configs_str(package)
     if package:is_private() then
         table.insert(configs, "private")
     end
+    if package:is_host() then
+        table.insert(configs, "host")
+    end
     local requireinfo = package:requireinfo()
     if requireinfo then
         if requireinfo.plat then
@@ -1123,9 +1614,11 @@ function get_configs_str(package)
         if requireinfo.kind then
             table.insert(configs, requireinfo.kind)
         end
-        local ignored_configs = hashset.from(requireinfo.ignored_configs or {})
+        local ignored_configs_for_buildhash = hashset.from(requireinfo.ignored_configs_for_buildhash or {})
+        local configs_overrided = requireinfo.configs_overrided or {}
         for k, v in pairs(requireinfo.configs) do
-            if not ignored_configs:has(k) then
+            if not ignored_configs_for_buildhash:has(k) then
+                v = configs_overrided[k] or v
                 if type(v) == "boolean" then
                     table.insert(configs, k .. ":" .. (v and "y" or "n"))
                 else
@@ -1142,10 +1635,18 @@ function get_configs_str(package)
     if parents_str then
         table.insert(configs, "from:" .. parents_str)
     end
+    local license = package:get("license")
+    if license then
+        table.insert(configs, "license:" .. license)
+    end
     local configs_str = #configs > 0 and "[" .. table.concat(configs, ", ") .. "]" or ""
     local limitwidth = math.floor(os.getwinsize().width * 2 / 3)
     if #configs_str > limitwidth then
         configs_str = configs_str:sub(1, limitwidth) .. " ..)"
+    end
+    local resolvedinfo = requireinfo.resolvedinfo
+    if resolvedinfo then
+        configs_str = configs_str .. " " .. "${color.warning}(conflict resolved)${clear}"
     end
     return configs_str
 end
@@ -1168,7 +1669,7 @@ function load_requires(requires, requires_extra, opt)
     opt = opt or {}
     local requireitems = {}
     for _, require_str in ipairs(requires) do
-        local packagename, requireinfo = _load_require(require_str, requires_extra, opt.parentinfo)
+        local packagename, requireinfo = _load_require(require_str, requires_extra, opt)
         table.insert(requireitems, {name = packagename, info = requireinfo})
     end
     return requireitems
@@ -1179,14 +1680,36 @@ function load_packages(requires, opt)
     opt = opt or {}
     local unique = {}
     local packages = {}
-    for _, package in ipairs((_load_packages(requires, opt))) do
+    local resolvedinfo = {}
+    for _, package in ipairs((_load_packages(requires, table.clone(opt)))) do
         if package:is_toplevel() then
-            _check_package_depconflicts(package)
+            _check_and_resolve_package_depconflicts(package, resolvedinfo)
         end
         local key = _get_packagekey(package:name(), package:requireinfo())
         if not unique[key] then
             table.insert(packages, package)
             unique[key] = true
+        end
+    end
+
+    -- we need to reload packages with new resolved deps if there are some dep conflicts
+    if not table.empty(resolvedinfo) then
+        for _, package in ipairs(packages) do
+            local installdir = package:installdir({readonly = true})
+            if os.isdir(installdir) and os.emptydir(installdir) then
+                os.tryrm(installdir, {emptydirs = true})
+            end
+        end
+        unique = {}
+        packages = {}
+        _memcache():clear()
+        opt = table.join(opt, {resolvedinfo = resolvedinfo})
+        for _, package in ipairs((_load_packages(requires, opt))) do
+            local key = _get_packagekey(package:name(), package:requireinfo())
+            if not unique[key] then
+                table.insert(packages, package)
+                unique[key] = true
+            end
         end
     end
     return packages

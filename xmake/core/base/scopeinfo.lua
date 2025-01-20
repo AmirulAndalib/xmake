@@ -113,7 +113,7 @@ function _instance:_api_set_values(name, ...)
         extra_config = nil
     end
 
-    -- @note we need mark table value as meta object to avoid wrap/unwrap
+    -- @note we need to mark table value as meta object to avoid wrap/unwrap
     -- if these values cannot be expanded, especially when there is only one value
     --
     -- e.g. target:set("shflags", {"-Wl,-exported_symbols_list", exportfile}, {force = true, expand = false})
@@ -130,7 +130,7 @@ function _instance:_api_set_values(name, ...)
     local handled_values = self:_api_handle(name, values)
 
     -- save values
-    if type(handled_values) == "table" and #handled_values == 0 then
+    if type(handled_values) == "table" and table.empty(handled_values) then
         -- set("xx", nil)? remove it
         scope[name] = nil
     else
@@ -162,7 +162,7 @@ function _instance:_api_add_values(name, ...)
         extra_config = nil
     end
 
-    -- @note we need mark table value as meta object to avoid wrap/unwrap
+    -- @note we need to mark table value as meta object to avoid wrap/unwrap
     -- if these values cannot be expanded, especially when there is only one value
     --
     -- e.g. target:add("shflags", {"-Wl,-exported_symbols_list", exportfile}, {force = true, expand = false})
@@ -185,6 +185,74 @@ function _instance:_api_add_values(name, ...)
         for _, value in ipairs(values) do
             extrascope[value] = extra_config
         end
+    end
+end
+
+-- set the api groups to the scope info
+function _instance:_api_set_groups(name, ...)
+
+    -- get the scope info
+    local scope = self._INFO
+
+    -- get extra config
+    local values = {...}
+    local extra_config = values[#values]
+    if table.is_dictionary(extra_config) then
+        table.remove(values)
+    else
+        extra_config = nil
+    end
+
+    -- expand values
+    values = table.join(table.unpack(values))
+
+    -- save values
+    table.wrap_lock(values)
+    scope[name] = values
+    scope[name] = self:_api_handle(name, scope[name])
+
+    -- save extra config
+    if extra_config then
+        scope["__extra_" .. name] = scope["__extra_" .. name] or {}
+        local extrascope = scope["__extra_" .. name]
+        local key = table.concat(values, "_")
+        extrascope[key] = extra_config
+    end
+end
+
+-- add the api groups to the scope info
+function _instance:_api_add_groups(name, ...)
+
+    -- get the scope info
+    local scope = self._INFO
+
+    -- get extra config
+    local values = {...}
+    local extra_config = values[#values]
+    if table.is_dictionary(extra_config) then
+        table.remove(values)
+    else
+        extra_config = nil
+    end
+
+    -- expand values
+    values = table.join(table.unpack(values))
+
+    -- save values
+    --
+    -- @note maybe scope[name] has been unwrapped, we need wrap it first
+    -- https://github.com/xmake-io/xmake/issues/4428
+    scope[name] = table.wrap(scope[name])
+    table.wrap_lock(values)
+    table.insert(scope[name], values)
+    scope[name] = self:_api_handle(name, scope[name])
+
+    -- save extra config
+    if extra_config then
+        scope["__extra_" .. name] = scope["__extra_" .. name] or {}
+        local extrascope = scope["__extra_" .. name]
+        local key = table.concat(values, "_")
+        extrascope[key] = extra_config
     end
 end
 
@@ -630,6 +698,9 @@ function _instance:extraconf(name, item, key)
     local value = extraconf
     if item then
         value = extraconf and extraconf[item] or nil
+        if value == nil and extraconf and type(item) == "table" then
+            value = extraconf[table.concat(item, "_")]
+        end
         if value and key then
             value = value[key]
         end
@@ -677,7 +748,10 @@ end
 
 -- clone a new instance from the current
 function _instance:clone()
-    return _instance.new(self:kind(), table.clone(self:info()), {interpreter = self:interpreter(), deduplicate = self._DEDUPLICATE, enable_filter = self._ENABLE_FILTER})
+    return _instance.new(self:kind(), table.clone(self:info(), 3), { -- @note we need do deep clone
+        interpreter = self:interpreter(),
+        deduplicate = self._DEDUPLICATE,
+        enable_filter = self._ENABLE_FILTER})
 end
 
 -- new a scope instance

@@ -82,13 +82,13 @@ end
 function _check_try_running(flags, opt, islinker)
 
     -- get extension
-    -- @note we need detect extension for ndk/clang++.exe: warning: treating 'c' input as 'c++' when in C++ mode, this behavior is deprecated [-Wdeprecated]
+    -- @note we need to detect extension for ndk/clang++.exe: warning: treating 'c' input as 'c++' when in C++ mode, this behavior is deprecated [-Wdeprecated]
     local extension = opt.program:endswith("++") and ".cpp" or (table.wrap(language.sourcekinds()[opt.toolkind or "cc"])[1] or ".c")
 
     -- make an stub source file
     local sourcefile = path.join(os.tmpdir(), "detect", "sdcc_has_flags" .. extension)
     if not os.isfile(sourcefile) then
-        io.writefile(sourcefile, "int main(int argc, char** argv)\n{return 0;}")
+        io.writefile(sourcefile, "int main(int argc, char** argv)\n{return 0;}\n")
     end
 
     -- check flags for linker

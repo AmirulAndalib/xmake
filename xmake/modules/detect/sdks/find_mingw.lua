@@ -34,11 +34,15 @@ function _find_mingwdir(sdkdir)
         if is_host("macosx", "linux") and os.isdir("/opt/llvm-mingw") then
             sdkdir = "/opt/llvm-mingw"
         elseif is_host("macosx") and os.isdir("/usr/local/opt/mingw-w64") then
+            -- for macOS Intel
             sdkdir = "/usr/local/opt/mingw-w64"
+        elseif is_host("macosx") and os.isdir("/opt/homebrew/opt/mingw-w64") then
+            -- for Apple Silicon
+            sdkdir = "/opt/homebrew/opt/mingw-w64"
         elseif is_host("linux") then
             sdkdir = "/usr"
-        elseif is_subhost("msys") then
-            local mingw_prefix = os.getenv("MINGW_PREFIX")
+        else
+            local mingw_prefix = is_subhost("msys") and os.getenv("MINGW_PREFIX") or os.getenv("LLVM_MINGW_DIR") or os.getenv("LLVM_MINGW_ROOT")
             if mingw_prefix and os.isdir(mingw_prefix) then
                 sdkdir = mingw_prefix
             end

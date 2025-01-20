@@ -18,40 +18,44 @@ function Enter-XrepoEnvironment {
         $script:xrepoOldEnvs = (Get-ChildItem -Path Env:);
 
         if (-not $bnd) {
-            & $Env:XMAKE_EXE lua private.xrepo.action.env.info config;
+            & $Env:XMAKE_PROGRAM_FILE lua private.xrepo.action.env.info config;
             if (-not $?) {
                 Exit 1;
             }
 
             $xmakeColorTermBackup, $Env:XMAKE_COLORTERM = $Env:XMAKE_COLORTERM, "nocolor";
-            $xrepoPrompt = (& $Env:XMAKE_EXE lua --quiet private.xrepo.action.env.info prompt | Out-String);
+            $xrepoPrompt = (& $Env:XMAKE_PROGRAM_FILE lua --quiet private.xrepo.action.env.info prompt | Out-String);
             $Env:XMAKE_COLORTERM = $xmakeColorTermBackup;
             if (-not $xrepoPrompt.StartsWith("[")) {
                 Write-Host "error: xmake.lua not found!";
                 Exit 1;
             }
 
-            $activateCommand = (& $Env:XMAKE_EXE lua --quiet private.xrepo.action.env.info script.powershell | Out-String);
+            $activateCommand = (& $Env:XMAKE_PROGRAM_FILE lua --quiet private.xrepo.action.env.info script.powershell | Out-String);
         } else {
-            & $Env:XMAKE_EXE lua private.xrepo.action.env.info config $bnd;
+            Push-Location $Env:XMAKE_ROOTDIR;
+            & $Env:XMAKE_PROGRAM_FILE lua private.xrepo.action.env.info config $bnd;
             if (-not $?) {
+                Pop-Location;
                 Exit 1;
             }
 
             $xmakeColorTermBackup, $Env:XMAKE_COLORTERM = $Env:XMAKE_COLORTERM, "nocolor";
-            $xrepoPrompt = (& $Env:XMAKE_EXE lua --quiet private.xrepo.action.env.info prompt $bnd | Out-String);
+            $xrepoPrompt = (& $Env:XMAKE_PROGRAM_FILE lua --quiet private.xrepo.action.env.info prompt $bnd | Out-String);
             $Env:XMAKE_COLORTERM = $xmakeColorTermBackup;
             if (-not $xrepoPrompt.StartsWith("[")) {
+                Pop-Location;
                 Write-Host "error: invalid environment!";
                 Exit 1;
             }
 
-            $activateCommand = (& $Env:XMAKE_EXE lua --quiet private.xrepo.action.env.info script.powershell $bnd | Out-String);
+            $activateCommand = (& $Env:XMAKE_PROGRAM_FILE lua --quiet private.xrepo.action.env.info script.powershell $bnd | Out-String);
         }
 
         Write-Verbose "[xrepo env script.powershell]`n$activateCommand";
         Invoke-Expression -Command $activateCommand;
 
+        if ($bnd) { Pop-Location; }
         $Env:XMAKE_PROMPT_MODIFIER = $xrepoPrompt.Trim() + " ";
     }
     process {}

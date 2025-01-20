@@ -23,7 +23,7 @@ import("core.base.option")
 import("core.project.config")
 import("core.project.project")
 import("private.async.jobpool")
-import("private.async.runjobs")
+import("async.runjobs")
 import("private.utils.batchcmds")
 import("core.base.hashset")
 import("private.service.remote_cache.client", {alias = "remote_cache_client"})
@@ -48,24 +48,24 @@ function _add_batchjobs_builtin(batchjobs, rootjob, target)
             if r:extraconf("build", "batch") then
                 job, job_leaf = assert(script(target, batchjobs, {rootjob = job or rootjob}), "rule(%s):on_build(): no returned job!", r:name())
             else
-                job = batchjobs:addjob("rule/" .. r:name() .. "/build", function (index, total)
-                    script(target, {progress = (index * 100) / total})
+                job = batchjobs:addjob("rule/" .. r:name() .. "/build", function (index, total, opt)
+                    script(target, {progress = opt.progress})
                 end, {rootjob = job or rootjob})
             end
         else
             local buildcmd = r:script("buildcmd")
             if buildcmd then
-                job = batchjobs:addjob("rule/" .. r:name() .. "/build", function (index, total)
+                job = batchjobs:addjob("rule/" .. r:name() .. "/build", function (index, total, opt)
                     local batchcmds_ = batchcmds.new({target = target})
-                    buildcmd(target, batchcmds_, {progress =  (index * 100) / total})
-                    batchcmds_:runcmds({dryrun = option.get("dry-run")})
+                    buildcmd(target, batchcmds_, {progress = opt.progress})
+                    batchcmds_:runcmds({changed = target:is_rebuilt(), dryrun = option.get("dry-run")})
                 end, {rootjob = job or rootjob})
             end
         end
     end
 
     -- uses the builtin target script
-    if not job and (target:is_static() or target:is_binary() or target:is_shared() or target:is_object()) then
+    if not job and (target:is_static() or target:is_binary() or target:is_shared() or target:is_object() or target:is_moduleonly()) then
         job, job_leaf = import("kinds." .. target:kind(), {anonymous = true})(batchjobs, rootjob, target)
     end
     job = job or rootjob
@@ -100,8 +100,8 @@ function _add_batchjobs(batchjobs, rootjob, target)
         --         print("build it")
         --     end)
         --
-        job = batchjobs:addjob(target:name() .. "/build", function (index, total)
-            script(target, {progress = (index * 100) / total})
+        job = batchjobs:addjob(target:name() .. "/build", function (index, total, opt)
+            script(target, {progress = opt.progress})
         end, {rootjob = rootjob})
     end
     return job, job_leaf or job
@@ -116,11 +116,12 @@ function _add_batchjobs_for_target(batchjobs, rootjob, target)
     end
 
     -- add after_build job for target
-    local oldenvs
-    local job_build_after = batchjobs:addjob(target:name() .. "/after_build", function (index, total)
+    local pkgenvs = _g.pkgenvs or {}
+    _g.pkgenvs = pkgenvs
+    local job_build_after = batchjobs:addjob(target:name() .. "/after_build", function (index, total, opt)
 
         -- do after_build
-        local progress = (index * 100) / total
+        local progress = opt.progress
         local after_build = target:script("build_after")
         if after_build then
             after_build(target, {progress = progress})
@@ -134,14 +135,21 @@ function _add_batchjobs_for_target(batchjobs, rootjob, target)
                 if after_buildcmd then
                     local batchcmds_ = batchcmds.new({target = target})
                     after_buildcmd(target, batchcmds_, {progress = progress})
-                    batchcmds_:runcmds({dryrun = option.get("dry-run")})
+                    batchcmds_:runcmds({changed = target:is_rebuilt(), dryrun = option.get("dry-run")})
                 end
             end
         end
 
         -- restore environments
-        if oldenvs then
-            os.setenvs(oldenvs)
+        if target:pkgenvs() then
+            pkgenvs.oldenvs = pkgenvs.oldenvs or os.getenvs()
+            pkgenvs.newenvs = pkgenvs.newenvs or {}
+            pkgenvs.newenvs[target] = nil
+            local newenvs = pkgenvs.oldenvs
+            for _, envs in pairs(pkgenvs.newenvs) do
+                newenvs = os.joinenvs(envs, newenvs)
+            end
+            os.setenvs(newenvs)
         end
 
     end, {rootjob = rootjob})
@@ -150,19 +158,33 @@ function _add_batchjobs_for_target(batchjobs, rootjob, target)
     local job_build, job_build_leaf = _add_batchjobs(batchjobs, job_build_after, target)
 
     -- add before_build job for target
-    local job_build_before = batchjobs:addjob(target:name() .. "/before_build", function (index, total)
+    local job_build_before = batchjobs:addjob(target:name() .. "/before_build", function (index, total, opt)
 
         -- enter package environments
-        oldenvs = os.addenvs(target:pkgenvs())
+        -- https://github.com/xmake-io/xmake/issues/4033
+        --
+        -- maybe mixing envs isn't a great solution,
+        -- but it's the most efficient compromise compared to setting envs in every on_build_file.
+        --
+        if target:pkgenvs() then
+            pkgenvs.oldenvs = pkgenvs.oldenvs or os.getenvs()
+            pkgenvs.newenvs = pkgenvs.newenvs or {}
+            pkgenvs.newenvs[target] = target:pkgenvs()
+            local newenvs = pkgenvs.oldenvs
+            for _, envs in pairs(pkgenvs.newenvs) do
+                newenvs = os.joinenvs(envs, newenvs)
+            end
+            os.setenvs(newenvs)
+        end
 
         -- clean target if rebuild
-        if option.get("rebuild") and not option.get("dry-run") then
+        if target:is_rebuilt() and not option.get("dry-run") then
             _clean_target(target)
         end
 
         -- do before_build
         -- we cannot add batchjobs for this rule scripts, @see https://github.com/xmake-io/xmake/issues/2684
-        local progress = (index * 100) / total
+        local progress = opt.progress
         local before_build = target:script("build_before")
         if before_build then
             before_build(target, {progress = progress})
@@ -176,7 +198,7 @@ function _add_batchjobs_for_target(batchjobs, rootjob, target)
                 if before_buildcmd then
                     local batchcmds_ = batchcmds.new({target = target})
                     before_buildcmd(target, batchcmds_, {progress = progress})
-                    batchcmds_:runcmds({dryrun = option.get("dry-run")})
+                    batchcmds_:runcmds({changed = target:is_rebuilt(), dryrun = option.get("dry-run")})
                 end
             end
         end
@@ -185,7 +207,7 @@ function _add_batchjobs_for_target(batchjobs, rootjob, target)
 end
 
 -- add batch jobs for the given target and deps
-function _add_batchjobs_for_target_and_deps(batchjobs, rootjob, jobrefs, target)
+function _add_batchjobs_for_target_and_deps(batchjobs, rootjob, target, jobrefs, jobrefs_before)
     local targetjob_ref = jobrefs[target:name()]
     if targetjob_ref then
         batchjobs:add(targetjob_ref, rootjob)
@@ -193,30 +215,44 @@ function _add_batchjobs_for_target_and_deps(batchjobs, rootjob, jobrefs, target)
         local job_build_before, job_build, job_build_after = _add_batchjobs_for_target(batchjobs, rootjob, target)
         if job_build_before and job_build and job_build_after then
             jobrefs[target:name()] = job_build_after
+            jobrefs_before[target:name()] = job_build_before
             for _, depname in ipairs(target:get("deps")) do
-                local dep = project.target(depname)
+                local dep = project.target(depname, {namespace = target:namespace()})
                 local targetjob = job_build
                 -- @see https://github.com/xmake-io/xmake/discussions/2500
                 if dep:policy("build.across_targets_in_parallel") == false then
                     targetjob = job_build_before
                 end
-                _add_batchjobs_for_target_and_deps(batchjobs, targetjob, jobrefs, dep)
+                _add_batchjobs_for_target_and_deps(batchjobs, targetjob, dep, jobrefs, jobrefs_before)
             end
         end
     end
 end
 
--- get batch jobs, @note we need export it for private.diagnosis.dump_buildjobs
-function get_batchjobs(targetname, group_pattern)
+-- get batch jobs, @note we need to export it for private.diagnosis.dump_buildjobs
+function get_batchjobs(targetnames, group_pattern)
 
     -- get root targets
     local targets_root = {}
-    if targetname then
-        table.insert(targets_root, project.target(targetname))
+    if targetnames then
+        for _, targetname in ipairs(table.wrap(targetnames)) do
+            local target = project.target(targetname)
+            if target then
+                table.insert(targets_root, target)
+                if option.get("rebuild") then
+                    target:data_set("rebuilt", true)
+                    if not option.get("shallow") then
+                        for _, dep in ipairs(target:orderdeps()) do
+                            dep:data_set("rebuilt", true)
+                        end
+                    end
+                end
+            end
+        end
     else
         local depset = hashset.new()
         local targets = {}
-        for _, target in pairs(project.targets()) do
+        for _, target in ipairs(project.ordertargets()) do
             if target:is_enabled() then
                 local group = target:get("group")
                 if (target:is_default() and not group_pattern) or option.get("all") or (group_pattern and group and group:match(group_pattern)) then
@@ -227,24 +263,44 @@ function get_batchjobs(targetname, group_pattern)
                 end
             end
         end
-        for _, target in pairs(targets) do
+        for _, target in ipairs(targets) do
             if not depset:has(target:name()) then
                 table.insert(targets_root, target)
+            end
+            if option.get("rebuild") then
+                target:data_set("rebuilt", true)
             end
         end
     end
 
     -- generate batch jobs for default or all targets
     local jobrefs = {}
+    local jobrefs_before = {}
     local batchjobs = jobpool.new()
-    for _, target in pairs(targets_root) do
-        _add_batchjobs_for_target_and_deps(batchjobs, batchjobs:rootjob(), jobrefs, target)
+    for _, target in ipairs(targets_root) do
+        _add_batchjobs_for_target_and_deps(batchjobs, batchjobs:rootjob(), target, jobrefs, jobrefs_before)
     end
+
+    -- add fence jobs, @see https://github.com/xmake-io/xmake/issues/5003
+    for _, target in ipairs(project.ordertargets()) do
+        local target_job_before = jobrefs_before[target:name()]
+        if target_job_before then
+            for _, dep in ipairs(target:orderdeps()) do
+                if dep:policy("build.fence") then
+                    local fence_job = jobrefs[dep:name()]
+                    if fence_job then
+                        batchjobs:add(fence_job, target_job_before)
+                    end
+                end
+            end
+        end
+    end
+
     return batchjobs
 end
 
 -- the main entry
-function main(targetname, group_pattern)
+function main(targetnames, group_pattern)
 
     -- enable distcc?
     local distcc
@@ -253,7 +309,7 @@ function main(targetname, group_pattern)
     end
 
     -- build all jobs
-    local batchjobs = get_batchjobs(targetname, group_pattern)
+    local batchjobs = get_batchjobs(targetnames, group_pattern)
     if batchjobs and batchjobs:size() > 0 then
         local curdir = os.curdir()
         runjobs("build", batchjobs, {on_exit = function (errors)
@@ -261,11 +317,7 @@ function main(targetname, group_pattern)
             if errors and progress.showing_without_scroll() then
                 print("")
             end
-        end, comax = option.get("jobs") or 1, curdir = curdir, count_as_index = true, distcc = distcc})
+        end, comax = option.get("jobs") or 1, curdir = curdir, distcc = distcc})
         os.cd(curdir)
     end
 end
-
-
-
-

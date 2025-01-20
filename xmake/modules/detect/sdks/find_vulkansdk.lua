@@ -24,32 +24,20 @@ import("lib.detect.find_file")
 import("lib.detect.find_path")
 import("lib.detect.find_library")
 import("lib.detect.find_programver")
+import("lib.detect.find_package")
 
--- find vulkansdk
---
--- @param opt   the package options. e.g. see the options of find_package()
---
--- @return      see the return value of find_package()
---
-function main(opt)
-
-    -- init option
+-- find vulkan from paths
+function _find_vulkan_from_paths(paths, opt)
     opt = opt or {}
-
-    -- init search configs
-    local paths =
-    {
-        "$(env VK_SDK_PATH)",
-        "$(env VULKAN_SDK)"
-    }
     local arch = opt.arch or config.arch() or os.arch()
+    local plat = opt.plat or config.plat() or os.host()
     local binsuffix = ((is_host("windows") and arch == "x86") and "bin32" or "bin")
     local libname = (is_host("windows") and "vulkan-1" or "vulkan")
     local libsuffix = ((is_host("windows") and arch == "x86") and "lib32" or "lib")
 
     -- find library
     local result = {links = {}, linkdirs = {}, includedirs = {}}
-    local linkinfo = find_library(libname, paths, {suffixes = {libsuffix}})
+    local linkinfo = find_library(libname, paths, {suffixes = {libsuffix}, plat = plat})
     if linkinfo then
         result.sdkdir = path.directory(linkinfo.linkdir)
         result.bindir = path.join(result.sdkdir, binsuffix)
@@ -84,7 +72,42 @@ function main(opt)
         local apiver = find_programver(vkinfo, {command = "--summary", parse = "Vulkan Instance Version: (%d+%.%d+%.%d+)"})
         result.apiversion = apiver
     end
+    return result
+end
 
-    -- return
+-- find vulkan from system
+function _find_vulkan_from_system(opt)
+    local result = find_package("pkgconfig::vulkan", table.join({version = true}, opt))
+    if result then
+        result.apiversion = result.version
+        result.version = nil
+        if not result.apiversion then
+            local apiver = find_programver("vulkaninfo", {command = "--summary", parse = "Vulkan Instance Version: (%d+%.%d+%.%d+)"})
+            result.apiversion = apiver
+        end
+    end
+    return result
+end
+
+-- find vulkansdk
+--
+-- @param opt   the package options. e.g. see the options of find_package()
+--
+-- @return      see the return value of find_package()
+--
+function main(opt)
+    local paths = {
+        "$(env VK_SDK_PATH)",
+        "$(env VULKAN_SDK)"
+    }
+    local result = _find_vulkan_from_paths(paths, opt)
+    if not result then
+        result = _find_vulkan_from_system(opt)
+    end
+    if not result and is_host("linux") then
+        -- we attempt to find vulkan from /usr, e.g. /usr/include/vulkan/vulkan.h
+        paths = {"/usr", "/usr/local"}
+        result = _find_vulkan_from_paths(paths, opt)
+    end
     return result
 end

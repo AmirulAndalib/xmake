@@ -56,14 +56,14 @@ function main (target, opt)
         -- copy dependent dynamic libraries and frameworks
         for _, dep in ipairs(target:orderdeps()) do
             if dep:kind() == "shared" then
+                if not os.isdir(frameworksdir) then
+                    os.mkdir(frameworksdir)
+                end
                 local frameworkdir = dep:data("xcode.bundle.rootdir")
                 if dep:rule("xcode.framework") and frameworkdir then
-                    if not os.isdir(frameworkdir) then
-                        os.mkdir(frameworksdir)
-                    end
                     os.cp(frameworkdir, frameworksdir, {symlink = true})
                 else
-                    os.vcp(dep:targetfile(), binarydir)
+                    os.vcp(dep:targetfile(), frameworksdir)
                 end
             end
         end
@@ -106,6 +106,6 @@ function main (target, opt)
         end
         codesign(bundledir, codesign_identity, mobile_provision, {deep = true})
 
-    end, {dependfile = target:dependfile(bundledir), files = {bundledir, target:targetfile()}})
+    end, {dependfile = target:dependfile(bundledir), files = {bundledir, target:targetfile()}, changed = target:is_rebuilt()})
 end
 

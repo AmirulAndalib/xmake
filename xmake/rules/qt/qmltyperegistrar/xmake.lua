@@ -22,9 +22,9 @@ rule("qt.qmltyperegistrar")
     add_deps("qt.env")
     set_extensions(".h", ".hpp")
 
-    on_load(function(target)
+    on_config(function(target)
         -- get qt
-        local qt = assert(target:data("qt"), "qt not found!")
+        local qt = assert(target:data("qt"), "Qt not found!")
 
         -- get qmltyperegistrar
         local qmltyperegistrar = path.join(qt.bindir, is_host("windows") and "qmltyperegistrar.exe" or "qmltyperegistrar")
@@ -93,7 +93,7 @@ rule("qt.qmltyperegistrar")
         end
 
         local args = {
-            "--generate-qmltypes=" .. target:get("targetdir") .. "/plugin.qmltypes", 
+            "--generate-qmltypes=" .. target:get("targetdir") .. "/plugin.qmltypes",
             "--import-name=" .. importname,
             "--major-version=" .. majorversion,
             "--minor-version=" .. minorversion,
@@ -102,7 +102,7 @@ rule("qt.qmltyperegistrar")
 
         -- gen sourcefile
         batchcmds:show_progress(opt.progress, "${color.build.object}generating.qt.qmltyperegistrar %s", path.filename(sourcefile))
-        qmltype_source = os.vrunv(qmltyperegistrar, table.join(args, metatypefiles))
+        batchcmds:vrunv(qmltyperegistrar, table.join(args, metatypefiles))
 
         -- add objectfile
         local objectfile = target:objectfile(sourcefile)
@@ -118,8 +118,8 @@ rule("qt.qmltyperegistrar")
     end)
 
     after_build(function(target)
-        local qmldir = path.join(target:scriptdir(), target:values("qt.qmlplugin.qmldirfile"))
+        local qmldir = target:values("qt.qmlplugin.qmldirfile")
         if qmldir then
-            os.cp(qmldir, target:targetdir())
+            os.cp(path.join(target:scriptdir(), qmldir), target:targetdir())
         end
     end)

@@ -42,6 +42,18 @@ function _try_running(program, argv, opt)
     return try { function () os.runv(program, argv, opt); return true end, catch { function (errs) errors = (errs or ""):trim() end }}, errors
 end
 
+-- attempt to check it from known flags
+function _check_from_knownargs(flags, opt, islinker)
+    local flag = flags[1]
+    if not islinker then
+        if flag:startswith("-D") or
+           flag:startswith("-U") or
+           flag:startswith("-I") then
+            return true
+        end
+    end
+end
+
 -- attempt to check it from the argument list
 function _check_from_arglist(flags, opt, islinker)
     local key = "detect.tools.gcc." .. (islinker and "has_ldflags" or "has_cflags")
@@ -69,7 +81,7 @@ end
 
 -- get extension
 function _get_extension(opt)
-    -- @note we need detect extension for ndk/clang++.exe: warning: treating 'c' input as 'c++' when in C++ mode, this behavior is deprecated [-Wdeprecated]
+    -- @note we need to detect extension for ndk/clang++.exe: warning: treating 'c' input as 'c++' when in C++ mode, this behavior is deprecated [-Wdeprecated]
     return (opt.program:endswith("++") or opt.flagkind == "cxxflags") and ".cpp" or (table.wrap(language.sourcekinds()[opt.toolkind or "cc"])[1] or ".c")
 end
 
@@ -77,7 +89,7 @@ end
 function _check_try_running(flags, opt, islinker)
 
     -- make an stub source file
-    local snippet = opt.snippet or "int main(int argc, char** argv)\n{return 0;}"
+    local snippet = opt.snippet or "int main(int argc, char** argv)\n{return 0;}\n"
     local sourcefile = os.tmpfile("gcc_has_flags:" .. snippet) .. _get_extension(opt)
     if not os.isfile(sourcefile) then
         io.writefile(sourcefile, snippet)
@@ -107,8 +119,13 @@ function main(flags, opt)
     local islinker = _islinker(flags, opt)
 
     -- attempt to check it from the argument list
-    if not opt.tryrun and _check_from_arglist(flags, opt, islinker) then
-        return true
+    if not opt.tryrun then
+        if _check_from_arglist(flags, opt, islinker) then
+            return true
+        end
+        if _check_from_knownargs(flags, opt, islinker) then
+            return true
+        end
     end
 
     -- try running to check it

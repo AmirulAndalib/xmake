@@ -21,10 +21,10 @@
 rule("qt.qrc")
     add_deps("qt.env")
     set_extensions(".qrc")
-    on_load(function (target)
+    on_config(function (target)
 
         -- get rcc
-        local qt = assert(target:data("qt"), "qt not found!")
+        local qt = assert(target:data("qt"), "Qt not found!")
         local rcc = path.join(qt.bindir, is_host("windows") and "rcc.exe" or "rcc")
         if not os.isexec(rcc) and qt.libexecdir then
             rcc = path.join(qt.libexecdir, is_host("windows") and "rcc.exe" or "rcc")
@@ -44,7 +44,7 @@ rule("qt.qrc")
         local rcc = target:data("qt.rcc")
 
         -- get c++ source file for qrc
-        local sourcefile_cpp = path.join(target:autogendir(), "rules", "qt", "qrc", path.basename(sourcefile_qrc) .. ".cpp")
+        local sourcefile_cpp = path.join(target:autogendir(), "rules", "qt", "qrc", path.basename(sourcefile_qrc).. "_" .. hash.strhash32(sourcefile_qrc) .. ".cpp")
         local sourcefile_dir = path.directory(sourcefile_cpp)
 
         -- add objectfile

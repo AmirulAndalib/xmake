@@ -21,6 +21,7 @@
 -- imports
 import("lib.detect.find_program")
 import("lib.detect.find_programver")
+import("core.cache.detectcache")
 
 -- find gcc
 --
@@ -36,28 +37,24 @@ import("lib.detect.find_programver")
 -- @endcode
 --
 function main(opt)
-
-    -- init options
     opt = opt or {}
-
-    -- find program
     local program = find_program(opt.program or "gcc", opt)
-
-    -- find program version
     local version = nil
     if program and opt.version then
         version = find_programver(program, opt)
     end
 
-    -- is clang or gcc
     local is_clang = false
-    if program then
-        local versioninfo = os.iorunv(program, {"--version"})
+    if program and is_host("macosx") then
+        local cachekey = "find_gcc_versioninfo_" .. program
+        local versioninfo = detectcache:get(cachekey)
+        if versioninfo == nil then
+            versioninfo = os.iorunv(program, {"--version"}, {envs = opt.envs})
+            detectcache:set(cachekey, versioninfo)
+        end
         if versioninfo and versioninfo:find("clang", 1, true) then
             is_clang = true
         end
     end
-
-    -- ok?
     return program, version, (is_clang and "clang" or "gcc")
 end

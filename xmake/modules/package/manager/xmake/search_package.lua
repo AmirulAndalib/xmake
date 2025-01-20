@@ -20,8 +20,41 @@
 
 -- imports
 import("core.base.semver")
-import("core.package.package", {alias = "core_package"})
-import("private.action.require.impl.repository")
+import("private.xrepo.quick_search.cache")
+
+function _search_package(packages, name, opt)
+    for _, packageinfo in ipairs(cache.find(name, {description = opt.description ~= false})) do
+        local packagename = packageinfo.name
+        local packagedata = packageinfo.data
+
+        local version
+        local versions = packagedata.versions
+        if versions then
+            versions = table.copy(versions)
+            table.sort(versions, function (a, b) return semver.compare(a, b) > 0 end)
+            if opt.require_version then
+                for _, ver in ipairs(versions) do
+                    if semver.satisfies(ver, opt.require_version) then
+                        version = ver
+                    end
+                end
+            else
+                version = versions[1]
+            end
+        end
+
+        local description = packagedata.description
+        if description then
+            description = description:gsub(string.ipattern(name), function (w)
+                return "${bright}" .. w .. "${clear}"
+            end)
+        end
+
+        if not opt.require_version or version then
+            packages[packagename] = {name = packagename, version = version, description = description, reponame = packagedata.reponame}
+        end
+    end
+end
 
 -- search package using the xmake package manager
 --
@@ -30,28 +63,12 @@ import("private.action.require.impl.repository")
 --
 function main(name, opt)
     opt = opt or {}
+    local packages = {}
+    _search_package(packages, name, opt)
+
     local results = {}
-    for _, packageinfo in ipairs(repository.searchdirs(name)) do
-        local package = core_package.load_from_repository(packageinfo.name, packageinfo.repo, packageinfo.packagedir)
-        if package then
-            local repo = package:repo()
-            local version
-            local versions = package:versions()
-            if versions then
-                versions = table.copy(versions)
-                table.sort(versions, function (a, b) return semver.compare(a, b) > 0 end)
-                if opt.require_version then
-                    for _, ver in ipairs(versions) do
-                        if semver.satisfies(ver, opt.require_version) then
-                            version = ver
-                        end
-                    end
-                else
-                    version = versions[1]
-                end
-            end
-            table.insert(results, {name = package:name(), version = version, description = package:get("description"), reponame = repo and repo:name()})
-        end
+    for name, info in table.orderpairs(packages) do
+        table.insert(results, info)
     end
     return results
 end

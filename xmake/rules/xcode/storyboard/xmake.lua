@@ -18,7 +18,6 @@
 -- @file        xmake.lua
 --
 
--- define rule
 rule("xcode.storyboard")
 
     -- support add_files("*.storyboard")
@@ -46,7 +45,7 @@ rule("xcode.storyboard")
 
         -- need re-compile it?
         local dependfile = target:dependfile(sourcefile)
-        local dependinfo = option.get("rebuild") and {} or (depend.load(dependfile) or {})
+        local dependinfo = target:is_rebuilt() and {} or (depend.load(dependfile) or {})
         if not depend.is_changed(dependinfo, {lastmtime = os.mtime(dependfile)}) then
             return
         end
@@ -56,6 +55,7 @@ rule("xcode.storyboard")
 
         -- clear Base.lproj first
         os.tryrm(base_lproj)
+        os.mkdir(base_lproj)
 
         -- do compile
         local target_minver = nil

@@ -2,12 +2,12 @@
 set_project("xmake")
 
 -- version
-set_version("2.7.7", {build = "%Y%m%d"})
+set_version("2.9.7", {build = "%Y%m%d"})
 
 -- set xmake min version
-set_xmakever("2.2.3")
+set_xmakever("2.8.5")
 
--- set warning all as error
+-- set all warnings as errors
 set_warnings("all", "error")
 
 -- set language: c99, c++11
@@ -25,7 +25,7 @@ end
 -- disable some compiler errors
 add_cxflags("-Wno-error=deprecated-declarations", "-fno-strict-aliasing", "-Wno-error=nullability-completeness", "-Wno-error=parentheses-equality")
 
--- add defines
+-- add definitions
 add_defines("_GNU_SOURCE=1", "_FILE_OFFSET_BITS=64", "_LARGEFILE_SOURCE")
 
 -- add vectorexts
@@ -38,8 +38,7 @@ end]]
 
 -- for the windows platform (msvc)
 if is_plat("windows") then
-    add_cxflags("-MT")
-    add_ldflags("-nodefaultlib:msvcrt.lib")
+    set_runtimes("MT")
     add_links("kernel32", "user32", "gdi32")
 end
 
@@ -47,6 +46,19 @@ end
 if is_mode("coverage") then
     add_ldflags("-coverage", "-fprofile-arcs", "-ftest-coverage")
 end
+
+-- set cosmocc toolchain, e.g. xmake f -p linux --cosmocc=y
+if has_config("cosmocc") then
+    add_requires("cosmocc")
+    set_toolchains("@cosmocc")
+    set_policy("build.ccache", false)
+end
+
+-- use cosmocc toolchain
+option("cosmocc", {default = false, description = "Use cosmocc toolchain to build once and run anywhere."})
+
+-- embed all script files
+option("embed", {default = false, description = "Embed all script files."})
 
 -- the runtime option
 option("runtime")
@@ -65,17 +77,36 @@ option_end()
 option("readline")
     set_description("Enable or disable readline library")
     add_links("readline")
-    add_cincludes("readline/readline.h")
+    add_cincludes("stdio.h", "readline/readline.h")
     add_cfuncs("readline")
     add_defines("XM_CONFIG_API_HAVE_READLINE")
+    add_deps("cosmocc")
+    after_check(function (option)
+        if option:dep("cosmocc"):enabled() then
+            option:enable(false)
+        end
+    end)
 option_end()
 
 -- the curses option
 option("curses")
     set_description("Enable or disable curses library")
-    add_links("curses")
-    add_cincludes("curses.h")
     add_defines("XM_CONFIG_API_HAVE_CURSES")
+    add_deps("cosmocc")
+    before_check(function (option)
+        if is_plat("mingw") then
+            option:add("cincludes", "ncursesw/curses.h")
+            option:add("links", "ncursesw")
+        else
+            option:add("cincludes", "curses.h")
+            option:add("links", "curses")
+        end
+    end)
+    after_check(function (option)
+        if option:dep("cosmocc"):enabled() then
+            option:enable(false)
+        end
+    end)
 option_end()
 
 -- the pdcurses option
@@ -99,7 +130,14 @@ if is_plat("windows") then
 end
 
 -- add projects
-includes("src/sv", "src/lz4", "src/tbox", "src/xmake", "src/demo")
+includes("src/sv", "src/lz4", "src/xmake", "src/cli")
+if namespace then
+    namespace("tbox", function ()
+        includes("src/tbox")
+    end)
+else
+    includes("src/tbox")
+end
 if has_config("lua_cjson") then
     includes("src/lua-cjson")
 end
@@ -110,4 +148,10 @@ else
 end
 if is_plat("windows") then
     includes("src/pdcurses")
+end
+
+-- add xpack
+includes("@builtin/xpack")
+if xpack then
+    includes("xpack.lua")
 end

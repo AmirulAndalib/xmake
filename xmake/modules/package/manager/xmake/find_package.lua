@@ -107,17 +107,33 @@ function _find_package_from_repo(name, opt)
         links = table.reverse_unique(links)
     else
         -- we scan links automatically
-        local found = false
+        local symrefs = {}
+        local libfiles = {}
         for _, libdir in ipairs(vars.linkdirs or "lib") do
             for _, file in ipairs(os.files(path.join(installdir, libdir, "*"))) do
-                if file:endswith(".lib") or file:endswith(".a") then
-                    found = true
-                    table.insert(links, target.linkname(path.filename(file), {plat = opt.plat}))
+                table.insert(libfiles, file)
+                if os.islink(file) then
+                    local reallink = os.readlink(file)
+                    if reallink then
+                        symrefs[reallink] = file
+                    end
                 end
             end
-            if not found then
-                for _, file in ipairs(os.files(path.join(installdir, libdir, "*"))) do
-                    if file:endswith(".so") or file:match(".+%.so%..+$") or file:endswith(".dylib") then -- maybe symlink to libxxx.so.1
+        end
+        local found = false
+        for _, file in ipairs(libfiles) do
+            if file:endswith(".lib") or file:endswith(".a") then
+                found = true
+                table.insert(links, target.linkname(path.filename(file), {plat = opt.plat}))
+            end
+        end
+        if not found then
+            for _, file in ipairs(libfiles) do
+                -- if this library file has been referenced (libfoo.so.1), e.g. libfoo.so -> libfoo.so.1,
+                -- we need ignore it and only use -lfoo
+                local filename = path.filename(file)
+                if not symrefs[filename] then
+                    if file:endswith(".so") or file:match(".+%.so%..+$") or file:endswith(".dylib") then
                         table.insert(links, target.linkname(path.filename(file), {plat = opt.plat}))
                     end
                 end
@@ -140,16 +156,26 @@ function _find_package_from_repo(name, opt)
             end
         end
         for _, file in ipairs(os.files(path.join(installdir, libdir, "*"))) do
-            if file:endswith(".so") or file:match(".+%.so%..+$") or file:endswith(".dylib") or file:endswith("*.dll") then -- maybe symlink to libxxx.so.1
+            if file:endswith(".so") or file:match(".+%.so%..+$") or file:endswith(".dylib") or file:endswith("*.dll") then
                 result.shared = true
                 table.insert(libfiles, file)
             end
         end
     end
     if opt.plat == "windows" or opt.plat == "mingw" then
-        for _, file in ipairs(os.files(path.join(installdir, "bin", "*.dll"))) do
-            result.shared = true
-            table.insert(libfiles, file)
+        local bindirs = opt.bindirs or "bin"
+        for _, bindir in ipairs(bindirs) do
+            for _, file in ipairs(os.files(path.join(installdir, bindir, "*.dll"))) do
+                result.shared = true
+                table.insert(libfiles, file)
+            end
+        end
+        -- @see https://github.com/xmake-io/xmake/issues/5325#issuecomment-2242513463
+        if not result.shared then
+            for _, file in ipairs(os.files(path.join(installdir, "**.dll"))) do
+                result.shared = true
+                table.insert(libfiles, file)
+            end
         end
     end
 
@@ -229,6 +255,7 @@ function _find_package_from_repo(name, opt)
     -- get version and license
     result.version = manifest.version or path.filename(path.directory(path.directory(manifest_file)))
     result.license = manifest.license
+    result.extras  = manifest.extras
     return result
 end
 
@@ -336,5 +363,6 @@ function main(name, opt)
     if not result and opt.packagedirs then
         result = _find_package_from_packagedirs(name, opt)
     end
+
     return result
 end

@@ -20,29 +20,36 @@
 
 -- define rule: protobuf.cpp
 rule("protobuf.cpp")
+    add_deps("c++")
     set_extensions(".proto")
-    on_load(function(target)
+    after_load(function(target)
         import("proto").load(target, "cxx")
     end)
-    before_buildcmd_file(function (target, batchcmds, sourcefile_proto, opt)
-        import("proto").buildcmd(target, batchcmds, sourcefile_proto, opt, "cxx")
+    -- generate build commands
+    before_buildcmd_file(function(target, batchcmds, sourcefile_proto, opt)
+        import("proto").buildcmd_pfiles(target, batchcmds, sourcefile_proto, opt, "cxx")
+    end)
+    on_buildcmd_file(function(target, batchcmds, sourcefile_proto, opt)
+        import("proto").buildcmd_cxfiles(target, batchcmds, sourcefile_proto, opt, "cxx")
     end)
     before_build_files(function (target, batchjobs, sourcebatch, opt)
-        import("proto").build_batchjobs(target, batchjobs, sourcebatch, opt, "cxx")
+        import("proto").build_cxfiles(target, batchjobs, sourcebatch, opt, "cxx")
     end, {batch = true})
 
 
 -- define rule: protobuf.c
 rule("protobuf.c")
+    add_deps("c++")
     set_extensions(".proto")
-    on_load(function(target)
+    after_load(function(target)
         import("proto").load(target, "cc")
     end)
-    before_buildcmd_file(function (target, batchcmds, sourcefile_proto, opt)
-        import("proto").buildcmd(target, batchcmds, sourcefile_proto, opt, "cc")
+    before_buildcmd_file(function(target, batchcmds, sourcefile_proto, opt)
+        import("proto").buildcmd_pfiles(target, batchcmds, sourcefile_proto, opt, "cc")
+    end)
+    on_buildcmd_file(function(target, batchcmds, sourcefile_proto, opt)
+        import("proto").buildcmd_cxfiles(target, batchcmds, sourcefile_proto, opt, "cc")
     end)
     before_build_files(function (target, batchjobs, sourcebatch, opt)
-        import("proto").build_batchjobs(target, batchjobs, sourcebatch, opt, "cc")
+        import("proto").build_cxfiles(target, batchjobs, sourcebatch, opt, "cc")
     end, {batch = true})
-
-

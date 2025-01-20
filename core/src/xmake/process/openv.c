@@ -30,7 +30,7 @@
  */
 #include "prefix.h"
 #include "../io/prefix.h"
-#if defined(TB_CONFIG_OS_MACOSX) || defined(TB_CONFIG_OS_LINUX) || defined(TB_CONFIG_OS_BSD) || defined(TB_CONFIG_OS_HAIKU)
+#if defined(TB_CONFIG_OS_MACOSX) || defined(TB_CONFIG_OS_LINUX) || defined(TB_CONFIG_OS_BSD) || defined(TB_CONFIG_OS_HAIKU) || defined(TB_COMPILER_IS_MINGW)
 #   include <signal.h>
 #endif
 
@@ -329,7 +329,7 @@ tb_int_t xm_process_openv(lua_State* lua)
     // set the new environments
     if (envn > 0) attr.envp = envs;
 
-    /* we need ignore SIGINT and SIGQUIT if we enter exclusive mode
+    /* we need to ignore SIGINT and SIGQUIT if we enter exclusive mode
      * @see https://github.com/xmake-io/xmake/discussions/2893
      */
 #if defined(SIGINT)

@@ -36,7 +36,7 @@ function cleanup()
         return
     end
 
-    -- mark as posted first, avoid to post it repeatly
+    -- mark as posted first, avoid posting it repeatly
     io.writefile(markfile, "ok")
 
     -- init argument list
@@ -54,7 +54,7 @@ function cleanup()
     try
     {
         function ()
-            process.openv("xmake", argv, {stdout = path.join(os.tmpdir(), "cleaner.log"), detach = true}):close()
+            process.openv(os.programfile(), argv, {stdout = path.join(os.tmpdir(), "cleaner.log"), detach = true}):close()
         end
     }
 end

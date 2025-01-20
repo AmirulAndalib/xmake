@@ -28,8 +28,8 @@ import("private.tools.gcc.parse_deps", {alias = "parse_deps_gcc"})
 import("private.tools.armcc.parse_deps", {alias = "parse_deps_armcc"})
 
 -- load depfiles
-function _load_depfiles(parser, dependinfo, depfiles)
-    depfiles = parser(depfiles, dependinfo)
+function _load_depfiles(parser, dependinfo, depfiles, opt)
+    depfiles = parser(depfiles, opt)
     if depfiles then
         if dependinfo.files then
             table.join2(dependinfo.files, depfiles)
@@ -40,7 +40,7 @@ function _load_depfiles(parser, dependinfo, depfiles)
 end
 
 -- load dependent info from the given file (.d)
-function load(dependfile)
+function load(dependfile, opt)
 
     if os.isfile(dependfile) then
         -- may be the depend file has been incomplete when if the compilation process is abnormally interrupted
@@ -48,19 +48,19 @@ function load(dependfile)
         if dependinfo then
             -- attempt to load depfiles from the compilers
             if dependinfo.depfiles_gcc then
-                _load_depfiles(parse_deps_gcc, dependinfo, dependinfo.depfiles_gcc)
+                _load_depfiles(parse_deps_gcc, dependinfo, dependinfo.depfiles_gcc, opt)
                 dependinfo.depfiles_gcc = nil
             elseif dependinfo.depfiles_cl_json then
-                _load_depfiles(parse_deps_cl_json, dependinfo, dependinfo.depfiles_cl_json)
+                _load_depfiles(parse_deps_cl_json, dependinfo, dependinfo.depfiles_cl_json, opt)
                 dependinfo.depfiles_cl_json = nil
             elseif dependinfo.depfiles_cl then
-                _load_depfiles(parse_deps_cl, dependinfo, dependinfo.depfiles_cl)
+                _load_depfiles(parse_deps_cl, dependinfo, dependinfo.depfiles_cl, opt)
                 dependinfo.depfiles_cl = nil
             elseif dependinfo.depfiles_rc then
-                _load_depfiles(parse_deps_rc, dependinfo, dependinfo.depfiles_rc)
+                _load_depfiles(parse_deps_rc, dependinfo, dependinfo.depfiles_rc, opt)
                 dependinfo.depfiles_rc = nil
             elseif dependinfo.depfiles_armcc then
-                _load_depfiles(parse_deps_armcc, dependinfo, dependinfo.depfiles_armcc)
+                _load_depfiles(parse_deps_armcc, dependinfo, dependinfo.depfiles_armcc, opt)
                 dependinfo.depfiles_armcc = nil
             end
             return dependinfo
@@ -68,12 +68,26 @@ function load(dependfile)
     end
 end
 
+-- show diagnosis info?
+function _is_show_diagnosis_info()
+    local show = _g.is_show_diagnosis_info
+    if show == nil then
+        if project.policy("diagnosis.check_build_deps") then
+            show = true
+        else
+            show = false
+        end
+        _g.is_show_diagnosis_info = show
+    end
+    return show
+end
+
 -- save dependent info to file
 function save(dependinfo, dependfile)
     io.save(dependfile, dependinfo)
 end
 
--- the dependent info is changed?
+-- Is the dependent info changed?
 --
 -- if not depend.is_changed(dependinfo, {filemtime = os.mtime(objectfile), values = {...}}) then
 --      return
@@ -88,7 +102,7 @@ function is_changed(dependinfo, opt)
         return true
     end
 
-    -- check the dependent files are changed?
+    -- check whether the dependent files are changed
     local lastmtime = opt.lastmtime or 0
     _g.files_mtime = _g.files_mtime or {}
     local files_mtime = _g.files_mtime
@@ -100,11 +114,14 @@ function is_changed(dependinfo, opt)
 
         -- source and header files have been changed or not exists?
         if mtime == 0 or mtime > lastmtime then
+            if _is_show_diagnosis_info() then
+                cprint("${color.warning}[check_build_deps]: file %s is changed, mtime: %s, lastmtime: %s", file, mtime, lastmtime)
+            end
             return true
         end
     end
 
-    -- check the dependent values are changed?
+    -- check whether the dependent values are changed
     local depvalues = values
     local optvalues = table.wrap(opt.values)
     if #depvalues ~= #optvalues then
@@ -117,17 +134,23 @@ function is_changed(dependinfo, opt)
         if deptype ~= opttype then
             return true
         elseif deptype == "string" and depvalue ~= optvalue then
+            if _is_show_diagnosis_info() then
+                cprint("${color.warning}[check_build_deps]: value %s != %s", depvalue, optvalue)
+            end
             return true
         elseif deptype == "table" then
             for subidx, subvalue in ipairs(depvalue) do
                 if subvalue ~= optvalue[subidx] then
+                    if _is_show_diagnosis_info() then
+                        cprint("${color.warning}[check_build_deps]: value %s != %s at index %d", subvalue, optvalue[subidx], subidx)
+                    end
                     return true
                 end
             end
         end
     end
 
-    -- check the dependent files list are changed?
+    -- check whether the dependent files list are changed
     if opt.files then
         local optfiles = table.wrap(opt.files)
         if #files ~= #optfiles then
@@ -135,6 +158,9 @@ function is_changed(dependinfo, opt)
         end
         for idx, file in ipairs(files) do
             if file ~= optfiles[idx] then
+                if _is_show_diagnosis_info() then
+                    cprint("${color.warning}[check_build_deps]: file %s != %s at index %d", file, optfiles[idx], idx)
+                end
                 return true
             end
         end
@@ -157,16 +183,15 @@ end
 --
 -- end, {dependfile = "/xx/xx",
 --       values = {compinst:program(), compflags},
---       files = {sourcefile, ...},
---       always_changed = false})
+--       files = {sourcefile, ...}})
 --
 function on_changed(callback, opt)
 
     -- init option
     opt = opt or {}
 
-    -- always changed? we only do callback directly
-    if opt.always_changed then
+    -- dry run? we only do callback directly and do not change any status
+    if opt.dryrun then
         return callback()
     end
 
@@ -180,9 +205,8 @@ function on_changed(callback, opt)
     end
 
     -- load dependent info
-    local dependinfo = option.get("rebuild") and {} or (load(dependfile) or {})
+    local dependinfo = opt.changed and {} or (load(dependfile) or {})
 
-    -- need build this object?
     -- @note we use mtime(dependfile) instead of mtime(objectfile) to ensure the object file is is fully compiled.
     -- @see https://github.com/xmake-io/xmake/issues/748
     if not is_changed(dependinfo, {lastmtime = opt.lastmtime or os.mtime(dependfile), values = opt.values, files = opt.files}) then

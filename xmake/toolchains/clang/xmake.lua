@@ -25,24 +25,33 @@ if version then
     suffix = suffix .. "-" .. version
 end
 toolchain("clang" .. suffix)
-
+    set_kind("standalone")
     set_homepage("https://clang.llvm.org/")
     set_description("A C language family frontend for LLVM" .. (version and (" (" .. version .. ")") or ""))
-
-    set_kind("standalone")
+    set_runtimes("c++_static", "c++_shared", "stdc++_static", "stdc++_shared")
 
     set_toolset("cc", "clang" .. suffix)
     set_toolset("cxx", "clang" .. suffix, "clang++" .. suffix)
     set_toolset("ld", "clang++" .. suffix, "clang" .. suffix)
     set_toolset("sh", "clang++" .. suffix, "clang" .. suffix)
-    set_toolset("ar", "ar")
-    set_toolset("strip", "strip")
+    set_toolset("ar", "ar", "llvm-ar")
+    set_toolset("strip", "strip", "llvm-strip")
+    set_toolset("ranlib", "ranlib", "llvm-ranlib")
+    set_toolset("objcopy", "objcopy", "llvm-objcopy")
     set_toolset("mm", "clang" .. suffix)
     set_toolset("mxx", "clang" .. suffix, "clang++" .. suffix)
     set_toolset("as", "clang" .. suffix)
     set_toolset("mrc", "llvm-rc")
 
     on_check(function (toolchain)
+        if toolchain:is_plat("windows") then
+            local rootdir = path.join(path.directory(os.scriptdir()), "clang")
+            local result = import("check", {rootdir = rootdir})(toolchain, suffix)
+            if result then
+                return result
+            end
+        end
+
         return import("lib.detect.find_tool")("clang" .. suffix)
     end)
 
@@ -59,6 +68,13 @@ toolchain("clang" .. suffix)
             toolchain:add("asflags", march)
             toolchain:add("ldflags", march)
             toolchain:add("shflags", march)
+        end
+        if toolchain:is_plat("windows") then
+            toolchain:add("runtimes", "MT", "MTd", "MD", "MDd")
+        end
+        if toolchain:is_plat("windows", "mingw") then
+            local rootdir = path.join(path.directory(os.scriptdir()), "clang")
+            import("load", {rootdir = rootdir})(toolchain, suffix)
         end
     end)
 end

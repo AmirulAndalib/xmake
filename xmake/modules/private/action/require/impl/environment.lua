@@ -32,11 +32,6 @@ import("private.action.require.impl.install_packages")
 --
 function enter()
 
-    -- unzip or 7zip is necessary
-    if not find_tool("unzip") and not find_tool("7z") then
-        raise("failed to find unzip or 7zip! please install one of them first")
-    end
-
     -- enter the environments of git
     _g._OLDENVS = packagenv.enter("git")
 
@@ -58,7 +53,7 @@ function enter()
         instance:envs_enter()
     end
 
-    -- we need force to detect and flush detect cache after loading all environments
+    -- we need to force to detect and flush detect cache after loading all environments
     if not git then
         find_tool("git", {force = true})
     end

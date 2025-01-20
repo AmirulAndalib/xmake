@@ -129,14 +129,14 @@ function completer:_complete_option_kv_v(options, current, completing, name, val
     -- match values starts with value first
     local found_candidates = {}
     local nokey = self:config("nokey")
-    for _, v in ipairs(_find_candidates(values, value)) do
+    for _, v in ipairs(self:_find_candidates(values, value)) do
         if nokey then
             table.insert(found_candidates, { value = v, is_complete = true })
         else
             table.insert(found_candidates, { value = format("--%s=%s", name, v), is_complete = true })
         end
     end
-    completer:_print_candidates(found_candidates)
+    self:_print_candidates(found_candidates)
 
     -- whether any candidates has been found, finish complete since we don't have more info
     return true
@@ -206,7 +206,9 @@ function completer:_complete_option_v(options, current, completing)
         local candidates = {}
         if #values > 0 and type(values[1]) == "string" then
             for _, v in ipairs(values) do
-                table.insert(candidates, { value = v, is_complete = true })
+                if v:startswith(completing) then
+                    table.insert(candidates, { value = v, is_complete = true })
+                end
             end
         else
             for _, v in ipairs(values) do
@@ -272,7 +274,7 @@ function completer:_complete_option(options, segs, completing)
         if current_options.project then
             table.insert(args, 2, "--project=" .. current_options.project)
         end
-        os.execv("xmake", args)
+        os.execv(os.programfile(), args)
         return true
     end
 

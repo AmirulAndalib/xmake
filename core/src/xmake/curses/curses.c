@@ -35,7 +35,12 @@
 // fix macro redefinition
 #   undef MOUSE_MOVED
 #endif
-#include <curses.h>
+#define NCURSES_MOUSE_VERSION 2
+#ifdef TB_COMPILER_IS_MINGW
+#   include <ncursesw/curses.h>
+#else
+#   include <curses.h>
+#endif
 #if defined(NCURSES_VERSION)
 #   include <locale.h>
 #endif
@@ -131,6 +136,7 @@ static int xm_curses_window_getch_impl(WINDOW* w)
     }
 
     key = wgetch(w);
+    if (key == KEY_RESIZE) resize_term(0, 0);
     if (key == ERR || !g_mapkey) return key;
     if (key >= ALT_A && key <= ALT_Z)
     {
@@ -587,11 +593,6 @@ static void xm_curses_register_constants(lua_State* lua)
     XM_CURSES_CONST(BUTTON5_CLICKED)
     XM_CURSES_CONST(BUTTON5_DOUBLE_CLICKED)
     XM_CURSES_CONST(BUTTON5_TRIPLE_CLICKED)
-#       else
-    XM_CURSES_CONST(BUTTON1_RESERVED_EVENT)
-    XM_CURSES_CONST(BUTTON2_RESERVED_EVENT)
-    XM_CURSES_CONST(BUTTON3_RESERVED_EVENT)
-    XM_CURSES_CONST(BUTTON4_RESERVED_EVENT)
 #       endif
 #   endif
 #endif
@@ -830,7 +831,7 @@ int xm_lua_curses_register(lua_State* lua, const char* module)
     /* since version 5.4, the ncurses library decides how to interpret non-ASCII data using the nl_langinfo function.
      * that means that you have to call setlocale() in the application and encode Unicode strings using one of the system’s available encodings.
      *
-     * and we need link libncurses_window.so for drawing vline, hline characters
+     * and we need to link libncurses_window.so for drawing vline, hline characters
      */
 #if defined(NCURSES_VERSION)
     setlocale(LC_ALL, "");

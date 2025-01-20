@@ -21,6 +21,7 @@
 -- imports
 import("core.project.config")
 import("lib.detect.find_path")
+import("lib.detect.find_tool")
 import("detect.sdks.find_xcode")
 import("detect.sdks.find_cross_toolchain")
 
@@ -58,11 +59,24 @@ function main(toolchain)
     local sdkdir = toolchain:sdkdir()
     local bindir = toolchain:bindir()
     if not sdkdir and not bindir then
-        if is_host("linux") and os.isfile("/usr/bin/llvm-ar") then
+        bindir = try {function () return os.iorunv("llvm-config", {"--bindir"}) end}
+        if bindir then
+            sdkdir = path.directory(bindir)
+        elseif is_host("linux") and os.isfile("/usr/bin/llvm-ar") then
             sdkdir = "/usr"
         elseif is_host("macosx") then
-            local bindir = find_path("llvm-ar", "/usr/local/Cellar/llvm/*/bin")
+            if os.arch() == "arm64" then
+                bindir = find_path("llvm-ar", "/opt/homebrew/opt/llvm/bin")
+            else
+                bindir = find_path("llvm-ar", "/usr/local/Cellar/llvm/*/bin")
+            end
             if bindir then
+                sdkdir = path.directory(bindir)
+            end
+        elseif is_host("windows") then
+            local llvm_ar = find_tool("llvm-ar", {force = true, envs = {PATH = os.getenv("PATH")}})
+            if llvm_ar and llvm_ar.program and path.is_absolute(llvm_ar.program) then
+                bindir = path.directory(llvm_ar.program)
                 sdkdir = path.directory(bindir)
             end
         end
@@ -85,6 +99,7 @@ function main(toolchain)
     if cross_toolchain then
         toolchain:config_set("cross", cross_toolchain.cross)
         toolchain:config_set("bindir", cross_toolchain.bindir)
+        toolchain:config_set("sdkdir", cross_toolchain.sdkdir)
         toolchain:configs_save()
     else
         raise("llvm toolchain not found!")

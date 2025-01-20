@@ -38,14 +38,15 @@ function menu_options()
                                        values = {"release", "debug"}         },
         {'f', "configs",       "kv", nil, "Set the given extra package configs.",
                                        "e.g.",
-                                       "    - xrepo install -f \"vs_runtime='MD'\" zlib",
+                                       "    - xrepo install -f \"runtimes='MD'\" zlib",
                                        "    - xrepo install -f \"regex=true,thread=true\" boost"},
         {'j', "jobs",          "kv", tostring(os.default_njob()),
                                           "Set the number of parallel compilation jobs."},
-        {nil, "linkjobs",      "kv", nil,    "Set the number of parallel link jobs."},
+        {nil, "linkjobs",      "kv", nil, "Set the number of parallel link jobs."},
         {nil, "includes",      "kv", nil, "Includes extra lua configuration files.",
                                        "e.g.",
                                        "    - xrepo install -p cross --toolchain=mytool --includes='toolchain1.lua" .. path.envsep() .. "toolchain2.lua'"},
+        {nil, "policies",      "kv", nil, "Set the policies."                },
         {category = "Visual Studio SDK Configuration"                        },
         {nil, "vs",            "kv", nil, "The Microsoft Visual Studio"
                                         , "  e.g. --vs=2017"                 },
@@ -54,17 +55,29 @@ function menu_options()
         {nil, "vs_sdkver",     "kv", nil, "The Windows SDK Version of Visual Studio"
                                         , "  e.g. --vs_sdkver=10.0.15063.0"  },
         {category = "Android NDK Configuration"                              },
-        {nil, "ndk",           "kv", nil, "Set the android NDK directory."   },
+        {nil, "ndk",           "kv", nil, "The NDK directory"                },
+        {nil, "ndk_sdkver",    "kv", nil, "The SDK Version for NDK (default: auto)" },
+        {nil, "android_sdk",   "kv", nil, "The Android SDK Directory"        },
+        {nil, "build_toolver", "kv", nil, "The Build Tool Version of Android SDK" },
+        {nil, "ndk_stdcxx",    "kv", nil, "Use stdc++ library for NDK"        },
+        {nil, "ndk_cxxstl",    "kv", nil, "The stdc++ stl library for NDK",
+                                          "    - c++_static",
+                                          "    - c++_shared",
+                                          "    - gnustl_static",
+                                          "    - gnustl_shared",
+                                          "    - stlport_shared",
+                                          "    - stlport_static"             },
         {category = "Cross Compilation Configuration"                        },
         {nil, "sdk",           "kv", nil, "Set the SDK directory of cross toolchain." },
         {nil, "toolchain",     "kv", nil, "Set the toolchain name."          },
+        {nil, "toolchain_host","kv", nil, "Set the host toolchain name."     },
         {category = "MingW Configuration"                                    },
         {nil, "mingw",         "kv", nil, "Set the MingW SDK directory."     },
         {category = "XCode SDK Configuration"                                },
         {nil, "xcode",         "kv", nil, "The Xcode Application Directory"  },
         {nil, "xcode_sdkver",  "kv", nil, "The SDK Version for Xcode"        },
         {nil, "target_minver", "kv", nil, "The Target Minimal Version"       },
-        {nil, "appledev",      "kv", nil, "The Apple Device Type"            },
+        {nil, "appledev",      "kv", nil, "The Apple Device Type", values = {"simulator", "iphone", "watchtv", "appletv", "catalyst"}},
         {category = "Debug Configuration"                                    },
         {'d', "debugdir",      "kv", nil, "The source directory of the current package for debugging. It will enable --force/--shallow by default."},
         {category = "Other Configuration"                                    },
@@ -119,7 +132,9 @@ function _install_packages(packages)
     local rcfiles = {}
     local includes = option.get("includes")
     if includes then
-        table.join2(rcfiles, path.splitenv(includes))
+        for _, includefile in ipairs(path.splitenv(includes)) do
+            table.insert(rcfiles, path.absolute(includefile))
+        end
     end
 
     -- enter working project directory
@@ -132,7 +147,7 @@ function _install_packages(packages)
     if not os.isdir(workdir) then
         os.mkdir(workdir)
         os.cd(workdir)
-        os.vrunv("xmake", {"create", "-P", "."})
+        os.vrunv(os.programfile(), {"create", "-P", "."})
     else
         os.cd(workdir)
     end
@@ -167,9 +182,28 @@ function _install_packages(packages)
         table.insert(config_argv, "-k")
         table.insert(config_argv, kind)
     end
+    local policies = option.get("policies")
+    if policies then
+        table.insert(config_argv, "--policies=" .. policies)
+    end
     -- for android
     if option.get("ndk") then
         table.insert(config_argv, "--ndk=" .. option.get("ndk"))
+    end
+    if option.get("ndk_sdkver") then
+        table.insert(config_argv, "--ndk_sdkver=" .. option.get("ndk_sdkver"))
+    end
+    if option.get("android_sdk") then
+        table.insert(config_argv, "--android_sdk=" .. option.get("android_sdk"))
+    end
+    if option.get("build_toolver") then
+        table.insert(config_argv, "--build_toolver=" .. option.get("build_toolver"))
+    end
+    if option.get("ndk_stdcxx") then
+        table.insert(config_argv, "--ndk_stdcxx=" .. option.get("ndk_stdcxx"))
+    end
+    if option.get("ndk_cxxstl") then
+        table.insert(config_argv, "--ndk_cxxstl=" .. option.get("ndk_cxxstl"))
     end
     -- for cross toolchain
     if option.get("sdk") then
@@ -177,6 +211,9 @@ function _install_packages(packages)
     end
     if option.get("toolchain") then
         table.insert(config_argv, "--toolchain=" .. option.get("toolchain"))
+    end
+    if option.get("toolchain_host") then
+        table.insert(config_argv, "--toolchain_host=" .. option.get("toolchain_host"))
     end
     -- for mingw
     if option.get("mingw") then
@@ -209,7 +246,7 @@ function _install_packages(packages)
     if #rcfiles > 0 then
         envs.XMAKE_RCFILES = path.joinenv(rcfiles)
     end
-    os.vrunv("xmake", config_argv, {envs = envs})
+    os.vrunv(os.programfile(), config_argv, {envs = envs})
 
     -- do install
     local require_argv = {"require"}
@@ -264,14 +301,14 @@ function _install_packages(packages)
         end
     end
     if not packagefile then
-        -- avoid to override extra configs in add_requires/xmake.lua
+        -- avoid overriding extra configs in add_requires/xmake.lua
         if extra then
             local extra_str = string.serialize(extra, {indent = false, strip = true})
             table.insert(require_argv, "--extra=" .. extra_str)
         end
         table.join2(require_argv, packages)
     end
-    os.vexecv("xmake", require_argv, {envs = envs})
+    os.vexecv(os.programfile(), require_argv, {envs = envs})
 end
 
 -- main entry

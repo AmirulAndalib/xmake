@@ -32,7 +32,10 @@ local table           = require("base/table")
 local baseoption      = require("base/option")
 local hashset         = require("base/hashset")
 local deprecated      = require("base/deprecated")
+local select_script   = require("base/private/select_script")
+local match_copyfiles = require("base/private/match_copyfiles")
 local instance_deps   = require("base/private/instance_deps")
+local is_cross        = require("base/private/is_cross")
 local memcache        = require("cache/memcache")
 local rule            = require("project/rule")
 local option          = require("project/option")
@@ -52,9 +55,11 @@ local sandbox_module  = require("sandbox/modules/import/core/sandbox/module")
 -- new a target instance
 function _instance.new(name, info)
     local instance     = table.inherit(_instance)
-    instance._NAME     = name
     instance._INFO     = info
     instance._CACHEID  = 1
+    if name then
+        instance:name_set(name)
+    end
     return instance
 end
 
@@ -72,7 +77,7 @@ end
 function _instance:_load_rule(ruleinst, suffix)
 
     -- init cache
-    local key = ruleinst:name() .. (suffix and ("_" .. suffix) or "")
+    local key = ruleinst:fullname() .. (suffix and ("_" .. suffix) or "")
     local cache = self._RULES_LOADED or {}
 
     -- do load
@@ -87,7 +92,7 @@ function _instance:_load_rule(ruleinst, suffix)
 
         -- before_load has been deprecated
         if on_load and suffix == "before" then
-            deprecated.add(ruleinst:name() .. ".on_load", ruleinst:name() .. ".before_load")
+            deprecated.add(ruleinst:fullname() .. ".on_load", ruleinst:fullname() .. ".before_load")
         end
     end
 
@@ -172,90 +177,6 @@ function _instance:_load_after()
     return true
 end
 
--- get the copied files
-function _instance:_copiedfiles(filetype, outputdir, pathfilter)
-
-    -- no copied files?
-    local copiedfiles = self:get(filetype)
-    if not copiedfiles then return end
-
-    -- get the extra information
-    local extrainfo = table.wrap(self:get("__extra_" .. filetype))
-
-    -- get the source paths and destinate paths
-    local srcfiles = {}
-    local dstfiles = {}
-    local fileinfos = {}
-    for _, copiedfile in ipairs(table.wrap(copiedfiles)) do
-
-        -- get the root directory
-        local rootdir, count = copiedfile:gsub("|.*$", ""):gsub("%(.*%)$", "")
-        if count == 0 then
-            rootdir = nil
-        end
-        if rootdir and rootdir:trim() == "" then
-            rootdir = "."
-        end
-
-        -- remove '(' and ')'
-        local srcpaths = copiedfile:gsub("[%(%)]", "")
-        if srcpaths then
-
-            -- get the source paths
-            srcpaths = os.match(srcpaths)
-            if srcpaths and #srcpaths > 0 then
-
-                -- add the source copied files
-                table.join2(srcfiles, srcpaths)
-
-                -- the copied directory exists?
-                if outputdir then
-
-                    -- get the file info
-                    local fileinfo = extrainfo[copiedfile] or {}
-
-                    -- get the prefix directory
-                    local prefixdir = fileinfo.prefixdir
-
-                    -- add the destinate copied files
-                    for _, srcpath in ipairs(srcpaths) do
-
-                        -- get the destinate directory
-                        local dstdir = outputdir
-                        if prefixdir then
-                            dstdir = path.join(dstdir, prefixdir)
-                        end
-
-                        -- the destinate file
-                        local dstfile = nil
-                        if rootdir then
-                            dstfile = path.absolute(path.relative(srcpath, rootdir), dstdir)
-                        else
-                            dstfile = path.join(dstdir, path.filename(srcpath))
-                        end
-                        assert(dstfile)
-
-                        -- modify filename
-                        if fileinfo.filename then
-                            dstfile = path.join(path.directory(dstfile), fileinfo.filename)
-                        end
-
-                        -- filter the destinate file path
-                        if pathfilter then
-                            dstfile = pathfilter(dstfile, fileinfo)
-                        end
-
-                        -- add it
-                        table.insert(dstfiles, dstfile)
-                        table.insert(fileinfos, fileinfo)
-                    end
-                end
-            end
-        end
-    end
-    return srcfiles, dstfiles, fileinfos
-end
-
 -- get the visibility, private: 1, interface: 2, public: 3 = 1 | 2
 function _instance:_visibility(opt)
     local visibility = 1
@@ -269,26 +190,80 @@ function _instance:_visibility(opt)
     return visibility
 end
 
+-- update file rules
+--
+-- if we add files in on_load() dynamically, we need to update file rules,
+-- otherwise it will cause: unknown source file: ...
+--
+function _instance:_update_filerules()
+    local rulenames = {}
+    local extensions = {}
+    for _, sourcefile in ipairs(table.wrap(self:get("files"))) do
+        local extension = path.extension((sourcefile:gsub("|.*$", "")))
+        if not extensions[extension] then
+            local lang = language.load_ex(extension)
+            if lang and lang:rules() then
+                table.join2(rulenames, lang:rules())
+            end
+            extensions[extension] = true
+        end
+    end
+    rulenames = table.unique(rulenames)
+    for _, rulename in ipairs(rulenames) do
+        local r = target._project() and target._project().rule(rulename, {namespace = self:namespace()}) or rule.rule(rulename)
+        if r then
+            -- only add target rules
+            if r:kind() == "target" then
+                if not self:rule(rulename) then
+                    self:rule_add(r)
+                    for _, deprule in ipairs(r:orderdeps()) do
+                        if not self:rule(deprule:name()) then
+                            self:rule_add(deprule)
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
 -- invalidate the previous cache
 function _instance:_invalidate(name)
     self._CACHEID = self._CACHEID + 1
     self._POLICIES = nil
-    -- we need flush the source files cache if target/files are modified, e.g. `target:add("files", "xxx.c")`
+    self:_memcache():clear()
+    -- we need to flush the source files cache if target/files are modified, e.g. `target:add("files", "xxx.c")`
     if name == "files" then
         self._SOURCEFILES = nil
+        self._OBJECTFILES = nil
+        self._SOURCEBATCHES = nil
+        self:_update_filerules()
     elseif name == "deps" then
         self._DEPS = nil
         self._ORDERDEPS = nil
+        self._INHERITDEPS = nil
+    end
+    if self._FILESCONFIG then
+        self._FILESCONFIG[name] = nil
     end
 end
 
 -- build deps
 function _instance:_build_deps()
     if target._project() then
-        local instances = target._project().targets()
-        self._DEPS      = self._DEPS or {}
-        self._ORDERDEPS = self._ORDERDEPS or {}
-        instance_deps.load_deps(self, instances, self._DEPS, self._ORDERDEPS, {self:name()})
+        local instances   = target._project().targets()
+        self._DEPS        = self._DEPS or {}
+        self._ORDERDEPS   = self._ORDERDEPS or {}
+        self._INHERITDEPS = self._INHERITDEPS or {}
+        instance_deps.load_deps(self, instances, self._DEPS, self._ORDERDEPS, {self:fullname()})
+        -- @see https://github.com/xmake-io/xmake/issues/4689
+        instance_deps.load_deps(self, instances, {}, self._INHERITDEPS, {self:fullname()}, function (t, dep)
+            local depinherit = t:extraconf("deps", dep:name(), "inherit")
+            if depinherit == nil then
+                depinherit = t:extraconf("deps", dep:fullname(), "inherit")
+            end
+            return depinherit == nil or depinherit
+        end)
     end
 end
 
@@ -297,17 +272,268 @@ function _instance:_is_loaded()
     return self._LOADED
 end
 
+-- get values from target deps with {interface|public = ...}
+function _instance:_get_from_deps(name, result_values, result_sources, opt)
+    local orderdeps = self:orderdeps({inherit = true})
+    local total = #orderdeps
+    for idx, _ in ipairs(orderdeps) do
+        local dep = orderdeps[total + 1 - idx]
+        local values = dep:get(name, opt)
+        if values ~= nil then
+            table.insert(result_values, values)
+            table.insert(result_sources, "dep::" .. dep:name())
+        end
+        local dep_values = {}
+        local dep_sources = {}
+        dep:_get_from_options(name, dep_values, dep_sources, opt)
+        dep:_get_from_packages(name, dep_values, dep_sources, opt)
+        for idx, values in ipairs(dep_values) do
+            local dep_source = dep_sources[idx]
+            table.insert(result_values, values)
+            table.insert(result_sources, "dep::" .. dep:name() .. "/" .. dep_source)
+        end
+    end
+end
+
+-- get values from target options with {interface|public = ...}
+function _instance:_get_from_options(name, result_values, result_sources, opt)
+    for _, opt_ in ipairs(self:orderopts(opt)) do
+        local values = opt_:get(name)
+        if values ~= nil then
+            table.insert(result_values, values)
+            table.insert(result_sources, "option::" .. opt_:name())
+        end
+    end
+end
+
+-- get values from target packages with {interface|public = ...}
+function _instance:_get_from_packages(name, result_values, result_sources, opt)
+    local function _filter_libfiles(libfiles)
+        local result = {}
+        for _, libfile in ipairs(table.wrap(libfiles)) do
+            if not libfile:endswith(".dll") then
+                table.insert(result, libfile)
+            end
+        end
+        return table.unwrap(result)
+    end
+    for _, pkg in ipairs(self:orderpkgs(opt)) do
+        local configinfo = self:pkgconfig(pkg:name())
+        -- get values from package components
+        -- e.g. `add_packages("sfml", {components = {"graphics", "window"}})`
+        local selected_components = configinfo and configinfo.components or pkg:components_default()
+        if selected_components and pkg:components() then
+            local components_enabled = hashset.new()
+            for _, comp in ipairs(table.wrap(selected_components)) do
+                components_enabled:insert(comp)
+                for _, dep in ipairs(table.wrap(pkg:component_orderdeps(comp))) do
+                    components_enabled:insert(dep)
+                end
+            end
+            components_enabled:insert("__base")
+            -- if we can't find the values from the component, we need to fall back to __base to find them.
+            -- it contains some common values of all components
+            local values = {}
+            local components = table.wrap(pkg:components())
+            for _, component_name in ipairs(table.join(pkg:components_orderlist(), "__base")) do
+                if components_enabled:has(component_name) then
+                    local info = components[component_name]
+                    if info then
+                        local compvalues = info[name]
+                        -- use full link path instead of links
+                        -- @see https://github.com/xmake-io/xmake/issues/5066
+                        if configinfo and configinfo.linkpath then
+                            local libfiles = info.libfiles
+                            if name == "links" then
+                                if libfiles then
+                                    compvalues = _filter_libfiles(libfiles)
+                                end
+                            elseif name == "linkdirs" then
+                                if libfiles then
+                                    compvalues = nil
+                                end
+                            end
+                        end
+                        table.join2(values, compvalues)
+                    else
+                        local components_str = table.concat(table.wrap(configinfo.components), ", ")
+                        utils.warning("unknown component(%s) in add_packages(%s, {components = {%s}})", component_name, pkg:name(), components_str)
+                    end
+                end
+            end
+            if #values > 0 then
+                table.insert(result_values, values)
+                table.insert(result_sources, "package::" .. pkg:name())
+            end
+        -- get values instead of the builtin configs if exists extra package config
+        -- e.g. `add_packages("xxx", {links = "xxx"})`
+        elseif configinfo and configinfo[name] then
+             local values = configinfo[name]
+             if values ~= nil then
+                table.insert(result_values, values)
+                table.insert(result_sources, "package::" .. pkg:name())
+            end
+        else
+            -- get values from the builtin package configs
+            local values = pkg:get(name)
+            -- use full link path instead of links
+            -- @see https://github.com/xmake-io/xmake/issues/5066
+            if configinfo and configinfo.linkpath then
+                local libfiles = pkg:libraryfiles()
+                if name == "links" then
+                    if libfiles then
+                        values = _filter_libfiles(libfiles)
+                    end
+                elseif name == "linkdirs" then
+                    if libfiles then
+                        values = nil
+                    end
+                end
+            end
+            if values ~= nil then
+                table.insert(result_values, values)
+                table.insert(result_sources, "package::" .. pkg:name())
+            end
+        end
+    end
+end
+
+-- get values from the given source
+function _instance:_get_from_source(name, source, result_values, result_sources, opt)
+    if source == "self" then
+        local values = self:get(name, opt)
+        if values ~= nil then
+            table.insert(result_values, values)
+            table.insert(result_sources, "self")
+        end
+    elseif source:startswith("dep::") then
+        local depname = source:split("::", {plain = true, limit = 2})[2]
+        if depname == "*" then
+            self:_get_from_deps(name, result_values, result_sources, opt)
+        else
+            local depsource
+            local splitinfo = depname:split("/", {plain = true})
+            if #splitinfo == 2 then
+                depname = splitinfo[1]
+                depsource = splitinfo[2]
+            end
+            local dep = self:dep(depname)
+            if dep then
+                -- e.g.
+                -- dep::foo/option::bar
+                -- dep::foo/package::bar
+                if depsource then
+                    local dep_values = {}
+                    local dep_sources = {}
+                    dep:_get_from_source(name, depsource, dep_values, dep_sources, opt)
+                    for idx, values in ipairs(dep_values) do
+                        local dep_source = dep_sources[idx]
+                        table.insert(result_values, values)
+                        table.insert(result_sources, "dep::" .. depname .. "/" .. dep_source)
+                    end
+                else
+                    -- dep::foo
+                    local values = dep:get(name, opt)
+                    if values ~= nil then
+                        table.insert(result_values, values)
+                        table.insert(result_sources, source)
+                    end
+                end
+            end
+        end
+    elseif source:startswith("option::") then
+        local optname = source:split("::", {plain = true, limit = 2})[2]
+        if optname == "*" then
+            self:_get_from_options(name, result_values, result_sources, opt)
+        else
+            local opt_ = self:opt(optname, opt)
+            if opt_ then
+                local values = opt_:get(name)
+                if values ~= nil then
+                    table.insert(result_values, values)
+                    table.insert(result_sources, source)
+                end
+            end
+        end
+    elseif source:startswith("package::") then
+        local pkgname = source:split("::", {plain = true, limit = 2})[2]
+        if pkgname == "*" then
+            self:_get_from_packages(name, result_values, result_sources, opt)
+        else
+            local pkg = self:pkg(pkgname, opt)
+            if pkg then
+                local values = pkg:get(name)
+                if values ~= nil then
+                    table.insert(result_values, values)
+                    table.insert(result_sources, source)
+                end
+            end
+        end
+    elseif source == "*" then
+        self:_get_from_source(name, "self", result_values, result_sources, opt)
+        self:_get_from_source(name, "option::*", result_values, result_sources, opt)
+        self:_get_from_source(name, "package::*", result_values, result_sources, opt)
+        self:_get_from_source(name, "dep::*", result_values, result_sources, {interface = true})
+    else
+        os.raise("target:get_from(): unknown source %s", source)
+    end
+end
+
+-- get the checked target, it's only for target:check_xxx api.
+--
+-- we should not inherit links from deps/packages when checking snippets in on_config,
+-- because the target deps has been not built.
+--
+-- @see https://github.com/xmake-io/xmake/issues/4491
+--
+function _instance:_checked_target()
+    local checked_target = self._CHECKED_TARGET
+    if checked_target == nil then
+        checked_target = self:clone()
+        -- we need update target:cachekey(), because target flags may be cached in builder
+        checked_target:_invalidate()
+        checked_target.get_from = function (target, name, sources, opt)
+            if (name == "links" or name == "linkdirs") and sources == "*" then
+                sources = "self"
+            end
+            return _instance.get_from(target, name, sources, opt)
+        end
+        self._CHECKED_TARGET = checked_target
+    end
+    return checked_target
+end
+
+-- get format
+function _instance:_format(kind)
+    local formats = self._FORMATS
+    if not formats then
+        for _, toolchain_inst in ipairs(self:toolchains()) do
+            formats = toolchain_inst:formats()
+            if formats then
+                break
+            end
+        end
+        self._FORMATS = formats
+    end
+    if formats then
+        return formats[kind or self:kind()]
+    end
+end
+
 -- clone target, @note we can just call it in after_load()
 function _instance:clone()
     if not self:_is_loaded() then
-        os.raise("please call target:clone() in after_load().", self:name())
+        os.raise("please call target:clone() in after_load().", self:fullname())
     end
-    local instance = target.new(self:name(), self._INFO:clone())
+    local instance = target.new(self:fullname(), self._INFO:clone())
     if self._DEPS then
         instance._DEPS = table.clone(self._DEPS)
     end
     if self._ORDERDEPS then
         instance._ORDERDEPS = table.clone(self._ORDERDEPS)
+    end
+    if self._INHERITDEPS then
+        instance._INHERITDEPS = table.clone(self._INHERITDEPS)
     end
     if self._RULES then
         instance._RULES = table.clone(self._RULES)
@@ -320,6 +546,12 @@ function _instance:clone()
     end
     if self._SOURCEFILES then
         instance._SOURCEFILES = table.clone(self._SOURCEFILES)
+    end
+    if self._OBJECTFILES then
+        instance._OBJECTFILES = table.clone(self._OBJECTFILES)
+    end
+    if self._SOURCEBATCHES then
+        instance._SOURCEBATCHES = table.clone(self._SOURCEBATCHES, 3)
     end
     instance._LOADED = self._LOADED
     instance._LOADED_AFTER = true
@@ -366,7 +598,9 @@ function _instance:get(name, opt)
         if not table.is_dictionary(values) then
             local results = {}
             for _, value in ipairs(table.wrap(values)) do
-                local vs_conf = self:_visibility(extraconf[value])
+                -- we always call self:extraconf() to handle group value
+                local extra = self:extraconf(name, value)
+                local vs_conf = self:_visibility(extra)
                 if bit.band(vs_required, vs_conf) ~= 0 then
                     table.insert(results, value)
                 end
@@ -378,80 +612,102 @@ function _instance:get(name, opt)
             return values
         end
     else
-        -- only get thr private values
+        -- only get the private values
         if bit.band(vs_required, vs_private) ~= 0 then
             return values
         end
     end
 end
 
--- get values from target dependencies
+-- deprecated: get values from target dependencies
 function _instance:get_from_deps(name, opt)
-    local values = {}
-    local orderdeps = self:orderdeps()
-    local total = #orderdeps
-    for idx, _ in ipairs(orderdeps) do
-        local dep = orderdeps[total + 1 - idx]
-        local depinherit = self:extraconf("deps", dep:name(), "inherit")
-        if depinherit == nil or depinherit then
-            table.join2(values, dep:get(name, opt))
-            table.join2(values, dep:get_from_opts(name, opt))
-            table.join2(values, dep:get_from_pkgs(name, opt))
+    deprecated.add("target:get_from(%s, \"dep:*\")", "target:get_from_deps(%s)", name)
+    local result = {}
+    local values = self:get_from(name, "dep::*", opt)
+    if values then
+        for _, v in ipairs(values) do
+            table.join2(result, v)
         end
     end
-    return values
+    return result
 end
 
--- get values from target options with {interface|public = ...}
+-- deprecated: get values from target options with {interface|public = ...}
 function _instance:get_from_opts(name, opt)
-    local values = {}
-    for _, opt_ in ipairs(self:orderopts(opt)) do
-        table.join2(values, table.wrap(opt_:get(name)))
-    end
-    return values
-end
-
--- get values from target packages with {interface|public = ...}
-function _instance:get_from_pkgs(name, opt)
-    local values = {}
-    for _, pkg in ipairs(self:orderpkgs(opt)) do
-        local configinfo = self:pkgconfig(pkg:name())
-        -- get values from package components
-        -- e.g. `add_packages("sfml", {components = {"graphics", "window"}})`
-        local selected_components = configinfo and configinfo.components or pkg:components_default()
-        if selected_components and pkg:components() then
-            local components_enabled = hashset.new()
-            for _, comp in ipairs(table.wrap(selected_components)) do
-                components_enabled:insert(comp)
-                for _, dep in ipairs(table.wrap(pkg:component_orderdeps(comp))) do
-                    components_enabled:insert(dep)
-                end
-            end
-            components_enabled:insert("__base")
-            -- if we can't find the values from the component, we need to fall back to __base to find them.
-            -- it contains some common values of all components
-            local components = table.wrap(pkg:components())
-            for _, component_name in ipairs(table.join(pkg:components_orderlist(), "__base")) do
-                if components_enabled:has(component_name) then
-                    local info = components[component_name]
-                    if info then
-                        table.join2(values, info[name])
-                    else
-                        local components_str = table.concat(table.wrap(configinfo.components), ", ")
-                        utils.warning("unknown component(%s) in add_packages(%s, {components = {%s}})", component_name, pkg:name(), components_str)
-                    end
-                end
-            end
-        -- get values instead of the builtin configs if exists extra package config
-        -- e.g. `add_packages("xxx", {links = "xxx"})`
-        elseif configinfo and configinfo[name] then
-             table.join2(values, configinfo[name])
-        else
-            -- get values from the builtin package configs
-            table.join2(values, pkg:get(name))
+    deprecated.add("target:get_from(%s, \"option::*\")", "target:get_from_opts(%s)", name)
+    local result = {}
+    local values = self:get_from(name, "option::*", opt)
+    if values then
+        for _, v in ipairs(values) do
+            table.join2(result, v)
         end
     end
-    return values
+    return result
+end
+
+-- deprecated: get values from target packages with {interface|public = ...}
+function _instance:get_from_pkgs(name, opt)
+    deprecated.add("target:get_from(%s, \"package::*\")", "target:get_from_pkgs(%s)", name)
+    local result = {}
+    local values = self:get_from(name, "package::*", opt)
+    if values then
+        for _, v in ipairs(values) do
+            table.join2(result, v)
+        end
+    end
+    return result
+end
+
+-- get values from the given sources
+--
+-- e.g.
+--
+-- only from the current target:
+--      target:get_from("links")
+--      target:get_from("links", "self")
+--
+-- from the given dep:
+--      target:get_from("links", "dep::foo")
+--      target:get_from("links", "dep::foo", {interface = true})
+--      target:get_from("links", "dep::*")
+--
+-- from the given option:
+--      target:get_from("links", "option::foo")
+--      target:get_from("links", "option::*")
+--
+-- from the given package:
+--      target:get_from("links", "package::foo")
+--      target:get_from("links", "package::*")
+--
+-- from the given dep/option, dep/package
+--      target:get_from("links", "dep::foo/option::bar")
+--      target:get_from("links", "dep::foo/option::*")
+--      target:get_from("links", "dep::foo/package::bar")
+--      target:get_from("links", "dep::foo/package::*")
+--
+-- from the multiple sources:
+--      target:get_from("links", {"self", "option::foo", "dep::bar", "package::zoo"})
+--      target:get_from("links", {"self", "option::*", "dep::*", "package::*"})
+--
+-- from all:
+--      target:get_from("links", "*")
+--
+-- return:
+--      local values, sources = target:get_from("links", "*")
+--      for idx, value in ipairs(values) do
+--          local source = sources[idx]
+--      end
+--
+function _instance:get_from(name, sources, opt)
+    local result_values = {}
+    local result_sources = {}
+    sources = sources or "self"
+    for _, source in ipairs(table.wrap(sources)) do
+        self:_get_from_source(name, source, result_values, result_sources, opt)
+    end
+    if #result_values > 0 then
+        return result_values, result_sources
+    end
 end
 
 -- set the value to the target info
@@ -486,6 +742,74 @@ end
 -- set the extra configuration
 function _instance:extraconf_set(name, item, key, value)
     self._INFO:extraconf_set(name, item, key, value)
+end
+
+-- get the extra configuration from the given source
+--
+-- e.g.
+--
+-- only from the current target:
+--      target:extraconf_from("links")
+--      target:extraconf_from("links", "self")
+--
+-- from the given dep:
+--      target:extraconf_from("links", "dep::foo")
+--
+-- from the given option:
+--      target:extraconf_from("links", "option::foo")
+--
+-- from the given package:
+--      target:extraconf_from("links", "package::foo")
+--
+-- from the given dep/option, dep/package
+--      target:extraconf_from("links", "dep::foo/option::bar")
+--      target:extraconf_from("links", "dep::foo/package::bar")
+--
+function _instance:extraconf_from(name, source)
+    if name:find("::") then
+        local tmp = name
+        name = source
+        source = tmp
+        utils.warning("please use target:extraconf_from(%s, %s) intead of target:extraconf_from(%s, %s)", name, source, source, name)
+    end
+    source = source or "self"
+    if source == "self" then
+        return self:extraconf(name)
+    elseif source:startswith("dep::") then
+        local depname = source:split("::", {plain = true, limit = 2})[2]
+        local depsource
+        local splitinfo = depname:split("/", {plain = true})
+        if #splitinfo == 2 then
+            depname = splitinfo[1]
+            depsource = splitinfo[2]
+        end
+        local dep = self:dep(depname)
+        if dep then
+            -- e.g.
+            -- dep::foo/option::bar
+            -- dep::foo/package::bar
+            if depsource then
+                return dep:extraconf_from(name, dep_source)
+            else
+                -- dep::foo
+                return dep:extraconf(name)
+            end
+        end
+    elseif source:startswith("option::") then
+        local optname = source:split("::", {plain = true, limit = 2})[2]
+        local opt_ = self:opt(optname, opt)
+        if opt_ then
+            return opt_:extraconf(name)
+        end
+    elseif source:startswith("package::") then
+        local pkgname = source:split("::", {plain = true, limit = 2})[2]
+        local pkg = self:pkg(pkgname, opt)
+        if pkg then
+            return pkg:extraconf(name)
+        end
+    else
+        os.raise("target:extraconf_from(): unknown source %s", source)
+    end
 end
 
 -- get configuration source information of the given api item
@@ -567,7 +891,23 @@ end
 
 -- set the target name
 function _instance:name_set(name)
-    self._NAME = name
+    local parts = name:split("::", {plain = true})
+    self._NAME = parts[#parts]
+    table.remove(parts)
+    if #parts > 0 then
+        self._NAMESPACE = table.concat(parts, "::")
+    end
+end
+
+-- get the namespace
+function _instance:namespace()
+    return self._NAMESPACE
+end
+
+-- get the full name
+function _instance:fullname()
+    local namespace = self:namespace()
+    return namespace and namespace .. "::" .. self:name() or self:name()
 end
 
 -- get the target kind
@@ -593,7 +933,7 @@ end
 -- the current target is belong to the given platforms?
 function _instance:is_plat(...)
     local plat = self:plat()
-    for _, v in ipairs(table.join(...)) do
+    for _, v in ipairs(table.pack(...)) do
         if v and plat == v then
             return true
         end
@@ -603,7 +943,7 @@ end
 -- the current target is belong to the given architectures?
 function _instance:is_arch(...)
     local arch = self:arch()
-    for _, v in ipairs(table.join(...)) do
+    for _, v in ipairs(table.pack(...)) do
         if v and arch:find("^" .. v:gsub("%-", "%%-") .. "$") then
             return true
         end
@@ -635,24 +975,52 @@ end
 
 -- get the target version
 function _instance:version()
-
-    -- get version and build version
     local version = self:get("version")
-    local version_build = nil
+    local version_build
     if version then
-        local version_extra = self:get("__extra_version")
-        if version_extra then
-            version_build = self._VERSION_BUILD
-            if not version_build then
-                version_build = table.wrap(version_extra[version]).build
-                if type(version_build) == "string" then
-                    version_build = os.date(version_build, os.time())
-                    self._VERSION_BUILD = version_build
-                end
-            end
+        version_build = self:extraconf("version", version, "build")
+        if type(version_build) == "string" then
+            version_build = os.date(version_build, os.time())
         end
     end
     return version, version_build
+end
+
+-- get the target soname
+-- @see https://github.com/tboox/tbox/issues/214
+--
+-- set_version("1.0.1", {soname = "1.0"}) -> libfoo.so.1.0, libfoo.1.0.dylib
+-- set_version("1.0.1", {soname = "1"}) -> libfoo.so.1, libfoo.1.dylib
+-- set_version("1.0.1", {soname = true}) -> libfoo.so.1, libfoo.1.dylib
+-- set_version("1.0.1", {soname = ""}) -> libfoo.so, libfoo.dylib
+function _instance:soname()
+    if not self:is_shared() then
+        return
+    end
+    if self:is_plat("windows", "mingw", "cygwin", "msys") then
+        return
+    end
+    local version = self:get("version")
+    local version_soname
+    if version then
+        version_soname = self:extraconf("version", version, "soname")
+        if version_soname == true then
+            version_soname = version:split(".", {plain = true})[1]
+        end
+    end
+    if not version_soname then
+        return
+    end
+    local soname = self:filename()
+    if type(version_soname) == "string" and #version_soname > 0 then
+        local extension = path.extension(soname)
+        if extension == ".dylib" then
+            soname = path.basename(soname) .. "." .. version_soname .. extension
+        else
+            soname = soname .. "." .. version_soname
+        end
+    end
+    return soname
 end
 
 -- get the target license
@@ -744,7 +1112,14 @@ end
 function _instance:dep(name)
     local deps = self:deps()
     if deps then
-        return deps[name]
+        local dep = deps[name]
+        if dep == nil then
+            local namespace = self:namespace()
+            if namespace then
+                dep = deps[namespace .. "::" .. name]
+            end
+        end
+        return dep
     end
 end
 
@@ -760,14 +1135,15 @@ function _instance:deps()
 end
 
 -- get target ordered deps
-function _instance:orderdeps()
+function _instance:orderdeps(opt)
+    opt = opt or {}
     if not self:_is_loaded() then
         os.raise("please call target:orderdeps() in after_load()!")
     end
     if self._DEPS == nil then
         self:_build_deps()
     end
-    return self._ORDERDEPS
+    return opt.inherit and self._INHERITDEPS or self._ORDERDEPS
 end
 
 -- get target rules
@@ -789,7 +1165,11 @@ end
 -- get target rule from the given rule name
 function _instance:rule(name)
     if self._RULES then
-        return self._RULES[name]
+        local r = self._RULES[name]
+        if r == nil and self:namespace() then
+            r = self._RULES[self:namespace() .. "::" .. name]
+        end
+        return r
     end
 end
 
@@ -799,7 +1179,7 @@ end
 -- it will be replaced in the target:rules() and target:orderules(), but will be not replaced globally in the project.rules()
 function _instance:rule_add(r)
     self._RULES = self._RULES or {}
-    self._RULES[r:name()] = r
+    self._RULES[r:fullname()] = r
     self._ORDERULES = nil
 end
 
@@ -834,9 +1214,14 @@ function _instance:is_headeronly()
     return self:kind() == "headeronly"
 end
 
+-- is moduleonly target?
+function _instance:is_moduleonly()
+    return self:kind() == "moduleonly"
+end
+
 -- is library target?
 function _instance:is_library()
-    return self:is_static() or self:is_shared() or self:is_headeronly()
+    return self:is_static() or self:is_shared() or self:is_headeronly() or self:is_moduleonly()
 end
 
 -- is default target?
@@ -850,27 +1235,39 @@ function _instance:is_enabled()
     return self:get("enabled") ~= false
 end
 
+-- is rebuilt?
+function _instance:is_rebuilt()
+    return self:data("rebuilt")
+end
+
+-- is cross-compilation?
+function _instance:is_cross()
+    return is_cross(self:plat(), self:arch())
+end
+
 -- get the enabled option
-function _instance:opt(name)
-    return self:opts()[name]
+function _instance:opt(name, opt)
+    return self:opts(opt)[name]
 end
 
 -- get the enabled options
-function _instance:opts()
-
-    -- attempt to get it from cache first
-    if self._OPTS_ENABLED then
-        return self._OPTS_ENABLED
+function _instance:opts(opt)
+    opt = opt or {}
+    local cachekey = "opts"
+    if opt.public then
+        cachekey = cachekey .. "_public"
+    elseif opt.interface then
+        cachekey = cachekey .. "_interface"
     end
-
-    -- load options if be enabled
-    self._OPTS_ENABLED = {}
-    for _, opt in ipairs(self:orderopts()) do
-        self._OPTS_ENABLED[opt:name()] = opt
+    local opts = self:_memcache():get(cachekey)
+    if not opts then
+        opts = {}
+        for _, opt_ in ipairs(self:orderopts(opt)) do
+            opts[opt_:name()] = opt_
+        end
+        self:_memcache():set(cachekey, opts)
     end
-
-    -- get it
-    return self._OPTS_ENABLED
+    return opts
 end
 
 -- get the enabled ordered options with {public|interface = ...}
@@ -884,25 +1281,18 @@ function _instance:orderopts(opt)
     end
     local orderopts = self:_memcache():get(cachekey)
     if not orderopts then
-
-        -- load options if be enabled
         orderopts = {}
         for _, name in ipairs(table.wrap(self:get("options", opt))) do
             local opt_ = nil
-            if config.get(name) then opt_ = option.load(name) end
+            local enabled = config.get(name)
+            if enabled == nil and self:namespace() then
+                enabled = config.get(self:namespace() .. "::" .. name)
+            end
+            if enabled then
+                opt_ = option.load(name, {namespace = self:namespace()})
+            end
             if opt_ then
                 table.insert(orderopts, opt_)
-            end
-        end
-
-        -- load options from packages if no require info, be compatible with the option package in (*.pkg)
-        for _, name in ipairs(table.wrap(self:get("packages", opt))) do
-            if not project_package.load(name) then
-                local opt_ = nil
-                if config.get(name) then opt_ = option.load(name) end
-                if opt_ then
-                    table.insert(orderopts, opt_)
-                end
             end
         end
         self:_memcache():set(cachekey, orderopts)
@@ -951,6 +1341,17 @@ function _instance:orderpkgs(opt)
         if requires then
             for _, packagename in ipairs(table.wrap(self:get("packages", opt))) do
                 local pkg = requires[packagename]
+                -- attempt to get package with namespace
+                if pkg == nil and packagename:find("::", 1, true) then
+                    local parts = packagename:split("::", {plain = true})
+                    local namespace_pkg = requires[parts[#parts]]
+                    if namespace_pkg and namespace_pkg:namespace() then
+                        local fullname = namespace_pkg:fullname()
+                        if fullname:endswith(packagename) then
+                            pkg = namespace_pkg
+                        end
+                    end
+                end
                 if pkg and pkg:enabled() then
                     table.insert(packages, pkg)
                 end
@@ -983,7 +1384,7 @@ function _instance:pkgenvs()
             end
         end
         for _, pkg in pkgs:orderkeys() do
-            local envs = pkg:get("envs")
+            local envs = pkg:envs()
             if envs then
                 for name, values in table.orderpairs(envs) do
                     if type(values) == "table" then
@@ -1005,7 +1406,7 @@ end
 
 -- get the config info of the given package
 function _instance:pkgconfig(pkgname)
-    local extra_packages = self:get("__extra_packages")
+    local extra_packages = self:extraconf("packages")
     if extra_packages then
         return extra_packages[pkgname]
     end
@@ -1019,27 +1420,29 @@ function _instance:objectdir(opt)
     if not objectdir then
         objectdir = path.join(config.buildir(), ".objs")
     end
-    objectdir = path.join(objectdir, self:name())
+    local namespace = self:namespace()
+    if namespace then
+        objectdir = path.join(objectdir, (namespace:replace("::", path.sep())), self:name())
+    else
+        objectdir = path.join(objectdir, self:name())
+    end
 
     -- get root directory of target
-    if opt and opt.root then
+    local intermediate_directory = self:policy("build.intermediate_directory")
+    if (opt and opt.root) or intermediate_directory == false then
         return objectdir
     end
 
-    -- append plat sub-directory
+    -- generate intermediate directory
     local plat = self:plat()
     if plat then
         objectdir = path.join(objectdir, plat)
     end
-
-    -- append arch sub-directory
     local arch = self:arch()
     if arch then
         objectdir = path.join(objectdir, arch)
     end
-
-    -- append mode sub-directory
-    local mode = config.get("mode")
+    local mode = config.mode()
     if mode then
         objectdir = path.join(objectdir, mode)
     end
@@ -1054,27 +1457,29 @@ function _instance:dependir(opt)
     if not dependir then
         dependir = path.join(config.buildir(), ".deps")
     end
-    dependir = path.join(dependir, self:name())
+    local namespace = self:namespace()
+    if namespace then
+        dependir = path.join(dependir, (namespace:replace("::", path.sep())), self:name())
+    else
+        dependir = path.join(dependir, self:name())
+    end
 
     -- get root directory of target
-    if opt and opt.root then
+    local intermediate_directory = self:policy("build.intermediate_directory")
+    if (opt and opt.root) or intermediate_directory == false then
         return dependir
     end
 
-    -- append plat sub-directory
+    -- generate intermediate directory
     local plat = self:plat()
     if plat then
         dependir = path.join(dependir, plat)
     end
-
-    -- append arch sub-directory
     local arch = self:arch()
     if arch then
         dependir = path.join(dependir, arch)
     end
-
-    -- append mode sub-directory
-    local mode = config.get("mode")
+    local mode = config.mode()
     if mode then
         dependir = path.join(dependir, mode)
     end
@@ -1084,28 +1489,34 @@ end
 -- get the autogen files directory
 function _instance:autogendir(opt)
 
-    -- the autogen directory
-    local autogendir = path.join(config.buildir(), ".gens", self:name())
+    -- init the autogen directory
+    local autogendir = self:get("autogendir")
+    if not autogendir then
+        autogendir = path.join(config.buildir(), ".gens")
+    end
+    local namespace = self:namespace()
+    if namespace then
+        autogendir = path.join(autogendir, (namespace:replace("::", path.sep())), self:name())
+    else
+        autogendir = path.join(autogendir, self:name())
+    end
 
     -- get root directory of target
-    if opt and opt.root then
+    local intermediate_directory = self:policy("build.intermediate_directory")
+    if (opt and opt.root) or intermediate_directory == false then
         return autogendir
     end
 
-    -- append plat sub-directory
+    -- generate intermediate directory
     local plat = self:plat()
     if plat then
         autogendir = path.join(autogendir, plat)
     end
-
-    -- append arch sub-directory
     local arch = self:arch()
     if arch then
         autogendir = path.join(autogendir, arch)
     end
-
-    -- append mode sub-directory
-    local mode = config.get("mode")
+    local mode = config.mode()
     if mode then
         autogendir = path.join(autogendir, mode)
     end
@@ -1140,13 +1551,16 @@ function _instance:autogenfile(sourcefile, opt)
     -- objectfile: project/build/.objs/xxxx/../../xxx.c will be out of range for objectdir
     -- autogenfile: project/build/.gens/xxxx/../../xxx.c will be out of range for autogendir
     --
-    -- we need replace '..' to '__' in this case
+    -- we need to replace '..' with '__' in this case
     --
     if path.is_absolute(relativedir) and os.host() == "windows" then
-        -- remove C:\\ and whitespaces
+        -- remove C:\\ and whitespaces and fix long path issue
         -- e.g. C:\\Program Files (x64)\\xxx\Windows.h
-        -- @see https://github.com/xmake-io/xmake/issues/3021
-        relativedir = hash.uuid4(relativedir):gsub("%-", ""):lower()
+        --
+        -- @see
+        -- https://github.com/xmake-io/xmake/issues/3021
+        -- https://github.com/xmake-io/xmake/issues/3715
+        relativedir = hash.strhash128(relativedir)
     end
     relativedir = relativedir:gsub("%.%.", "__")
     local rootdir = (opt and opt.rootdir) and opt.rootdir or self:autogendir()
@@ -1162,26 +1576,30 @@ function _instance:targetdir()
     -- the target directory
     local targetdir = self:get("targetdir")
     if not targetdir then
-
-        -- get build directory
         targetdir = config.buildir()
 
-        -- append plat sub-directory
+        -- get root directory of target
+        local intermediate_directory = self:policy("build.intermediate_directory")
+        if intermediate_directory == false then
+            return targetdir
+        end
+
+        -- generate intermediate directory
         local plat = self:plat()
         if plat then
             targetdir = path.join(targetdir, plat)
         end
-
-        -- append arch sub-directory
         local arch = self:arch()
         if arch then
             targetdir = path.join(targetdir, arch)
         end
-
-        -- append mode sub-directory
-        local mode = config.get("mode")
+        local mode = config.mode()
         if mode then
             targetdir = path.join(targetdir, mode)
+        end
+        local namespace = self:namespace()
+        if namespace then
+            targetdir = path.join(targetdir, (namespace:replace("::", path.sep())))
         end
     end
     return targetdir
@@ -1191,7 +1609,7 @@ end
 function _instance:filename()
 
     -- no target file?
-    if self:is_object() or self:is_phony() or self:is_headeronly() then
+    if self:is_object() or self:is_phony() or self:is_headeronly() or self:is_moduleonly() then
         return
     end
 
@@ -1203,6 +1621,7 @@ function _instance:filename()
         local suffixname = self:get("suffixname")
         local extension  = self:get("extension")
         filename = target.filename(self:basename(), targetkind, {
+            format = self:_format(),
             plat = self:plat(), arch = self:arch(),
             prefixname = prefixname,
             suffixname = suffixname,
@@ -1244,7 +1663,13 @@ function _instance:symbolfile()
     assert(targetdir and type(targetdir) == "string")
 
     -- the symbol file name
-    local filename = target.filename(self:basename(), "symbol", {plat = self:plat(), arch = self:arch()})
+    local prefixname = self:get("prefixname")
+    local suffixname = self:get("suffixname")
+    local filename = target.filename(self:basename(), "symbol", {
+        plat = self:plat(), arch = self:arch(),
+        format = self:_format("symbol"),
+        prefixname = prefixname,
+        suffixname = suffixname})
     assert(filename)
 
     -- make the symbol file path
@@ -1254,11 +1679,6 @@ end
 -- get the script directory of xmake.lua
 function _instance:scriptdir()
     return self:get("__scriptdir")
-end
-
--- TODO get header directory (deprecated)
-function _instance:headerdir()
-    return self:get("headerdir") or config.buildir()
 end
 
 -- get configuration output directory
@@ -1271,20 +1691,56 @@ function _instance:rundir()
     return baseoption.get("workdir") or self:get("rundir") or path.directory(self:targetfile())
 end
 
--- get install directory
-function _instance:installdir()
+-- get prefix directory
+function _instance:prefixdir()
+    return self:get("prefixdir")
+end
 
-    -- get it from the cache
+-- get the installed binary directory
+function _instance:bindir()
+    local bindir = self:extraconf("prefixdir", self:prefixdir(), "bindir")
+    if bindir == nil then
+        bindir = "bin"
+    end
+    return self:installdir(bindir)
+end
+
+-- get the installed library directory
+function _instance:libdir()
+    local libdir = self:extraconf("prefixdir", self:prefixdir(), "libdir")
+    if libdir == nil then
+        libdir = "lib"
+    end
+    return self:installdir(libdir)
+end
+
+-- get the installed include directory
+function _instance:includedir()
+    local includedir = self:extraconf("prefixdir", self:prefixdir(), "includedir")
+    if includedir == nil then
+        includedir = "include"
+    end
+    return self:installdir(includedir)
+end
+
+-- get install directory
+function _instance:installdir(...)
+    opt = opt or {}
     local installdir = baseoption.get("installdir")
     if not installdir then
-
         -- DESTDIR: be compatible with https://www.gnu.org/prep/standards/html_node/DESTDIR.html
         installdir = self:get("installdir") or os.getenv("INSTALLDIR") or os.getenv("PREFIX") or os.getenv("DESTDIR") or platform.get("installdir")
         if installdir then
             installdir = installdir:trim()
         end
     end
-    return installdir
+    if installdir then
+        local prefixdir = self:prefixdir()
+        if prefixdir then
+            installdir = path.join(installdir, prefixdir)
+        end
+        return path.normalize(path.join(installdir, ...))
+    end
 end
 
 -- get package directory
@@ -1311,7 +1767,8 @@ function _instance:filerules(sourcefile)
         if filerules then
             override = filerules.override
             for _, rulename in ipairs(table.wrap(filerules)) do
-                local r = target._project().rule(rulename) or rule.rule(rulename)
+                local r = target._project().rule(rulename, {namespace = self:namespace()}) or
+                            rule.rule(rulename) or self:rule(rulename)
                 if r then
                     table.insert(rules, r)
                 end
@@ -1369,51 +1826,75 @@ function _instance:filerules(sourcefile)
 end
 
 -- get the config info of the given source file
-function _instance:fileconfig(sourcefile)
+function _instance:fileconfig(sourcefile, opt)
+    opt = opt or {}
+    local filetype = opt.filetype or "files"
 
-    -- get files config
-    local filesconfig = self._FILESCONFIG
-    if not filesconfig then
-        filesconfig = {}
-        for filepath, fileconfig in pairs(table.wrap(self:get("__extra_files"))) do
-
-            -- match source files
-            local results = os.match(filepath)
-            if #results == 0 and not fileconfig.always_added then
-                local sourceinfo = self:sourceinfo("files", filepath) or {}
-                utils.warning("%s:%d${clear}: cannot match add_files(\"%s\") in %s(%s)", sourceinfo.file or "", sourceinfo.line or -1, filepath, self:type(), self:name())
-            end
-
-            -- process source files
-            for _, file in ipairs(results) do
-                if path.is_absolute(file) then
-                    file = path.relative(file, os.projectdir())
-                end
-                filesconfig[file] = fileconfig
-            end
-            -- we also need support always_added, @see https://github.com/xmake-io/xmake/issues/1634
-            if #results == 0 and fileconfig.always_added then
-                filesconfig[filepath] = fileconfig
-            end
+    -- get configs from user, e.g. target:fileconfig_set/add
+    -- it has contained all original configs
+    if self._FILESCONFIG_USER then
+        local filesconfig = self._FILESCONFIG_USER[filetype]
+        if filesconfig and filesconfig[sourcefile] then
+            return filesconfig[sourcefile]
         end
-        self._FILESCONFIG = filesconfig
     end
 
-    -- get file config
+    -- get orignal configs from `add_xxxfiles()`
+    self._FILESCONFIG = self._FILESCONFIG or {}
+    local filesconfig = self._FILESCONFIG[filetype]
+    if not filesconfig then
+        filesconfig = {}
+        for filepath, fileconfig in pairs(table.wrap(self:extraconf(filetype))) do
+            local results = os.match(filepath)
+            if #results > 0 then
+                for _, file in ipairs(results) do
+                    if path.is_absolute(file) then
+                        file = path.relative(file, os.projectdir())
+                    end
+                    filesconfig[file] = fileconfig
+                end
+            else
+                -- we also need support always_added, @see https://github.com/xmake-io/xmake/issues/1634
+                if fileconfig.always_added then
+                    filesconfig[filepath] = fileconfig
+                end
+            end
+        end
+        self._FILESCONFIG[filetype] = filesconfig
+    end
     return filesconfig[sourcefile]
 end
 
 -- set the config info to the given source file
-function _instance:fileconfig_set(sourcefile, info)
-    local filesconfig = self._FILESCONFIG or {}
+function _instance:fileconfig_set(sourcefile, info, opt)
+    opt = opt or {}
+    self._FILESCONFIG_USER = self._FILESCONFIG_USER or {}
+    local filetype = opt.filetype or "files"
+    local filesconfig = self._FILESCONFIG_USER[filetype]
+    if not filesconfig then
+        filesconfig = {}
+        self._FILESCONFIG_USER[filetype] = filesconfig
+    end
     filesconfig[sourcefile] = info
-    self._FILESCONFIG = filesconfig
 end
 
 -- add the config info to the given source file
-function _instance:fileconfig_add(sourcefile, info)
-    local filesconfig = self._FILESCONFIG or {}
+function _instance:fileconfig_add(sourcefile, info, opt)
+    opt = opt or {}
+    self._FILESCONFIG_USER = self._FILESCONFIG_USER or {}
+    local filetype = opt.filetype or "files"
+    local filesconfig = self._FILESCONFIG_USER[filetype]
+    if not filesconfig then
+        filesconfig = {}
+        self._FILESCONFIG_USER[filetype] = filesconfig
+    end
+
+    -- we fetch orignal configs first if no user configs
     local fileconfig = filesconfig[sourcefile]
+    if not fileconfig then
+        fileconfig = table.clone(self:fileconfig(sourcefile, opt))
+        filesconfig[sourcefile] = fileconfig
+    end
     if fileconfig then
         for k, v in pairs(info) do
             if k == "force" then
@@ -1439,7 +1920,6 @@ function _instance:fileconfig_add(sourcefile, info)
     else
         filesconfig[sourcefile] = info
     end
-    self._FILESCONFIG = filesconfig
 end
 
 -- get the source files
@@ -1505,7 +1985,8 @@ function _instance:sourcefiles()
         end
         if #results == 0 then
             local sourceinfo = self:sourceinfo("files", file) or {}
-            utils.warning("%s:%d${clear}: cannot match %s_files(\"%s\") in %s(%s)", sourceinfo.file or "", sourceinfo.line or -1, (removed and "remove" or "add"), file, self:type(), self:name())
+            utils.warning("%s:%d${clear}: cannot match %s_files(\"%s\") in %s(%s)",
+                sourceinfo.file or "", sourceinfo.line or -1, (removed and "remove" or "add"), file, self:type(), self:fullname())
         end
 
         -- process source files
@@ -1531,12 +2012,13 @@ function _instance:sourcefiles()
     if removed_count > 0 then
         table.remove_if(sourcefiles, function (i, sourcefile)
             for _, removed_file in ipairs(sourcefiles_removed) do
-                local pattern = path.translate(removed_file:gsub("|.*$", ""))
+                local pattern = path.translate((removed_file:gsub("|.*$", "")))
                 if pattern:sub(1, 2):find('%.[/\\]') then
                     pattern = pattern:sub(3)
                 end
                 pattern = path.pattern(pattern)
-                if sourcefile:match(pattern) then
+                -- we need to match whole pattern, https://github.com/xmake-io/xmake/issues/3523
+                if sourcefile:match("^" .. pattern .. "$") then
                     return true
                 end
             end
@@ -1551,7 +2033,10 @@ end
 -- get object file from source file
 function _instance:objectfile(sourcefile)
     return self:autogenfile(sourcefile, {rootdir = self:objectdir(),
-        filename = target.filename(path.filename(sourcefile), "object", {plat = self:plat(), arch = self:arch()})})
+        filename = target.filename(path.filename(sourcefile), "object", {
+            plat = self:plat(),
+            arch = self:arch(),
+            format = self:_format("object")})})
 end
 
 -- get the object files
@@ -1570,22 +2055,39 @@ function _instance:objectfiles()
     local batchcount = 0
     local sourcebatches = self:sourcebatches()
     local orderkeys = table.keys(sourcebatches)
-    table.sort(orderkeys) -- @note we need guarantee the order of objectfiles for depend.is_changed() and etc.
+    table.sort(orderkeys) -- @note we need to guarantee the order of objectfiles for depend.is_changed() and etc.
     for _, k in ipairs(orderkeys) do
         local sourcebatch = sourcebatches[k]
         table.join2(objectfiles, sourcebatch.objectfiles)
         batchcount = batchcount + 1
     end
 
-    -- some object files may be repeat and appear link errors if multi-batches exists, so we need remove all repeat object files
+    -- some object files may be repeat and appear link errors if multi-batches exists, so we need to remove all repeat object files
     -- e.g. add_files("src/*.c", {rules = {"rule1", "rule2"}})
     local deduplicate = batchcount > 1
 
     -- get object files from all dependent targets (object kind)
-    if self:orderdeps() then
-        for _, dep in ipairs(self:orderdeps()) do
-            if dep:kind() == "object" then
-                table.join2(objectfiles, dep:objectfiles())
+    -- @note we only merge objects in plain deps, e.g. binary -> (static -> object, object ...)
+    local plaindeps = self:get("deps")
+    if plaindeps and (self:is_binary() or self:is_shared() or self:is_static()) then
+        local function _get_all_objectfiles_of_object_dep (t)
+            local _objectfiles = {}
+            table.join2(_objectfiles, t:objectfiles())
+            local _plaindeps = t:get("deps")
+            if _plaindeps then
+                for _, depname in ipairs(table.wrap(_plaindeps)) do
+                    local dep = t:dep(depname)
+                    if dep and dep:is_object() then
+                        table.join2(_objectfiles, _get_all_objectfiles_of_object_dep(dep))
+                    end
+                end
+            end
+            return _objectfiles
+        end
+        for _, depname in ipairs(table.wrap(plaindeps)) do
+            local dep = self:dep(depname)
+            if dep and dep:is_object() then
+                table.join2(objectfiles, _get_all_objectfiles_of_object_dep(dep))
                 deduplicate = true
             end
         end
@@ -1601,147 +2103,52 @@ function _instance:objectfiles()
     return objectfiles
 end
 
--- TODO get the header files, get("headers") (deprecated)
-function _instance:headers(outputdir)
-    return self:headerfiles(outputdir, {only_deprecated = true})
-end
-
 -- get the header files
---
--- default: get("headers") + get("headerfiles")
--- only_deprecated: get("headers")
---
 function _instance:headerfiles(outputdir, opt)
-
-    -- get header files?
     opt = opt or {}
-    local headers = self:get("headers") -- TODO deprecated
-    local only_deprecated = opt.only_deprecated
-    if not only_deprecated then
-       headers = table.join(headers or {}, self:get("headerfiles"))
-       -- add_headerfiles("src/*.h", {install = false})
-       -- @see https://github.com/xmake-io/xmake/issues/2577
-       if opt.installonly then
-           local installfiles = {}
-           for _, headerfile in ipairs(table.wrap(headers)) do
-               if self:extraconf("headerfiles", headerfile, "install") ~= false then
-                   table.insert(installfiles, headerfile)
-               end
+    local headerfiles = self:get("headerfiles", opt) or {}
+    -- add_headerfiles("src/*.h", {install = false})
+    -- @see https://github.com/xmake-io/xmake/issues/2577
+    if opt.installonly then
+       local installfiles = {}
+       for _, headerfile in ipairs(table.wrap(headerfiles)) do
+           if self:extraconf("headerfiles", headerfile, "install") ~= false then
+               table.insert(installfiles, headerfile)
            end
-           headers = installfiles
        end
+       headerfiles = installfiles
     end
-    if not headers then
+    if not headerfiles then
         return
     end
 
-    -- get the installed header directory
-    local headerdir = outputdir
-    if not headerdir then
-        if only_deprecated then
-            headerdir = self:headerdir()
-        elseif self:installdir() then
-            headerdir = path.join(self:installdir(), "include")
+    if not outputdir then
+        if self:includedir() then
+            outputdir = self:includedir()
         end
     end
-
-    -- get the extra information
-    local extrainfo = table.wrap(self:get("__extra_headerfiles"))
-
-    -- get the source paths and destinate paths
-    local srcheaders = {}
-    local dstheaders = {}
-    local srcheaders_removed = {}
-    local removed_count = 0
-    for _, header in ipairs(table.wrap(headers)) do
-
-        -- mark as removed files?
-        local removed = false
-        local prefix = "__remove_"
-        if header:startswith(prefix) then
-            header = header:sub(#prefix + 1)
-            removed = true
-        end
-
-        -- get the root directory
-        local rootdir, count = header:gsub("|.*$", ""):gsub("%(.*%)$", "")
-        if count == 0 then
-            rootdir = nil
-        end
-        if rootdir and rootdir:trim() == "" then
-            rootdir = "."
-        end
-
-        -- remove '(' and ')' first
-        local srcpaths = header:gsub("[%(%)]", "")
-        if srcpaths then
-
-            -- get the source paths
-            srcpaths = os.match(srcpaths)
-            if srcpaths then
-                if removed then
-                    removed_count = removed_count + #srcpaths
-                    table.join2(srcheaders_removed, srcpaths)
-                else
-                    -- add the source headers
-                    table.join2(srcheaders, srcpaths)
-
-                    -- get the destinate directories if the install directory exists
-                    if headerdir then
-                        local prefixdir = (extrainfo[header] or {}).prefixdir
-                        for _, srcpath in ipairs(srcpaths) do
-                            local dstdir = headerdir
-                            if prefixdir then
-                                dstdir = path.join(dstdir, prefixdir)
-                            end
-                            local dstheader = nil
-                            if rootdir then
-                                dstheader = path.absolute(path.relative(srcpath, rootdir), dstdir)
-                            else
-                                dstheader = path.join(dstdir, path.filename(srcpath))
-                            end
-                            table.insert(dstheaders, dstheader)
-                        end
-                    end
-                end
-            end
-        end
-    end
-
-    -- remove all header files which need be removed
-    if removed_count > 0 then
-        table.remove_if(srcheaders, function (i, srcheader)
-            for _, removed_file in ipairs(srcheaders_removed) do
-                local pattern = path.translate(removed_file:gsub("|.*$", ""))
-                if pattern:sub(1, 2):find('%.[/\\]') then
-                    pattern = pattern:sub(3)
-                end
-                pattern = path.pattern(pattern)
-                if srcheader:match(pattern) then
-                    if i <= #dstheaders then
-                        table.remove(dstheaders, i)
-                    end
-                    return true
-                end
-            end
-        end)
-    end
-    return srcheaders, dstheaders
+    return match_copyfiles(self, "headerfiles", outputdir, {copyfiles = headerfiles})
 end
 
 -- get the configuration files
 function _instance:configfiles(outputdir)
-    return self:_copiedfiles("configfiles", outputdir or self:configdir(), function (dstpath, fileinfo)
+    return match_copyfiles(self, "configfiles", outputdir or self:configdir(), {pathfilter = function (dstpath, fileinfo)
             if dstpath:endswith(".in") then
                 dstpath = dstpath:sub(1, -4)
             end
             return dstpath
-        end)
+        end})
 end
 
 -- get the install files
-function _instance:installfiles(outputdir)
-    return self:_copiedfiles("installfiles", outputdir or self:installdir())
+function _instance:installfiles(outputdir, opt)
+    local installfiles = self:get("installfiles", opt) or {}
+    return match_copyfiles(self, "installfiles", outputdir or self:installdir(), {copyfiles = installfiles})
+end
+
+-- get the extra files
+function _instance:extrafiles()
+    return (match_copyfiles(self, "extrafiles"))
 end
 
 -- get depend file from object file
@@ -1795,12 +2202,18 @@ function _instance:dependfile(objectfile)
         relativedir = origindir
     end
     if path.is_absolute(relativedir) and os.host() == "windows" then
-        relativedir = relativedir:gsub(":[\\/]*", '\\') -- replace C:\xxx\ => C\xxx\
+        -- remove C:\\ and whitespaces and fix long path issue
+        -- e.g. C:\\Program Files (x64)\\xxx\Windows.h
+        --
+        -- @see
+        -- https://github.com/xmake-io/xmake/issues/3021
+        -- https://github.com/xmake-io/xmake/issues/3715
+        relativedir = hash.strhash128(relativedir)
     end
 
     -- originfile: project/build/.objs/xxxx/../../xxx.c will be out of range for objectdir
     --
-    -- we need replace '..' to '__' in this case
+    -- we need to replace '..' to '__' in this case
     --
     relativedir = relativedir:gsub("%.%.", "__")
 
@@ -1811,25 +2224,15 @@ end
 
 -- get the dependent include files
 function _instance:dependfiles()
-
-    -- get source batches
     local sourcebatches, modified = self:sourcebatches()
-
-    -- cached? return it directly
     if self._DEPENDFILES and not modified then
         return self._DEPENDFILES
     end
-
-    -- get dependent files from source batches
     local dependfiles = {}
     for _, sourcebatch in pairs(self:sourcebatches()) do
         table.join2(dependfiles, sourcebatch.dependfiles)
     end
-
-    -- cache it
     self._DEPENDFILES = dependfiles
-
-    -- ok?
     return dependfiles
 end
 
@@ -1854,7 +2257,8 @@ function _instance:sourcekinds()
     local sourcekinds = self._SOURCEKINDS
     if not sourcekinds then
         sourcekinds = {}
-        for _, sourcebatch in table.orderpairs(self:sourcebatches()) do
+        local sourcebatches = self:sourcebatches()
+        for _, sourcebatch in table.orderpairs(sourcebatches) do
             local sourcekind = sourcebatch.sourcekind
             if sourcekind then
                 table.insert(sourcekinds, sourcekind)
@@ -1942,48 +2346,7 @@ function _instance:script(name, generic)
 
     -- get script
     local script = self:get(name)
-    local result = nil
-    if type(script) == "function" then
-        result = script
-    elseif type(script) == "table" then
-
-        -- get plat and arch
-        local plat = self:plat()
-        local arch = self:arch()
-
-        -- match pattern
-        --
-        -- `@linux`
-        -- `@linux|x86_64`
-        -- `@macosx,linux`
-        -- `android@macosx,linux`
-        -- `android|armeabi-v7a@macosx,linux`
-        -- `android|armeabi-v7a@macosx,linux|x86_64`
-        -- `android|armeabi-v7a@linux|x86_64`
-        --
-        for _pattern, _script in pairs(script) do
-            local hosts = {}
-            local hosts_spec = false
-            _pattern = _pattern:gsub("@(.+)", function (v)
-                for _, host in ipairs(v:split(',')) do
-                    hosts[host] = true
-                    hosts_spec = true
-                end
-                return ""
-            end)
-            if not _pattern:startswith("__") and (not hosts_spec or hosts[os.subhost() .. '|' .. os.subarch()] or hosts[os.subhost()])
-            and (_pattern:trim() == "" or (plat .. '|' .. arch):find('^' .. _pattern .. '$') or plat:find('^' .. _pattern .. '$')) then
-                result = _script
-                break
-            end
-        end
-
-        -- get generic script
-        result = result or script["__generic__"] or generic
-    end
-
-    -- only generic script
-    result = result or generic
+    local result = select_script(script, {plat = self:plat(), arch = self:arch()}) or generic
 
     -- imports some modules first
     if result and result ~= generic then
@@ -1995,78 +2358,6 @@ function _instance:script(name, generic)
         end
     end
     return result
-end
-
--- TODO get the config header version (deprecated)
-function _instance:configversion()
-
-    -- get the config version and build version
-    local version = nil
-    local buildversion = nil
-    local configheader = self:get("config_header")
-    local configheader_extra = self:get("__extra_config_header")
-    if type(configheader_extra) == "table" then
-        version      = table.wrap(configheader_extra[configheader]).version
-        buildversion = self._CONFIGHEADER_BUILDVERSION
-        if not buildversion then
-            buildversion = table.wrap(configheader_extra[configheader]).buildversion
-            if buildversion then
-                buildversion = os.date(buildversion, os.time())
-            end
-            self._CONFIGHEADER_BUILDVERSION = buildversion
-        end
-    end
-
-    -- ok?
-    return version, buildversion
-end
-
--- get the config header prefix
-function _instance:configprefix()
-
-    -- get the config prefix
-    local configprefix = nil
-    local configheader = self:get("config_header")
-    local configheader_extra = self:get("__extra_config_header")
-    if type(configheader_extra) == "table" then
-        configprefix = table.wrap(configheader_extra[configheader]).prefix
-    end
-    return configprefix
-end
-
--- get the config header files (deprecated)
-function _instance:configheader(outputdir)
-
-    -- get config header
-    local configheader = self:get("config_header")
-    if not configheader then
-        return
-    end
-
-    -- get the root directory
-    local rootdir, count = configheader:gsub("|.*$", ""):gsub("%(.*%)$", "")
-    if count == 0 then
-        rootdir = nil
-    end
-    if rootdir and rootdir:trim() == "" then
-        rootdir = "."
-    end
-
-    -- remove '(' and ')'
-    configheader = configheader:gsub("[%(%)]", "")
-
-    -- get the output header
-    local outputheader = nil
-    if outputdir then
-        if rootdir then
-            outputheader = path.absolute(path.relative(configheader, rootdir), outputdir)
-        else
-            outputheader = path.join(outputdir, path.filename(configheader))
-        end
-    end
-
-    -- ok
-    return configheader, outputheader
 end
 
 -- get the precompiled header file (xxx.[h|hpp|inl])
@@ -2092,11 +2383,7 @@ end
 -- @param langkind  c/cxx
 --
 function _instance:pcoutputfile(langkind)
-
-    -- init cache
     self._PCOUTPUTFILES = self._PCOUTPUTFILES or {}
-
-    -- get it from the cache first
     local pcoutputfile = self._PCOUTPUTFILES[langkind]
     if pcoutputfile then
         return pcoutputfile
@@ -2105,12 +2392,17 @@ function _instance:pcoutputfile(langkind)
     -- get the precompiled header file in the object directory
     local pcheaderfile = self:pcheaderfile(langkind)
     if pcheaderfile then
-
-        -- is gcc?
         local is_gcc = false
-        local _, toolname = self:tool(langkind == "c" and "cc" or "cxx")
-        if toolname and (toolname == "gcc" or toolname == "gxx") then
-            is_gcc = true
+        local is_msvc = false
+        local sourcekinds = {c = "cc", cxx = "cxx", m = "mm", mxx = "mxx"}
+        local sourcekind = assert(sourcekinds[langkind], "unknown language kind: " .. langkind)
+        local _, toolname = self:tool(sourcekind)
+        if toolname then
+            if toolname == "gcc" or toolname == "gxx" then
+                is_gcc = true
+            elseif toolname == "cl" then
+                is_msvc = true
+            end
         end
 
         -- make precompiled output file
@@ -2118,11 +2410,74 @@ function _instance:pcoutputfile(langkind)
         -- @note gcc has not -include-pch option to set the pch file path
         --
         pcoutputfile = self:objectfile(pcheaderfile)
-        pcoutputfile = path.join(path.directory(pcoutputfile), path.basename(pcoutputfile) .. (is_gcc and ".gch" or ".pch"))
-
-        -- save to cache
+        local pcoutputfilename = path.basename(pcoutputfile)
+        if is_gcc then
+            pcoutputfilename = pcoutputfilename .. ".gch"
+        else
+            -- different vs versions of pch files are not backward compatible,
+            -- so we need to distinguish between them.
+            --
+            -- @see https://github.com/xmake-io/xmake/issues/5413
+            local msvc = self:toolchain("msvc")
+            if is_msvc and msvc then
+                local vs_toolset = msvc:config("vs_toolset")
+                if vs_toolset then
+                    vs_toolset = sandbox_module.import("private.utils.toolchain", {anonymous = true}).get_vs_toolset_ver(vs_toolset)
+                end
+                if vs_toolset then
+                    pcoutputfilename = pcoutputfilename .. "_" .. vs_toolset
+                end
+            end
+            pcoutputfilename = pcoutputfilename .. ".pch"
+        end
+        pcoutputfile = path.join(path.directory(pcoutputfile), sourcekind, pcoutputfilename)
         self._PCOUTPUTFILES[langkind] = pcoutputfile
         return pcoutputfile
+    end
+end
+
+-- get runtimes
+function _instance:runtimes()
+    local runtimes = self:_memcache():get("runtimes")
+    if runtimes == nil then
+        runtimes = self:get("runtimes")
+        if runtimes then
+            local runtimes_supported = hashset.new()
+            local toolchains = self:toolchains() or platform.load(self:plat(), self:arch()):toolchains()
+            if toolchains then
+                for _, toolchain_inst in ipairs(toolchains) do
+                    if toolchain_inst:is_standalone() and toolchain_inst:get("runtimes") then
+                        for _, runtime in ipairs(table.wrap(toolchain_inst:get("runtimes"))) do
+                            runtimes_supported:insert(runtime)
+                        end
+                    end
+                end
+            end
+            local runtimes_current = {}
+            for _, runtime in ipairs(table.wrap(runtimes)) do
+                if runtimes_supported:has(runtime) then
+                    table.insert(runtimes_current, runtime)
+                end
+            end
+            runtimes = table.unwrap(runtimes_current)
+        end
+        runtimes = runtimes or false
+        self:_memcache():set("runtimes", runtimes)
+    end
+    return runtimes or nil
+end
+
+-- has the given runtime for the current toolchains?
+function _instance:has_runtime(...)
+    local runtimes_set = self:_memcache():get("runtimes_set")
+    if runtimes_set == nil then
+        runtimes_set = hashset.from(table.wrap(self:runtimes()))
+        self:_memcache():set("runtimes_set", runtimes_set)
+    end
+    for _, v in ipairs(table.pack(...)) do
+        if runtimes_set:has(v) then
+            return true
+        end
     end
 end
 
@@ -2144,7 +2499,8 @@ function _instance:toolchains()
     local toolchains = self:_memcache():get("toolchains")
     if toolchains == nil then
 
-        -- load target toolchains
+        -- load target toolchains first
+        local has_standalone = false
         local target_toolchains = self:get("toolchains")
         if target_toolchains then
             toolchains = {}
@@ -2152,6 +2508,7 @@ function _instance:toolchains()
                 local toolchain_opt = table.copy(self:extraconf("toolchains", name))
                 toolchain_opt.arch = self:arch()
                 toolchain_opt.plat = self:plat()
+                toolchain_opt.namespace = self:namespace()
                 local toolchain_inst, errors = toolchain.load(name, toolchain_opt)
                 -- attempt to load toolchain from project
                 if not toolchain_inst and target._project() then
@@ -2160,12 +2517,29 @@ function _instance:toolchains()
                 if not toolchain_inst then
                     os.raise(errors)
                 end
+                if toolchain_inst:is_standalone() then
+                    has_standalone = true
+                end
                 table.insert(toolchains, toolchain_inst)
             end
+
+            -- we always need a standalone toolchain
+            -- because we maybe only set partial toolchains in target, e.g. nasm toolchain
+            --
+            -- @note platform has been checked in config/_check_target_toolchains
+            if not has_standalone then
+                for _, toolchain_inst in ipairs(self:platform():toolchains()) do
+                    if toolchain_inst:is_standalone() then
+                        table.insert(toolchains, toolchain_inst)
+                        has_standalone = true
+                        break
+                    end
+                end
+            end
         else
-            -- load platform toolchains
             toolchains = self:platform():toolchains()
         end
+
         self:_memcache():set("toolchains", toolchains)
     end
     return toolchains
@@ -2175,19 +2549,13 @@ end
 function _instance:tool(toolkind)
     -- we cannot get tool in on_load, because target:toolchains() has been not checked in configuration stage.
     if not self._LOADED_AFTER then
-        os.raise("we cannot get tool(%s) before target(%s) is loaded, maybe it is called on_load(), please call it in on_config().", toolkind, self:name())
+        os.raise("we cannot get tool(%s) before target(%s) is loaded, maybe it is called on_load(), please call it in on_config().", toolkind, self:fullname())
     end
-    return toolchain.tool(self:toolchains(), toolkind, {cachekey = "target_" .. self:name(), plat = self:plat(), arch = self:arch(),
+    return toolchain.tool(self:toolchains(), toolkind, {cachekey = "target_" .. self:fullname(), plat = self:plat(), arch = self:arch(),
                                                         before_get = function()
-        -- get program from set_toolchain/set_tools (deprecated)
-        local toolname
-        local program = self:get("toolset." .. toolkind) or self:get("toolchain." .. toolkind)
-        if not program then
-            local tools = self:get("tools") -- TODO: deprecated
-            if tools then
-                program = tools[toolkind]
-            end
-        end
+        -- get program from set_toolset
+        local program = self:get("toolset." .. toolkind)
+
         -- get program from `xmake f --cc`
         if not program and not self:get("toolchains") then
             program = config.get(toolkind)
@@ -2195,10 +2563,11 @@ function _instance:tool(toolkind)
 
         -- contain toolname? parse it, e.g. 'gcc@xxxx.exe'
         -- https://github.com/xmake-io/xmake/issues/1361
-        if program and not toolname then
+        local toolname
+        if program then
             local pos = program:find('@', 1, true)
             if pos then
-                -- we need ignore valid path with `@`, e.g. /usr/local/opt/go@1.17/bin/go
+                -- we need to ignore valid path with `@`, e.g. /usr/local/opt/go@1.17/bin/go
                 -- https://github.com/xmake-io/xmake/issues/2853
                 local prefix = program:sub(1, pos - 1)
                 if prefix and not prefix:find("[/\\]") then
@@ -2219,7 +2588,7 @@ end
 
 -- get tool configuration from the toolchains
 function _instance:toolconfig(name)
-    return toolchain.toolconfig(self:toolchains(), name, {cachekey = "target_" .. self:name(), plat = self:plat(), arch = self:arch(),
+    return toolchain.toolconfig(self:toolchains(), name, {cachekey = "target_" .. self:fullname(), plat = self:plat(), arch = self:arch(),
                                                           after_get = function(toolchain_inst)
         -- get flags from target.on_xxflags()
         local script = toolchain_inst:get("target.on_" .. name)
@@ -2234,6 +2603,20 @@ function _instance:toolconfig(name)
     end})
 end
 
+-- has source files with the given source kind?
+function _instance:has_sourcekind(...)
+    local sourcekinds_set = self._SOURCEKINDS_SET
+    if sourcekinds_set == nil then
+        sourcekinds_set = hashset.from(self:sourcekinds())
+        self._SOURCEKINDS_SET = sourcekinds_set
+    end
+    for _, v in ipairs(table.pack(...)) do
+        if sourcekinds_set:has(v) then
+            return true
+        end
+    end
+end
+
 -- has the given tool for the current target?
 --
 -- e.g.
@@ -2244,12 +2627,204 @@ end
 function _instance:has_tool(toolkind, ...)
     local _, toolname = self:tool(toolkind)
     if toolname then
-        for _, v in ipairs(table.join(...)) do
+        for _, v in ipairs(table.pack(...)) do
             if v and toolname:find("^" .. v:gsub("%-", "%%-") .. "$") then
                 return true
             end
         end
     end
+end
+
+-- has the given c funcs?
+--
+-- @param funcs     the funcs
+-- @param opt       the argument options, e.g. {includes = "xxx.h", configs = {defines = ""}}
+--
+-- @return          true or false, errors
+--
+function _instance:has_cfuncs(funcs, opt)
+    opt = opt or {}
+    opt.target = self
+    return sandbox_module.import("lib.detect.has_cfuncs", {anonymous = true})(funcs, opt)
+end
+
+-- has the given c++ funcs?
+--
+-- @param funcs     the funcs
+-- @param opt       the argument options, e.g. {includes = "xxx.h", configs = {defines = ""}}
+--
+-- @return          true or false, errors
+--
+function _instance:has_cxxfuncs(funcs, opt)
+    opt = opt or {}
+    opt.target = self
+    return sandbox_module.import("lib.detect.has_cxxfuncs", {anonymous = true})(funcs, opt)
+end
+
+-- has the given c types?
+--
+-- @param types     the types
+-- @param opt       the argument options, e.g. {configs = {defines = ""}}
+--
+-- @return          true or false, errors
+--
+function _instance:has_ctypes(types, opt)
+    opt = opt or {}
+    opt.target = self
+    return sandbox_module.import("lib.detect.has_ctypes", {anonymous = true})(types, opt)
+end
+
+-- has the given c++ types?
+--
+-- @param types     the types
+-- @param opt       the argument options, e.g. {configs = {defines = ""}}
+--
+-- @return          true or false, errors
+--
+function _instance:has_cxxtypes(types, opt)
+    opt = opt or {}
+    opt.target = self
+    return sandbox_module.import("lib.detect.has_cxxtypes", {anonymous = true})(types, opt)
+end
+
+-- has the given c includes?
+--
+-- @param includes  the includes
+-- @param opt       the argument options, e.g. {configs = {defines = ""}}
+--
+-- @return          true or false, errors
+--
+function _instance:has_cincludes(includes, opt)
+    opt = opt or {}
+    opt.target = self
+    return sandbox_module.import("lib.detect.has_cincludes", {anonymous = true})(includes, opt)
+end
+
+-- has the given c++ includes?
+--
+-- @param includes  the includes
+-- @param opt       the argument options, e.g. {configs = {defines = ""}}
+--
+-- @return          true or false, errors
+--
+function _instance:has_cxxincludes(includes, opt)
+    opt = opt or {}
+    opt.target = self
+    return sandbox_module.import("lib.detect.has_cxxincludes", {anonymous = true})(includes, opt)
+end
+
+-- has the given c flags?
+--
+-- @param flags     the flags
+-- @param opt       the argument options, e.g. { flagskey = "xxx" }
+--
+-- @return          true or false, errors
+--
+function _instance:has_cflags(flags, opt)
+    local compinst = self:compiler("cc")
+    return compinst:has_flags(flags, "cflags", opt)
+end
+
+-- has the given c++ flags?
+--
+-- @param flags     the flags
+-- @param opt       the argument options, e.g. { flagskey = "xxx" }
+--
+-- @return          true or false, errors
+--
+function _instance:has_cxxflags(flags, opt)
+    local compinst = self:compiler("cxx")
+    return compinst:has_flags(flags, "cxxflags", opt)
+end
+
+-- has the given features?
+--
+-- @param features  the features, e.g. {"c_static_assert", "cxx_constexpr"}
+-- @param opt       the argument options, e.g. {flags = ""}
+--
+-- @return          true or false, errors
+--
+function _instance:has_features(features, opt)
+    opt = opt or {}
+    opt.target = self:_checked_target()
+    return sandbox_module.import("core.tool.compiler", {anonymous = true}).has_features(features, opt)
+end
+
+-- check the size of type
+--
+-- @param typename  the typename
+-- @param opt       the argument options, e.g. {includes = "xxx.h", configs = {defines = ""}}
+--
+-- @return          the type size
+--
+function _instance:check_sizeof(typename, opt)
+    opt = opt or {}
+    opt.target = self:_checked_target()
+    return sandbox_module.import("lib.detect.check_sizeof", {anonymous = true})(typename, opt)
+end
+
+-- check the endianness of compiler
+--
+-- @param opt       the argument options, e.g. {includes = "xxx.h", configs = {defines = ""}}
+--
+-- @return          the type size
+--
+function _instance:check_bigendian(opt)
+  opt = opt or {}
+  opt.target = self:_checked_target()
+  return sandbox_module.import("lib.detect.check_bigendian", {anonymous = true})(opt)
+end
+
+-- check the given c snippets?
+--
+-- @param snippets  the snippets
+-- @param opt       the argument options, e.g. {includes = "xxx.h", configs = {defines = ""}}
+--
+-- @return          true or false, errors
+--
+function _instance:check_csnippets(snippets, opt)
+    opt = opt or {}
+    opt.target = self:_checked_target()
+    return sandbox_module.import("lib.detect.check_csnippets", {anonymous = true})(snippets, opt)
+end
+
+-- check the given c++ snippets?
+--
+-- @param snippets  the snippets
+-- @param opt       the argument options, e.g. {includes = "xxx.h", configs = {defines = ""}}
+--
+-- @return          true or false, errors
+--
+function _instance:check_cxxsnippets(snippets, opt)
+    opt = opt or {}
+    opt.target = self
+    return sandbox_module.import("lib.detect.check_cxxsnippets", {anonymous = true})(snippets, opt)
+end
+
+-- check the given objc snippets?
+--
+-- @param snippets  the snippets
+-- @param opt       the argument options, e.g. {includes = "xxx.h", configs = {defines = ""}}
+--
+-- @return          true or false, errors
+--
+function _instance:check_msnippets(snippets, opt)
+    opt = opt or {}
+    opt.target = self:_checked_target()
+    return sandbox_module.import("lib.detect.check_msnippets", {anonymous = true})(snippets, opt)
+end
+
+-- check the given objc++ snippets?
+--
+-- @param snippets  the snippets
+-- @param opt       the argument options, e.g. {includes = "xxx.h", configs = {defines = ""}}
+--
+-- @return          true or false, errors
+--
+function _instance:check_mxxsnippets(snippets, opt)
+    opt = opt or {}
+    opt.target = self:_checked_target()
+    return sandbox_module.import("lib.detect.check_mxxsnippets", {anonymous = true})(snippets, opt)
 end
 
 -- get project
@@ -2291,6 +2866,8 @@ function target.apis()
         ,   "target.set_toolchains"
         ,   "target.set_runargs"
         ,   "target.set_exceptions"
+        ,   "target.set_encodings"
+        ,   "target.set_prefixdir"
             -- target.add_xxx
         ,   "target.add_deps"
         ,   "target.add_rules"
@@ -2300,6 +2877,7 @@ function target.apis()
         ,   "target.add_languages"
         ,   "target.add_vectorexts"
         ,   "target.add_toolchains"
+        ,   "target.add_tests"
         }
     ,   keyvalues =
         {
@@ -2307,7 +2885,6 @@ function target.apis()
             "target.set_values"
         ,   "target.set_configvar"
         ,   "target.set_runenv"
-        ,   "target.set_toolchain" -- TODO: deprecated
         ,   "target.set_toolset"
         ,   "target.set_policy"
             -- target.add_xxx
@@ -2320,6 +2897,7 @@ function target.apis()
             "target.set_targetdir"
         ,   "target.set_objectdir"
         ,   "target.set_dependir"
+        ,   "target.set_autogendir"
         ,   "target.set_configdir"
         ,   "target.set_installdir"
         ,   "target.set_rundir"
@@ -2328,22 +2906,21 @@ function target.apis()
         ,   "target.add_cleanfiles"
         ,   "target.add_configfiles"
         ,   "target.add_installfiles"
+        ,   "target.add_extrafiles"
             -- target.del_xxx (deprecated)
         ,   "target.del_files"
             -- target.remove_xxx
         ,   "target.remove_files"
         ,   "target.remove_headerfiles"
-        }
-    ,   dictionary =
-        {
-            -- target.set_xxx
-            "target.set_tools" -- TODO: deprecated
-        ,   "target.add_tools" -- TODO: deprecated
+        ,   "target.remove_configfiles"
+        ,   "target.remove_installfiles"
+        ,   "target.remove_extrafiles"
         }
     ,   script =
         {
             -- target.on_xxx
             "target.on_run"
+        ,   "target.on_test"
         ,   "target.on_load"
         ,   "target.on_config"
         ,   "target.on_link"
@@ -2353,9 +2930,12 @@ function target.apis()
         ,   "target.on_clean"
         ,   "target.on_package"
         ,   "target.on_install"
+        ,   "target.on_installcmd"
         ,   "target.on_uninstall"
+        ,   "target.on_uninstallcmd"
             -- target.before_xxx
         ,   "target.before_run"
+        ,   "target.before_test"
         ,   "target.before_link"
         ,   "target.before_build"
         ,   "target.before_build_file"
@@ -2363,9 +2943,12 @@ function target.apis()
         ,   "target.before_clean"
         ,   "target.before_package"
         ,   "target.before_install"
+        ,   "target.before_installcmd"
         ,   "target.before_uninstall"
+        ,   "target.before_uninstallcmd"
             -- target.after_xxx
         ,   "target.after_run"
+        ,   "target.after_test"
         ,   "target.after_load"
         ,   "target.after_link"
         ,   "target.after_build"
@@ -2374,15 +2957,15 @@ function target.apis()
         ,   "target.after_clean"
         ,   "target.after_package"
         ,   "target.after_install"
+        ,   "target.after_installcmd"
         ,   "target.after_uninstall"
+        ,   "target.after_uninstallcmd"
         }
     }
 end
 
 -- get the filename from the given target name and kind
 function target.filename(targetname, targetkind, opt)
-
-    -- check
     opt = opt or {}
     assert(targetname and targetkind)
 
@@ -2432,7 +3015,19 @@ function target.linkname(filename, opt)
     if count == 0 and opt.plat == "mingw" then
         linkname, count = filename:gsub(target.filename("__pattern__", "static", {plat = "windows"}):gsub("%.", "%%."):gsub("__pattern__", "(.+)") .. "$", "%1")
     end
-    return count > 0 and linkname or nil
+    if count > 0 and linkname then
+        return linkname
+    end
+    -- fallback to the generic unix library name, libxxx.a, libxxx.so, ..
+    if filename:startswith("lib") then
+        if filename:endswith(".a") or filename:endswith(".so") then
+            return path.basename(filename:sub(4))
+        end
+    elseif filename:endswith(".so") or filename:endswith(".dylib") then
+        -- for custom shared libraries name, xxx.so, xxx.dylib
+        return filename
+    end
+    return nil
 end
 
 -- new a target instance

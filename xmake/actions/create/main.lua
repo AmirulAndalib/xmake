@@ -32,6 +32,9 @@ end
 -- create project from template
 function _create_project(language, templateid, targetname)
 
+    -- check the targetname
+    assert(targetname ~= ".", "you should specify ${red}-P${reset} instead of directly using ${red}.${reset}")
+
     -- check the language
     assert(language, "no language!")
 
@@ -95,7 +98,8 @@ function _create_project(language, templateid, targetname)
     local sourcedir = path.join(tempinst:scriptdir(), "project")
     if os.isdir(sourcedir) then
         for _, filedir in ipairs(os.filedirs(path.join(sourcedir, "*"))) do
-            os.cp(filedir, projectdir)
+            -- https://github.com/xmake-io/xmake/issues/5138#issuecomment-2329238617
+            os.cp(filedir, projectdir, {writeable = true})
             table.insert(filedirs, path.relative(filedir, sourcedir))
         end
         os.cp(path.join(os.programdir(), "scripts", "gitignore"), path.join(projectdir, ".gitignore"))

@@ -30,6 +30,7 @@ winenv/
 
 # for compiler
 compile_commands.json
+.cache/
 
 # Makefile generation
 /core/xmake.config.h
@@ -43,12 +44,6 @@ compile_commands.json
 
 # for fortran
 /tests/**/*.mod
-
-# for rpmbuild
-/scripts/rpmbuild/BUILD*/*
-/scripts/rpmbuild/RPMS/*
-/scripts/rpmbuild/SOURCES/*
-/scripts/rpmbuild/SRPMS/*
 
 !/xmake/actions/build/
 

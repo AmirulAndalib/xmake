@@ -39,6 +39,7 @@ os._mkdir    = os._mkdir or os.mkdir
 os._rmdir    = os._rmdir or os.rmdir
 os._touch    = os._touch or os.touch
 os._tmpdir   = os._tmpdir or os.tmpdir
+os._fscase   = os._fscase or os.fscase
 os._setenv   = os._setenv or os.setenv
 os._getenvs  = os._getenvs or os.getenvs
 os._cpuinfo  = os._cpuinfo or os.cpuinfo
@@ -54,6 +55,7 @@ os.SYSERR_NOT_ACCESS  = 3
 
 -- copy single file or directory
 function os._cp(src, dst, rootdir, opt)
+    opt = opt or {}
     assert(src and dst)
 
     -- reserve the source directory structure if opt.rootdir is given
@@ -67,7 +69,8 @@ function os._cp(src, dst, rootdir, opt)
     end
 
     -- is file or link?
-    local symlink = opt and opt.symlink
+    local symlink = opt.symlink
+    local writeable = opt.writeable
     if os.isfile(src) or (symlink and os.islink(src)) then
 
         -- the destination is directory? append the filename
@@ -80,7 +83,10 @@ function os._cp(src, dst, rootdir, opt)
         end
 
         -- copy or link file
-        if not os.cpfile(src, dst, symlink) then
+        if opt.force and os.isfile(dst) then
+            os.rmfile(dst)
+        end
+        if not os.cpfile(src, dst, symlink, writeable) then
             local errors = os.strerror()
             if symlink and os.islink(src) then
                 local reallink = os.readlink(src)
@@ -105,8 +111,6 @@ function os._cp(src, dst, rootdir, opt)
         if not os.cpdir(src, dst, symlink) then
             return false, string.format("cannot copy directory %s to %s,  %s", src, dst, os.strerror())
         end
-
-    -- not exists?
     else
         return false, string.format("cannot copy file %s, file not found!", src)
     end
@@ -114,10 +118,10 @@ function os._cp(src, dst, rootdir, opt)
 end
 
 -- move single file or directory
-function os._mv(src, dst)
+function os._mv(src, dst, opt)
+    opt = opt or {}
     assert(src and dst)
 
-    -- exists file or directory?
     if os.exists(src) then
 
         -- the destination directory exists? append the filename
@@ -126,10 +130,12 @@ function os._mv(src, dst)
         end
 
         -- move file or directory
+        if opt.force and os.isfile(dst) then
+            os.rmfile(dst)
+        end
         if not os.rename(src, dst) then
             return false, string.format("cannot move %s to %s %s", src, dst, os.strerror())
         end
-    -- not exists?
     else
         return false, string.format("cannot move %s to %s, file %s not found!", src, dst, os.strerror())
     end
@@ -150,6 +156,19 @@ function os._rm(filedir)
         if not os.rmdir(filedir) then
             return false, string.format("cannot remove directory %s %s", filedir, os.strerror())
         end
+    end
+    return true
+end
+
+-- remove empty parent directories of this file path
+function os._rm_empty_parentdirs(filepath)
+    local parentdir = path.directory(filepath)
+    while parentdir and os.isdir(parentdir) and os.emptydir(parentdir) do
+        local ok, errors = os._rm(parentdir)
+        if not ok then
+            return false, errors
+        end
+        parentdir = path.directory(parentdir)
     end
     return true
 end
@@ -260,12 +279,82 @@ function os._is_tracing_process()
     return is_tracing
 end
 
+-- profile process performance?
+function os._is_profiling_process_perf()
+    local is_profiling = os._IS_PROFILING_PROCESS_PERF
+    if is_profiling == nil then
+        local profile = os.getenv("XMAKE_PROFILE")
+        if profile then
+            profile = profile:trim()
+            if profile == "perf:process" then
+                is_profiling = true
+            end
+        end
+        is_profiling = is_profiling or false
+        os._IS_PROFILING_PROCESS_PERF = is_profiling
+    end
+    return is_profiling
+end
+
 -- run all exit callback
 function os._run_exit_cbs(ok, errors)
+
+    -- show process performance reports
+    local profileperf = os._is_profiling_process_perf()
+    if profileperf then
+        if os._PROCESS_PROFILEINFO then
+            local perfinfo = {}
+            local totaltime = 0
+            for runcmd, profileinfo in pairs(os._PROCESS_PROFILEINFO) do
+                profileinfo.runcmd = runcmd
+                totaltime = totaltime + profileinfo.totaltime
+                table.insert(perfinfo, profileinfo)
+            end
+            table.sort(perfinfo, function (a, b) return a.totaltime > b.totaltime end)
+            for _, profileinfo in ipairs(perfinfo) do
+                local percent = (profileinfo.totaltime / totaltime) * 100
+                if percent < 1 then
+                    break
+                end
+                utils.print("%6.3f, %6.2f%%, %7d, %s", profileinfo.totaltime, percent, profileinfo.runcount, profileinfo.runcmd)
+            end
+        end
+    end
+
     local exit_callbacks = os._EXIT_CALLBACKS
     if exit_callbacks then
         for _, cb in ipairs(exit_callbacks) do
             cb(ok, errors)
+        end
+    end
+end
+
+-- get shell path, e.g. sh, bash
+function os._get_shell_path(opt)
+    opt = opt or {}
+    local setenvs = opt.setenvs or opt.envs or {}
+    local addenvs = opt.addenvs or {}
+    local paths = {}
+    local p = setenvs.PATH
+    if type(p) == "string" then
+        p = path.splitenv(p)
+    end
+    if p then
+        table.join2(paths, p)
+    end
+    p = addenvs.PATH
+    if type(p) == "string" then
+        p = path.splitenv(p)
+    end
+    if p then
+        table.join2(paths, p)
+    end
+    for _, p in ipairs(paths) do
+        for _, name in ipairs({"sh", "bash"}) do
+            local filepath = path.join(p, name)
+            if os.isexec(filepath) then
+                return filepath
+            end
         end
     end
 end
@@ -312,7 +401,7 @@ function os.match(pattern, mode, callback)
     end
 
     -- translate path and remove some repeat separators
-    pattern = path.translate(pattern:gsub("|.*$", ""))
+    pattern = path.translate((pattern:gsub("|.*$", "")))
 
     -- translate mode
     if type(mode) == "string" then
@@ -434,7 +523,7 @@ function os.cp(srcpath, dstpath, opt)
 end
 
 -- move files or directories
-function os.mv(srcpath, dstpath)
+function os.mv(srcpath, dstpath, opt)
 
     -- check arguments
     if not srcpath or not dstpath then
@@ -446,10 +535,10 @@ function os.mv(srcpath, dstpath)
     dstpath = tostring(dstpath)
     local srcpathes = os._match_wildcard_pathes(srcpath)
     if type(srcpathes) == "string" then
-        return os._mv(srcpathes, dstpath)
+        return os._mv(srcpathes, dstpath, opt)
     else
         for _, _srcpath in ipairs(srcpathes) do
-            local ok, errors = os._mv(_srcpath, dstpath)
+            local ok, errors = os._mv(_srcpath, dstpath, opt)
             if not ok then
                 return false, errors
             end
@@ -459,7 +548,7 @@ function os.mv(srcpath, dstpath)
 end
 
 -- remove files or directories
-function os.rm(filepath)
+function os.rm(filepath, opt)
 
     -- check arguments
     if not filepath then
@@ -467,15 +556,28 @@ function os.rm(filepath)
     end
 
     -- remove file or directories
+    opt = opt or {}
     filepath = tostring(filepath)
     local filepathes = os._match_wildcard_pathes(filepath)
     if type(filepathes) == "string" then
-        return os._rm(filepathes)
+        local ok, errors = os._rm(filepathes)
+        if not ok then
+            return false, errors
+        end
+        if opt.emptydirs then
+            return os._rm_empty_parentdirs(filepathes)
+        end
     else
         for _, _filepath in ipairs(filepathes) do
             local ok, errors = os._rm(_filepath)
             if not ok then
                 return false, errors
+            end
+            if opt.emptydirs then
+                ok, errors = os._rm_empty_parentdirs(_filepath)
+                if not ok then
+                    return false, errors
+                end
             end
         end
     end
@@ -483,9 +585,13 @@ function os.rm(filepath)
 end
 
 -- link file or directory to the new symfile
-function os.ln(srcpath, dstpath)
+function os.ln(srcpath, dstpath, opt)
+    opt = opt or {}
     srcpath = tostring(srcpath)
     dstpath = tostring(dstpath)
+    if opt.force and os.isfile(dstpath) then
+        os.rmfile(dstpath)
+    end
     if not os.link(srcpath, dstpath) then
         return false, string.format("cannot link %s to %s, %s", srcpath, dstpath, os.strerror())
     end
@@ -692,7 +798,7 @@ function os.runv(program, argv, opt)
     local logfile = os.tmpfile()
 
     -- execute it
-    local ok, errors = os.execv(program, argv, table.join(opt, {stdout = logfile, stderr = logfile}))
+    local ok, errors = os.execv(program, argv, table.join(opt, {stdout = opt.stdout or logfile, stderr = opt.stderr or logfile}))
     if ok ~= 0 then
 
         -- get command
@@ -767,25 +873,27 @@ function os.execv(program, argv, opt)
     if opt.shell and os.isfile(filename) then
         local shellfile = filename
         local file = io.open(filename, 'r')
-        local head = file:read("l")
-        if head and head:startswith("#!") then
-            -- we cannot run `/bin/sh` directly on msys2/cygwin
-            -- because `/bin/sh` is not real file path, maybe we need convert it.
-            local subhost = os.subhost()
-            if subhost == "msys" or subhost == "cygwin" then
-                filename = "sh"
-                argv = table.join(shellfile, argv)
-            else
-                head = head:sub(3)
-                local shellargv = {}
-                local splitinfo = head:split("%s")
-                filename = splitinfo[1]
-                if #splitinfo > 1 then
-                    shellargv = table.slice(splitinfo, 2)
+        for line in file:lines() do
+            if line and line:startswith("#!") then
+                -- we cannot run `/bin/sh` directly on windows
+                -- because `/bin/sh` is not real file path, maybe we need to convert it.
+                local host = os.host()
+                if host == "windows" then
+                    filename = os._get_shell_path(opt) or "sh"
+                    argv = table.join(shellfile, argv)
+                else
+                    line = line:sub(3)
+                    local shellargv = {}
+                    local splitinfo = line:split("%s")
+                    filename = splitinfo[1]
+                    if #splitinfo > 1 then
+                        shellargv = table.slice(splitinfo, 2)
+                    end
+                    table.insert(shellargv, shellfile)
+                    table.join2(shellargv, argv)
+                    argv = shellargv
                 end
-                table.insert(shellargv, shellfile)
-                table.join2(shellargv, argv)
-                argv = shellargv
+                break
             end
         end
         file:close()
@@ -793,20 +901,36 @@ function os.execv(program, argv, opt)
 
     -- uses the given environments?
     local envs = nil
-    if opt.envs then
+    local setenvs = opt.setenvs or opt.envs
+    local addenvs = opt.addenvs
+    if setenvs or addenvs then
         local envars = os.getenvs()
-        for k, v in pairs(opt.envs) do
-            if type(v) == "table" then
-                v = path.joinenv(v)
+        if setenvs then
+            for k, v in pairs(setenvs) do
+                if type(v) == "table" then
+                    v = path.joinenv(v)
+                end
+                envars[k] = v
             end
+        end
+        if addenvs then
+            for k, v in pairs(addenvs) do
+                if type(v) == "table" then
+                    v = path.joinenv(v)
+                end
+                local o = envars[k]
+                if o then
+                    v = v .. path.envsep() .. o
+                end
+                envars[k] = v
+            end
+        end
+        envs = {}
+        for k, v in pairs(envars) do
             -- we try to fix too long value before running process
             if type(v) == "string" and #v > 4096 and os.host() == "windows" then
                 v = os._deduplicate_pathenv(v)
             end
-            envars[k] = v
-        end
-        envs = {}
-        for k, v in pairs(envars) do
             table.insert(envs, k .. '=' .. v)
         end
     end
@@ -821,8 +945,16 @@ function os.execv(program, argv, opt)
         detach = opt.detach,
         exclusive = opt.exclusive}
 
+    -- profile process performance
+    local runtime
+    local profileperf = os._is_profiling_process_perf()
+    if profileperf then
+        runtime = os.mclock()
+    end
+
     -- open command
     local ok = -1
+    local errors
     local proc = process.openv(filename, argv or {}, openopt)
     if proc ~= nil then
 
@@ -834,9 +966,16 @@ function os.execv(program, argv, opt)
 
         -- wait process
         if not opt.detach then
-            local waitok, status = proc:wait(-1)
+            local waitok, status = proc:wait(opt.timeout or -1)
             if waitok > 0 then
                 ok = status
+            elseif waitok == 0 and opt.timeout then
+                proc:kill()
+                waitok, status = proc:wait(-1)
+                if waitok > 0 then
+                    ok = status
+                end
+                errors = "wait process timeout"
             end
         else
             ok = 0
@@ -844,11 +983,35 @@ function os.execv(program, argv, opt)
 
         -- close process
         proc:close()
+
+        -- save profile info
+        if profileperf then
+            runtime = os.mclock() - runtime
+
+            local profileinfo = os._PROCESS_PROFILEINFO
+            if profileinfo == nil then
+                profileinfo = {}
+                os._PROCESS_PROFILEINFO = profileinfo
+            end
+
+            local runcmd
+            runcmd = filename
+            if argv and #argv > 0 then
+                runcmd = runcmd .. " " .. os.args(argv)
+            end
+            local perfinfo = profileinfo[runcmd]
+            if perfinfo == nil then
+                perfinfo = {}
+                profileinfo[runcmd] = perfinfo
+            end
+            perfinfo.totaltime = (perfinfo.totaltime or 0) + runtime
+            perfinfo.runcount = (perfinfo.runcount or 0) + 1
+        end
     else
         -- cannot execute process
         return nil, os.strerror()
     end
-    return ok
+    return ok, errors
 end
 
 -- run command and return output and error data
@@ -1068,8 +1231,24 @@ function os.isroot()
 end
 
 -- is case-insensitive filesystem?
-function os.fscase()
-    if os._FSCASE == nil then
+function os.fscase(filepath)
+    if os._FSCASE == nil or filepath then
+        if os._fscase then
+            if filepath then
+                assert(os.exists(filepath), filepath .. " not found in os.fscase()")
+            else
+                local tmpdir = os.tmpdir()
+                if not os.isdir(tmpdir) then
+                    os.mkdir(tmpdir)
+                end
+                filepath = tmpdir
+            end
+            local fscase = os._fscase(filepath)
+            if fscase ~= -1 then
+                os._FSCASE = (fscase == 1)
+                return os._FSCASE
+            end
+        end
         if os.host() == "windows" then
             os._FSCASE = false
         else
@@ -1118,7 +1297,9 @@ function os.getenvs()
         local p = line:find('=', 1, true)
         if p then
             local key = line:sub(1, p - 1):trim()
-            if os.host() == "windows" then
+            -- only translate Path to PATH on windows
+            -- @see https://github.com/xmake-io/xmake/issues/3752
+            if os.host() == "windows" and key:lower() == "path" then
                 key = key:upper()
             end
             local values = line:sub(p + 1):trim()
@@ -1379,3 +1560,4 @@ end
 
 -- return module
 return os
+

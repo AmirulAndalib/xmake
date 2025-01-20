@@ -44,7 +44,7 @@ function main(opt)
             -- @see https://github.com/xmake-io/xmake/issues/3057
             local objectfile = os.tmpfile() .. ".obj"
             local sourcefile = os.tmpfile() .. ".c"
-            io.writefile(sourcefile, "int main(int argc, char** argv)\n{return 0;}")
+            io.writefile(sourcefile, "int main(int argc, char** argv)\n{return 0;}\n")
             os.runv(program, {"-c", "-Fo" .. objectfile, sourcefile}, {envs = opt.envs})
             os.rm(objectfile)
             os.rm(sourcefile)
@@ -57,9 +57,14 @@ function main(opt)
     -- find program version
     local version = nil
     if program and opt and opt.version then
-        opt.command = opt.command or function () local _, info = os.iorunv(program, {}, {envs = opt.envs}); return info end
-        opt.parse   = opt.parse or function (output) return output:match("Version (%d+%.?%d*%.?%d*.-)%s") end
-        version     = find_programver(program, opt)
+        opt.command = opt.command or function ()
+            local _, info = os.iorunv(program, {}, {envs = opt.envs})
+            return info
+        end
+        opt.parse = opt.parse or function (output)
+            return output:match("(%d+%.%d+%.%d*.-)%s")
+        end
+        version = find_programver(program, opt)
     end
     return program, version
 end

@@ -36,10 +36,11 @@ import("vsutils")
 import("core.cache.memcache")
 import("core.cache.localcache")
 import("private.action.require.install", {alias = "install_requires"})
-import("private.action.run.make_runenvs")
+import("private.action.run.runenvs")
 import("actions.config.configfiles", {alias = "generate_configfiles", rootdir = os.programdir()})
-import("actions.config.configheader", {alias = "generate_configheader", rootdir = os.programdir()})
 import("private.utils.batchcmds")
+import("private.utils.rule_groups")
+import("plugins.project.utils.target_cmds", {rootdir = os.programdir()})
 
 function _translate_path(dir, vcxprojdir)
     if dir == nil then
@@ -80,6 +81,11 @@ function _clear_cache()
     localcache.save()
 end
 
+-- get c++ modules rules
+function _get_cxxmodules_rules()
+    return {"c++.build.modules", "c++.build.modules.builder"}
+end
+
 -- get command string
 function _get_command_string(cmd, vcxprojdir)
     local kind = cmd.kind
@@ -103,6 +109,8 @@ function _get_command_string(cmd, vcxprojdir)
         return string.format("copy /Y \"%s\" \"%s\"", _translate_path(cmd.srcpath, vcxprojdir), _translate_path(cmd.dstpath, vcxprojdir))
     elseif kind == "rm" then
         return string.format("del /F /Q \"%s\" || rmdir /S /Q \"%s\"", _translate_path(cmd.filepath, vcxprojdir), _translate_path(cmd.filepath, vcxprojdir))
+    elseif kind == "rmdir" then
+        return string.format("rmdir /S /Q \"%s\"", _translate_path(cmd.filepath, vcxprojdir))
     elseif kind == "mv" then
         return string.format("rename \"%s\" \"%s\"", _translate_path(cmd.srcpath, vcxprojdir), _translate_path(cmd.dstpath, vcxprojdir))
     elseif kind == "cd" then
@@ -115,94 +123,6 @@ function _get_command_string(cmd, vcxprojdir)
     end
 end
 
--- add target custom commands for target
-function _make_custom_commands_for_target(commands, target, vcxprojdir, suffix)
-    for _, ruleinst in ipairs(target:orderules()) do
-        local scriptname = "buildcmd" .. (suffix and ("_" .. suffix) or "")
-        local script = ruleinst:script(scriptname)
-        if script then
-            local batchcmds_ = batchcmds.new({target = target})
-            script(target, batchcmds_, {})
-            if not batchcmds_:empty() then
-                for _, cmd in ipairs(batchcmds_:cmds()) do
-                    local command = _get_command_string(cmd, vcxprojdir)
-                    if command then
-                        local key = suffix and suffix or "before"
-                        commands[key] = commands[key] or {}
-                        table.insert(commands[key], command)
-                    end
-                end
-            end
-        end
-
-        scriptname = "linkcmd" .. (suffix and ("_" .. suffix) or "")
-        script = ruleinst:script(scriptname)
-        if script then
-            local batchcmds_ = batchcmds.new({target = target})
-            script(target, batchcmds_, {})
-            if not batchcmds_:empty() then
-                for _, cmd in ipairs(batchcmds_:cmds()) do
-                    local command = _get_command_string(cmd, vcxprojdir)
-                    if command then
-                        local key = (suffix and suffix or "before") .. "_link"
-                        commands[key] = commands[key] or {}
-                        table.insert(commands[key], command)
-                    end
-                end
-            end
-        end
-    end
-end
-
--- add target custom commands for object rules
-function _make_custom_commands_for_objectrules(commands, target, sourcebatch, vcxprojdir, suffix)
-
-    -- get rule
-    local rulename = assert(sourcebatch.rulename, "unknown rule for sourcebatch!")
-    local ruleinst = assert(target:rule(rulename) or project.rule(rulename) or rule.rule(rulename), "unknown rule: %s", rulename)
-
-    -- generate commands for xx_buildcmd_files
-    local scriptname = "buildcmd_files" .. (suffix and ("_" .. suffix) or "")
-    local script = ruleinst:script(scriptname)
-    if script then
-        local batchcmds_ = batchcmds.new({target = target})
-        script(target, batchcmds_, sourcebatch, {})
-        if not batchcmds_:empty() then
-            for _, cmd in ipairs(batchcmds_:cmds()) do
-                local command = _get_command_string(cmd, vcxprojdir)
-                if command then
-                    local key = suffix and suffix or "before"
-                    commands[key] = commands[key] or {}
-                    table.insert(commands[key], command)
-                end
-            end
-        end
-    end
-
-    -- generate commands for xx_buildcmd_file
-    if not script then
-        scriptname = "buildcmd_file" .. (suffix and ("_" .. suffix) or "")
-        script = ruleinst:script(scriptname)
-        if script then
-            local sourcekind = sourcebatch.sourcekind
-            for _, sourcefile in ipairs(sourcebatch.sourcefiles) do
-                local batchcmds_ = batchcmds.new({target = target})
-                script(target, batchcmds_, sourcefile, {})
-                if not batchcmds_:empty() then
-                    for _, cmd in ipairs(batchcmds_:cmds()) do
-                        local command = _get_command_string(cmd, vcxprojdir)
-                        if command then
-                            local key = suffix and suffix or "before"
-                            commands[key] = commands[key] or {}
-                            table.insert(commands[key], command)
-                        end
-                    end
-                end
-            end
-        end
-    end
-end
-
 -- make custom commands
 function _make_custom_commands(target, vcxprojdir)
     -- https://github.com/xmake-io/xmake/issues/2337
@@ -211,19 +131,35 @@ function _make_custom_commands(target, vcxprojdir)
     target:data_set("plugin.project.translate_path", function (p)
         return _translate_path(p, vcxprojdir)
     end)
+
+    -- build sourcebatch groups first
+    local sourcegroups = rule_groups.build_sourcebatch_groups(target, target:sourcebatches())
+
+    -- ignore c++ modules rules
+    local ignored_rules = _get_cxxmodules_rules()
+
+    -- add before commands
+    -- we use irpairs(groups), because the last group that should be given the highest priority.
+    local cmds_before = {}
+    target_cmds.get_target_buildcmd(target, cmds_before, {suffix = "before", ignored_rules = ignored_rules})
+    target_cmds.get_target_buildcmd_sourcegroups(target, cmds_before, sourcegroups, {suffix = "before", ignored_rules = ignored_rules})
+    -- rule.on_buildcmd_files should also be executed before building the target, as cmake PRE_BUILD does not work.
+    target_cmds.get_target_buildcmd_sourcegroups(target, cmds_before, sourcegroups, {ignored_rules = ignored_rules})
+
+    -- add after commands
+    local cmds_after = {}
+    target_cmds.get_target_buildcmd_sourcegroups(target, cmds_after, sourcegroups, {suffix = "after", ignored_rules = ignored_rules})
+    target_cmds.get_target_buildcmd(target, cmds_after, {suffix = "after", ignored_rules = ignored_rules})
+
     local commands = {}
-    _make_custom_commands_for_target(commands, target, vcxprojdir, "before")
-    _make_custom_commands_for_target(commands, target, vcxprojdir)
-    for _, sourcebatch in table.orderpairs(target:sourcebatches()) do
-        local rulename = sourcebatch.rulename
-        local sourcekind = sourcebatch.sourcekind
-        if rulename ~= "c.build" and rulename ~= "c++.build" and rulename ~= "asm.build" and rulename ~= "cuda.build" and sourcekind ~= "mrc" then
-            _make_custom_commands_for_objectrules(commands, target, sourcebatch, vcxprojdir, "before")
-            _make_custom_commands_for_objectrules(commands, target, sourcebatch, vcxprojdir, nil)
-            _make_custom_commands_for_objectrules(commands, target, sourcebatch, vcxprojdir, "after")
-        end
+    for _, cmd in ipairs(cmds_before) do
+        commands.before = commands.before or {}
+        table.insert(commands.before, _get_command_string(cmd, vcxprojdir))
     end
-    _make_custom_commands_for_target(commands, target, vcxprojdir, "after")
+    for _, cmd in ipairs(cmds_after) do
+        commands.after = commands.after or {}
+        table.insert(commands.after, _get_command_string(cmd, vcxprojdir))
+    end
     return commands
 end
 
@@ -254,6 +190,9 @@ function _make_targetinfo(mode, arch, target, vcxprojdir)
     -- save symbols
     targetinfo.symbols = target:get("symbols")
 
+    -- has modules
+    targetinfo.has_modules = target:data("cxx.has_modules")
+
     -- save target kind
     targetinfo.targetkind = target:kind()
     if target:is_phony() or target:is_headeronly() then
@@ -265,9 +204,6 @@ function _make_targetinfo(mode, arch, target, vcxprojdir)
 
     -- save symbol file
     targetinfo.symbolfile = target:symbolfile()
-
-    -- save sourcebatches
-    targetinfo.sourcebatches = target:sourcebatches()
 
     -- save sourcekinds
     targetinfo.sourcekinds = target:sourcekinds()
@@ -282,13 +218,14 @@ function _make_targetinfo(mode, arch, target, vcxprojdir)
     local firstcompflags = nil
     targetinfo.compflags = {}
     targetinfo.compargvs = {}
-    for _, sourcebatch in table.orderpairs(target:sourcebatches()) do
+    local sourcebatches = target:sourcebatches()
+    for _, sourcebatch in table.orderpairs(sourcebatches) do
         local sourcekind = sourcebatch.sourcekind
         local rulename = sourcebatch.rulename
         if sourcekind then
-            for idx, sourcefile in ipairs(sourcebatch.sourcefiles) do
+            for _, sourcefile in ipairs(sourcebatch.sourcefiles) do
                 local compflags = compiler.compflags(sourcefile, {target = target, sourcekind = sourcekind})
-                if not firstcompflags and (rulename == "c.build" or rulename == "c++.build" or rulename == "cuda.build") then
+                if not firstcompflags and (rulename == "c.build" or rulename == "c++.build" or rulename == "c++.build.modules" or rulename == "cuda.build") then
                     firstcompflags = compflags
                 end
                 targetinfo.compflags[sourcefile] = compflags
@@ -306,8 +243,11 @@ function _make_targetinfo(mode, arch, target, vcxprojdir)
         end
     end
 
+    -- save sourcebatches
+    targetinfo.sourcebatches = target:sourcebatches()
+
     -- save linker flags
-    local linkflags = linker.linkflags(target:kind(), target:sourcekinds(), {target = target})
+    local linkflags = linker.linkflags(target:is_moduleonly() and 'static' or target:kind(), target:sourcekinds(), {target = target})
     targetinfo.linkflags = linkflags
 
     if table.contains(target:sourcekinds(), "cu") then
@@ -320,11 +260,11 @@ function _make_targetinfo(mode, arch, target, vcxprojdir)
     end
 
     -- save execution dir (when executed from VS)
-    targetinfo.rundir = target:rundir()
+    targetinfo.rundir = target:is_moduleonly() and "" or target:rundir()
 
     -- save runenvs
-    local runenvs = {}
-    local addrunenvs, setrunenvs = make_runenvs(target)
+    local targetrunenvs = {}
+    local addrunenvs, setrunenvs = runenvs.make(target)
     for k, v in table.orderpairs(target:pkgenvs()) do
         addrunenvs = addrunenvs or {}
         addrunenvs[k] = table.join(table.wrap(addrunenvs[k]), path.splitenv(v))
@@ -337,25 +277,25 @@ function _make_targetinfo(mode, arch, target, vcxprojdir)
     end
     for k, v in table.orderpairs(addrunenvs) do
         if k:upper() == "PATH" then
-            runenvs[k] = _translate_path(v, vcxprojdir) .. ";$([System.Environment]::GetEnvironmentVariable('" .. k .. "'))"
+            targetrunenvs[k] = _translate_path(v, vcxprojdir) .. ";$([System.Environment]::GetEnvironmentVariable('" .. k .. "'))"
         else
-            runenvs[k] = path.joinenv(v) .. ";$([System.Environment]::GetEnvironmentVariable('" .. k .."'))"
+            targetrunenvs[k] = path.joinenv(v) .. ";$([System.Environment]::GetEnvironmentVariable('" .. k .."'))"
         end
     end
     for k, v in table.orderpairs(setrunenvs) do
         if #v == 1 then
             v = v[1]
             if path.is_absolute(v) and v:startswith(project.directory()) then
-                runenvs[k] = _translate_path(v, vcxprojdir)
+                targetrunenvs[k] = _translate_path(v, vcxprojdir)
             else
-                runenvs[k] = v[1]
+                targetrunenvs[k] = v[1]
             end
         else
-            runenvs[k] = path.joinenv(v)
+            targetrunenvs[k] = path.joinenv(v)
         end
     end
     local runenvstr = {}
-    for k, v in table.orderpairs(runenvs) do
+    for k, v in table.orderpairs(targetrunenvs) do
         table.insert(runenvstr, k .. "=" .. v)
     end
     targetinfo.runenvs = table.concat(runenvstr, "\n")
@@ -378,57 +318,6 @@ function _make_targetinfo(mode, arch, target, vcxprojdir)
     -- save custom commands
     targetinfo.commands = _make_custom_commands(target, vcxprojdir)
     return targetinfo
-end
-
--- make target headers
-function _make_targetheaders(mode, arch, target, last)
-
-    -- only for static and shared target
-    local kind = target:kind()
-    if kind == "static" or kind == "shared" then
-
-        -- TODO make headers, (deprecated)
-        local srcheaders, dstheaders = target:headers()
-        if srcheaders and dstheaders then
-            local i = 1
-            for _, srcheader in ipairs(srcheaders) do
-                local dstheader = dstheaders[i]
-                if dstheader then
-                    os.cp(srcheader, dstheader)
-                end
-                i = i + 1
-            end
-        end
-
-        -- make config header
-        local configheader_raw = target:configheader()
-        if configheader_raw and os.isfile(configheader_raw) then
-
-            -- init the config header path for each mode and arch
-            local configheader_mode_arch = path.join(path.directory(configheader_raw), mode .. "." .. arch .. "." .. path.filename(configheader_raw))
-
-            -- init the temporary config header path
-            local configheader_tmp = path.join(path.directory(configheader_raw), "tmp." .. path.filename(configheader_raw))
-
-            -- copy the original config header first
-            os.cp(configheader_raw, configheader_mode_arch)
-
-            -- append the current config header
-            local file = io.open(configheader_tmp, "a+")
-            if file then
-                file:print("")
-                file:print("#if defined(__config_%s__) && defined(__config_%s__)", mode, arch)
-                file:print("#    include \"%s.%s.%s\"", mode, arch, path.filename(configheader_raw))
-                file:print("#endif")
-                file:close()
-            end
-
-            -- override the raw config header at last
-            if last and os.isfile(configheader_tmp) then
-                os.mv(configheader_tmp, configheader_raw)
-            end
-        end
-    end
 end
 
 function _make_vsinfo_modes()
@@ -495,68 +384,6 @@ function _make_vsinfo_archs()
     return vsinfo_archs
 end
 
--- config target
-function _config_target(target)
-    for _, rule in ipairs(target:orderules()) do
-        local on_config = rule:script("config")
-        if on_config then
-            on_config(target)
-        end
-    end
-    local on_config = target:script("config")
-    if on_config then
-        on_config(target)
-    end
-end
-
--- config targets
-function _config_targets()
-    for _, target in ipairs(project.ordertargets()) do
-        if target:is_enabled() then
-            _config_target(target)
-        end
-    end
-end
-
--- load rules in the required packages for target
-function _load_package_rules_for_target(target)
-    for _, rulename in ipairs(target:get("rules")) do
-        local packagename = rulename:match("@(.-)/")
-        if packagename then
-            local pkginfo = project.required_package(packagename)
-            if pkginfo then
-                local r = pkginfo:rule(rulename)
-                if r then
-                    target:rule_add(r)
-                    for _, dep in pairs(r:deps()) do
-                        target:rule_add(dep)
-                    end
-                end
-            end
-        end
-    end
-end
-
--- load rules in the required packages for targets
--- @see https://github.com/xmake-io/xmake/issues/2374
---
--- @code
--- add_requires("zlib", {system = false})
--- target("test")
---    set_kind("binary")
---    add_files("src/*.cpp")
---    add_packages("zlib")
---    add_rules("@zlib/test")
--- @endcode
---
-function _load_package_rules_for_targets()
-    for _, target in ipairs(project.ordertargets()) do
-        if target:is_enabled() then
-            _load_package_rules_for_target(target)
-        end
-    end
-end
-
 -- make vstudio project
 function make(outputdir, vsinfo)
 
@@ -605,20 +432,16 @@ function make(outputdir, vsinfo)
                 platform.load(config.plat(), arch):check()
 
                 -- check project options
-                project.check()
+                project.check_options()
 
                 -- install and update requires
                 install_requires()
 
-                -- load package rules for targets
-                _load_package_rules_for_targets()
-
-                -- config targets
-                _config_targets()
+                -- load targets
+                project.load_targets()
 
                 -- update config files
                 generate_configfiles()
-                generate_configheader()
             end
 
             -- ensure to enter project directory
@@ -648,17 +471,39 @@ function make(outputdir, vsinfo)
                 -- save all sourcefiles and headerfiles
                 _target.sourcefiles = table.unique(table.join(_target.sourcefiles or {}, (target:sourcefiles())))
                 _target.headerfiles = table.unique(table.join(_target.headerfiles or {}, (target:headerfiles())))
+                _target.extrafiles = table.unique(table.join(_target.extrafiles or {}, (target:extrafiles())))
 
                 -- sort them to stabilize generation
                 table.sort(_target.sourcefiles)
                 table.sort(_target.headerfiles)
+                table.sort(_target.extrafiles)
 
                 -- save file groups
-                _target.filegroups = target:get("filegroups")
-                _target.filegroups_extraconf = target:extraconf("filegroups")
+                _target.filegroups = table.unique(table.join(_target.filegroups or {}, target:get("filegroups")))
 
-                -- make target headers
-                _make_targetheaders(mode, arch, target, mode_idx == #vsinfo.modes and arch_idx == 2)
+                -- save references to deps
+                for _, dep in ipairs(target:orderdeps()) do
+                    _target.deps = _target.deps or {}
+                    local dep_name = dep:name()
+                    _target.deps[dep_name] = path.relative(path.join(vsinfo.solution_dir, dep_name, dep_name .. ".vcxproj"), _target.project_dir)
+                end
+
+                for filegroup, groupconf in pairs(target:extraconf("filegroups")) do
+                    _target.filegroups_extraconf = _target.filegroups_extraconf or {}
+                    local mergedconf = _target.filegroups_extraconf[filegroup]
+                    if not mergedconf then
+                        mergedconf = {}
+                        _target.filegroups_extraconf[filegroup] = mergedconf
+                    end
+
+                    if groupconf.rootdir then
+                        mergedconf.rootdir = table.unique(table.join(mergedconf.rootdir or {}, table.wrap(groupconf.rootdir)))
+                    end
+                    if groupconf.files then
+                        mergedconf.files = table.unique(table.join(mergedconf.files or {}, table.wrap(groupconf.files)))
+                    end
+                    mergedconf.plain = groupconf.plain or mergedconf.plain
+                end
             end
         end
     end

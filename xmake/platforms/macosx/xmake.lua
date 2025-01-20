@@ -18,31 +18,19 @@
 -- @file        xmake.lua
 --
 
--- define platform
 platform("macosx")
-
-    -- set os
     set_os("macosx")
-
-    -- set hosts
     set_hosts("macosx")
-
-    -- set archs
     set_archs("x86_64", "arm64")
 
-    -- set formats
     set_formats("static", "lib$(name).a")
     set_formats("object", "$(name).o")
     set_formats("shared", "lib$(name).dylib")
     set_formats("symbol", "$(name).dSYM")
 
-    -- set install directory
     set_installdir("/usr/local")
-
-    -- set toolchains
     set_toolchains("envs", "xcode", "clang", "gcc", "yasm", "nasm", "cuda", "rust", "go", "gfortran", "zig", "fpc", "nim")
 
-    -- set menu
     set_menu {
                 config =
                 {
@@ -53,6 +41,8 @@ platform("macosx")
                 ,   {nil, "xcode_codesign_identity", "kv", "auto",       "The Codesign Identity for Xcode"   }
                 ,   {nil, "xcode_mobile_provision",  "kv", "auto",       "The Mobile Provision for Xcode"    }
                 ,   {nil, "target_minver",           "kv", "auto",       "The Target Minimal Version"        }
+                ,   {nil, "appledev",                "kv", nil,          "The Apple Device Type",
+                                                                         values = {"simulator", "iphone", "watchtv", "appletv", "catalyst"}}
                 ,   {category = "Cuda SDK Configuration"                                                     }
                 ,   {nil, "cuda",                    "kv", "auto",       "The Cuda SDK Directory"            }
                 ,   {category = "Qt SDK Configuration"                                                       }

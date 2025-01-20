@@ -21,10 +21,12 @@
 -- imports
 import("core.base.option")
 import("core.base.global")
+import("core.project.policy")
 import("core.project.project")
 
 -- init it
 function init(self)
+    self:add("mrcflags", "--use-temp-file", "-O", "coff")
 end
 
 -- make the define flag
@@ -53,32 +55,25 @@ function compargv(self, sourcefile, objectfile, flags)
 end
 
 -- compile the source file
-function compile(self, sourcefile, objectfile, dependinfo, flags)
-
-    -- ensure the object directory
+function compile(self, sourcefile, objectfile, dependinfo, flags, opt)
     os.mkdir(path.directory(objectfile))
-
-    -- compile it
     try
     {
         function ()
-            local outdata, errdata = os.iorunv(compargv(self, sourcefile, objectfile, flags))
+            local program, argv = compargv(self, sourcefile, objectfile, flags)
+            local outdata, errdata = os.iorunv(program, argv, {envs = self:runenvs()})
             return (outdata or "") .. (errdata or "")
         end,
         catch
         {
             function (errors)
-
-                -- compiling errors
                 os.raise(errors)
             end
         },
         finally
         {
             function (ok, warnings)
-
-                -- print some warnings
-                if warnings and #warnings > 0 and (option.get("diagnosis") or option.get("warning") or global.get("build_warning")) then
+                if warnings and #warnings > 0 and policy.build_warnings(opt) then
                     cprint("${color.warning}%s", table.concat(table.slice(warnings:split('\n'), 1, 8), '\n'))
                 end
             end

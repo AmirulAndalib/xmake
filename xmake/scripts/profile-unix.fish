@@ -12,11 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Copyright (C) 2022-present, TBOOX Open Source Group.
+# Copyright (C) 2022-present, Xmake Open Source Community.
 #
 # @author      ruki
 # @homepage    profile-unix.fish
 #
+
+# register PATH
+string match --regex --quiet "(^|:)$XMAKE_ROOTDIR(:|\$)" "$PATH" || \
+    export PATH="$XMAKE_ROOTDIR:$PATH"
 
 # register environments
 export XMAKE_SHELL=fish

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        global.lua
@@ -28,7 +28,11 @@ local path          = require("base/path")
 local utils         = require("base/utils")
 local option        = require("base/option")
 
--- get the current given configure
+-- get the global configuration value
+--
+-- @param name  the configuration name
+-- @return      the configuration value
+--
 function global.get(name)
     local value = nil
     if global._CONFIGS then
@@ -91,7 +95,10 @@ function global.filepath()
     return path.join(global.directory(), xmake._NAME .. ".conf")
 end
 
--- get the global configure directory
+-- get the global configuration directory, e.g. "~/.xmake"
+--
+-- @return      the global directory path
+--
 function global.directory()
     if global._DIRECTORY == nil then
         local name = "." .. xmake._NAME
@@ -115,7 +122,10 @@ function global.cachedir()
     return global.get("cachedir") or path.join(global.directory(), "cache")
 end
 
--- load the global configuration
+-- load the global configuration from file
+--
+-- @return      true on success
+--
 function global.load()
 
     -- load configure from the file first
@@ -138,7 +148,10 @@ function global.load()
     return true
 end
 
--- save the global configure
+-- save the global configuration to file
+--
+-- @return      true on success, or false and error info
+--
 function global.save()
 
     -- the options

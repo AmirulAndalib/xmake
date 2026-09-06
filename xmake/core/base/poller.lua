@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        poller.lua
@@ -56,17 +56,27 @@ function poller:_pollerdata_set(cdata, data)
     pollerdata[cdata] = data
 end
 
--- support events?
+-- check if the poller supports the given events
+--
+-- @param events    the events to check
+-- @return          true if supported
+--
 function poller:support(events)
     return io.poller_support(events)
 end
 
--- spank poller to break the wait() and return all triggered events
+-- spank the poller to break wait() and return immediately
 function poller:spank()
     io.poller_spank()
 end
 
 -- insert object events to poller
+--
+-- @param obj       the object (pipe, socket, process, fwatcher)
+-- @param events    the events to monitor
+-- @param udata     the user data (optional)
+-- @return          true on success, or false and error info
+--
 function poller:insert(obj, events, udata)
 
     -- insert it
@@ -81,6 +91,12 @@ function poller:insert(obj, events, udata)
 end
 
 -- modify object events in poller
+--
+-- @param obj       the object
+-- @param events    the new events to monitor
+-- @param udata     the user data (optional)
+-- @return          true on success, or false and error info
+--
 function poller:modify(obj, events, udata)
 
     -- modify it
@@ -95,6 +111,10 @@ function poller:modify(obj, events, udata)
 end
 
 -- remove object from poller
+--
+-- @param obj       the object to remove
+-- @return          true on success, or false and error info
+--
 function poller:remove(obj)
 
     -- remove it
@@ -104,11 +124,15 @@ function poller:remove(obj)
     end
 
     -- remove poller object data
-    self:_pollerdata_set(obj, nil)
+    self:_pollerdata_set(obj:cdata(), nil)
     return true
 end
 
--- wait object events in poller
+-- wait for object events in poller
+--
+-- @param timeout   the timeout in milliseconds, -1 for infinite
+-- @return          the number of events, or -1 on error
+--
 function poller:wait(timeout)
 
     -- wait it
@@ -129,13 +153,15 @@ function poller:wait(timeout)
             local otype  = v[1]
             local cdata  = v[2]
             local events = v[3]
-            local pollerdata   = self:_pollerdata(cdata)
-            if not pollerdata then
-                return -1, string.format("no object data for cdata(%s)!", cdata)
+            -- this object may have been removed from the poller while its event
+            -- was already collected, e.g. a pending overlapped io on windows,
+            -- we just drop it, it has no owner any more, @see poller:remove()
+            local pollerdata = self:_pollerdata(cdata)
+            if pollerdata then
+                local obj = pollerdata[1]
+                assert(obj and obj:otype() == otype and obj:cdata() == cdata)
+                table.insert(results, {obj, events, pollerdata[2]})
             end
-            local obj = pollerdata[1]
-            assert(obj and obj:otype() == otype and obj:cdata() == cdata)
-            table.insert(results, {obj, events, pollerdata[2]})
         end
     end
     return count, results

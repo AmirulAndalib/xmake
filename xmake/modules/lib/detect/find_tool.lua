@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_tool.lua
@@ -23,6 +23,7 @@ import("lib.detect.find_program")
 import("lib.detect.find_programver")
 import("lib.detect.find_toolname")
 import("core.base.semver")
+import("core.tool.toolchain")
 
 -- find tool from modules
 function _find_from_modules(name, opt)
@@ -32,16 +33,21 @@ function _find_from_modules(name, opt)
         if program then
             return {name = toolname or name, program = program, version = version}
         end
+        return false
     end
+    return nil
 end
 
 -- find tool
 function _find_tool(name, opt)
     local toolname = find_toolname(name or opt.program)
     if toolname then
-        local tool = _find_from_modules(toolname, opt)
-        if tool then
-            return tool
+        local result = _find_from_modules(toolname, opt)
+        if result then
+            return result
+        elseif result == false then
+            -- find_xxx.lua exists, but program not found
+            return
         end
     end
 

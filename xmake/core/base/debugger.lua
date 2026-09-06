@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        debugger.lua
@@ -47,14 +47,17 @@ function debugger:_start_emmylua_debugger()
     return true
 end
 
--- start debugging
+-- start the debugger (attach to IDE)
 function debugger:start()
     if self:has_emmylua() then
         return self:_start_emmylua_debugger()
     end
 end
 
--- has emmylua debugger?
+-- has EmmyLua debugger available?
+--
+-- @return      true if available
+--
 function debugger:has_emmylua()
     local debugger_libfile = os.getenv("EMMYLUA_DEBUGGER")
     if debugger_libfile and os.isfile(debugger_libfile) then
@@ -62,7 +65,10 @@ function debugger:has_emmylua()
     end
 end
 
--- debugger is enabled?
+-- is the debugger enabled?
+--
+-- @return      true if enabled via --debugger option
+--
 function debugger:enabled()
     return self:has_emmylua()
 end

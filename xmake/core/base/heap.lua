@@ -62,7 +62,11 @@ function heap._make(add, remove, swap, length, cmp)
     return push, pop, rebalance
 end
 
--- cdata heap working over a cdata array
+-- create a heap working over a cdata array (FFI)
+--
+-- @param h     the options {size = N, ctype = "int", cmp = function(a, b), data = cdata, length = 0}
+-- @return      push(val), pop() -> val, rebalance(index) functions
+--
 function heap.cdataheap(h)
     ffi = ffi or require("ffi")
     assert(h and h.size, "size expected")
@@ -110,7 +114,11 @@ function heap.cdataheap(h)
     return h
 end
 
--- value heap working over a Lua table
+-- create a heap working over a Lua table
+--
+-- @param h     the options (optional) {cmp = function(a, b)}
+-- @return      the heap table with push(val), pop() -> val, rebalance(index)
+--
 function heap.valueheap(h)
     h = h or {}
     local t, n = h, #h

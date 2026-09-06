@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        filesync.lua
@@ -89,7 +89,10 @@ function filesync:snapshot()
         ignorefiles = "|" .. table.concat(ignorefiles, "|")
     end
     local count = 0
-    for _, filepath in ipairs(os.files(path.join(rootdir, "**" .. ignorefiles))) do
+    -- we should not translate the whole pattern with ignorefiles in path.join,
+    -- because the joined pattern string may be very long (> TB_PATH_MAXN)
+    -- https://github.com/xmake-io/xmake/issues/6962
+    for _, filepath in ipairs(os.files(path.join(rootdir, "**") .. ignorefiles)) do
         local fileitem = path.relative(filepath, rootdir)
         if fileitem then
             -- we should always use '/' in path key for supporting linux & windows
@@ -137,7 +140,7 @@ function filesync:_ignorefiles_load(ignorefiles)
         local gitroot = path.directory(gitignore_file)
         local gitignore = io.open(gitignore_file, "r")
         for line in gitignore:lines() do
-            line = line:trim()
+            local line = line:trim()
             if #line > 0 and not line:startswith("#") then
                 local filepath = path.join(gitroot, line)
                 local pattern = path.relative(filepath, rootdir)

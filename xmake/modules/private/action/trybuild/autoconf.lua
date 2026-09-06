@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        autoconf.lua
@@ -44,7 +44,7 @@ end
 
 -- get build directory
 function _get_buildir()
-    return config.buildir() or "build"
+    return config.builddir() or "build"
 end
 
 -- get artifacts directory
@@ -62,6 +62,17 @@ function _get_buildenv(key)
         value = platform.tool(key, config.plat())
     end
     return value
+end
+
+-- is cross compilation?
+function _is_cross_compilation()
+    if not is_plat(os.subhost()) then
+        return true
+    end
+    if is_plat("macosx") and not is_arch(os.subarch()) then
+        return true
+    end
+    return false
 end
 
 -- get the build environments
@@ -174,17 +185,6 @@ function _get_buildenvs()
     return envs
 end
 
--- is cross compilation?
-function _is_cross_compilation()
-    if not is_plat(os.subhost()) then
-        return true
-    end
-    if is_plat("macosx") and not is_arch(os.subarch()) then
-        return true
-    end
-    return false
-end
-
 -- get configs
 function _get_configs(artifacts_dir)
 
@@ -200,7 +200,7 @@ function _get_configs(artifacts_dir)
         end
     end
 
-    -- add host for cross-complation
+    -- add host for cross-compilation
     if _is_cross_compilation() then
         if is_plat("iphoneos", "macosx") then
             local triples =
@@ -234,6 +234,21 @@ function _get_configs(artifacts_dir)
             {
                 i386   = "i686-w64-mingw32",
                 x86_64 = "x86_64-w64-mingw32"
+            }
+            table.insert(configs, "--host=" .. (triples[config.arch()] or triples.i386))
+        elseif is_plat("linux") then
+            local triples =
+            {
+                ["arm64-v8a"] = "aarch64-linux-gnu",
+                arm64 = "aarch64-linux-gnu",
+                i386   = "i686-linux-gnu",
+                x86_64 = "x86_64-linux-gnu",
+                armv7 = "arm-linux-gnueabihf",
+                mips = "mips-linux-gnu",
+                mips64 = "mips64-linux-gnu",
+                mipsel = "mipsel-linux-gnu",
+                mips64el = "mips64el-linux-gnu",
+                loong64 = "loongarch64-linux-gnu"
             }
             table.insert(configs, "--host=" .. (triples[config.arch()] or triples.i386))
         elseif is_plat("cross") then

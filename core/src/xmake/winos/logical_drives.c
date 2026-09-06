@@ -12,7 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Copyright (C) 2015-present, TBOOX Open Source Group.
+ * Copyright (C) 2015-present, Xmake Open Source Community.
  *
  * @author      ruki
  * @file        logical_drives.c
@@ -22,8 +22,8 @@
 /* //////////////////////////////////////////////////////////////////////////////////////
  * trace
  */
-#define TB_TRACE_MODULE_NAME                "logical_drives"
-#define TB_TRACE_MODULE_DEBUG               (0)
+#define TB_TRACE_MODULE_NAME "logical_drives"
+#define TB_TRACE_MODULE_DEBUG (0)
 
 /* //////////////////////////////////////////////////////////////////////////////////////
  * includes
@@ -35,22 +35,19 @@
  */
 
 // get the logical drives
-tb_int_t xm_winos_logical_drives(lua_State* lua)
-{
+tb_int_t xm_winos_logical_drives(lua_State *lua) {
     // init table
     lua_newtable(lua);
 
     // get logical drives
-    tb_bool_t  ok = tb_false;
-    tb_char_t* data = tb_null;
-    do
-    {
+    tb_char_t *data = tb_null;
+    do {
         // get buffer size
         DWORD size = GetLogicalDriveStringsA(0, tb_null);
         tb_assert_and_check_break(size);
 
         // make data buffer
-        data = (tb_char_t*)tb_malloc0(size + 1);
+        data = (tb_char_t *)tb_malloc0(size + 1);
         tb_assert_and_check_break(data);
 
         // get logical drives
@@ -59,9 +56,8 @@ tb_int_t xm_winos_logical_drives(lua_State* lua)
 
         // parse logical drives
         tb_size_t i = 1;
-        tb_char_t const* p = data;
-        while (*p)
-        {
+        tb_char_t const *p = data;
+        while (*p) {
             // save drive
             lua_pushinteger(lua, i++);
             lua_pushstring(lua, p);
@@ -70,16 +66,13 @@ tb_int_t xm_winos_logical_drives(lua_State* lua)
             // next drive
             p += tb_strlen(p) + 1;
         }
-
-        // ok
-        ok = tb_true;
-
     } while (0);
 
     // exit data
-    if (data) tb_free(data);
+    if (data) {
+        tb_free(data);
+    }
     data = tb_null;
 
-    // ok
     return 1;
 }

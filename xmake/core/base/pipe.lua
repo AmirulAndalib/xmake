@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        pipe.lua
@@ -59,6 +59,11 @@ function _instance:cdata()
 end
 
 -- write data to pipe file
+--
+-- @param data  the data to write (string or bytes)
+-- @param opt   the options, e.g. {block = true}
+-- @return      the real written size, or -1 and error info
+--
 function _instance:write(data, opt)
 
     -- ensure opened
@@ -119,6 +124,12 @@ function _instance:write(data, opt)
 end
 
 -- read data from pipe
+--
+-- @param buff  the buffer to receive data
+-- @param size  the read size
+-- @param opt   the options, e.g. {block = true}
+-- @return      the real read size, or -1 and error info
+--
 function _instance:read(buff, size, opt)
     assert(buff)
 
@@ -187,6 +198,10 @@ function _instance:read(buff, size, opt)
 end
 
 -- connect pipe, only for named pipe (server-side)
+--
+-- @param opt   the options
+-- @return      true on success
+--
 function _instance:connect(opt)
 
     -- ensure opened
@@ -218,6 +233,11 @@ function _instance:connect(opt)
 end
 
 -- wait pipe events
+--
+-- @param events    the events to wait, e.g. pipe.EV_READ, pipe.EV_WRITE
+-- @param timeout   the timeout in milliseconds, -1 for infinite
+-- @return          the received events, or 0 on timeout
+--
 function _instance:wait(events, timeout)
 
     -- ensure opened
@@ -241,6 +261,9 @@ function _instance:wait(events, timeout)
 end
 
 -- close pipe file
+--
+-- @return      true on success
+--
 function _instance:close()
 
     -- ensure opened
@@ -283,6 +306,11 @@ function _instance:__gc()
     if self:cdata() and io.pipe_close(self:cdata()) then
         self._PIPE = nil
     end
+end
+
+-- new a pipe
+function pipe.new(cdata, name)
+    return _instance.new(cdata, name)
 end
 
 -- open a named pipe file

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        nasm.lua
@@ -20,7 +20,9 @@
 
 -- imports
 import("core.base.option")
+import("core.project.policy")
 import("core.language.language")
+import("utils.progress")
 
 -- init it
 function init(self)
@@ -92,7 +94,7 @@ function compargv(self, sourcefile, objectfile, flags)
 end
 
 -- compile the source file
-function compile(self, sourcefile, objectfile, dependinfo, flags)
+function compile(self, sourcefile, objectfile, dependinfo, flags, opt)
 
     -- ensure the object directory
     os.mkdir(path.directory(objectfile))
@@ -119,10 +121,10 @@ function compile(self, sourcefile, objectfile, dependinfo, flags)
             function (ok, outdata, errdata)
 
                 -- show warnings?
-                if ok and errdata and (option.get("diagnosis") or option.get("warning")) then
+                if ok and errdata and policy.build_warnings(opt) then
                     errdata = errdata:trim()
                     if #errdata > 0 then
-                        cprint("${color.warning}%s", errdata)
+                        progress.show_output("${color.warning}%s", errdata)
                     end
                 end
             end

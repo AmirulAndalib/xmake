@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      glcraft
 -- @file        complete.lua
@@ -23,7 +23,7 @@ import("private.xrepo.quick_search.cache")
 -- complete xrepo packages
 function _xmake_package_complete(complete, opt)
     local candidates = {}
-    local found = cache.find(complete)
+    local found = cache.find(complete, {prefix = true})
     for _, candidate in ipairs(found) do
         table.insert(candidates, {value = candidate.name, description = candidate.data.description})
     end

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        toolchain.lua
@@ -26,6 +26,11 @@ local platform  = require("platform/platform")
 local toolchain = require("tool/toolchain")
 local project   = require("project/project")
 local raise     = require("sandbox/modules/raise")
+
+-- inherit some builtin interfaces
+sandbox_core_tool_toolchain.apis        = toolchain.apis
+sandbox_core_tool_toolchain.directories = toolchain.directories
+sandbox_core_tool_toolchain.save        = toolchain.save
 
 -- get all toolchains list
 function sandbox_core_tool_toolchain.list()

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_package.lua
@@ -107,7 +107,7 @@ function main(name, opt)
     local result = nil
     local packagedir = metainfo.extracted_package_dir
     for _, line in ipairs(metainfo.files) do
-        line = line:trim()
+        local line = line:trim()
 
         -- get includedirs
         local pos = line:find("include/", 1, true)

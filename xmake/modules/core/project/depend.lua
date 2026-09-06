@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        depend.lua
@@ -21,11 +21,6 @@
 -- imports
 import("core.base.option")
 import("core.project.project")
-import("private.tools.cl.parse_deps", {alias = "parse_deps_cl"})
-import("private.tools.cl.parse_deps_json", {alias = "parse_deps_cl_json"})
-import("private.tools.rc.parse_deps", {alias = "parse_deps_rc"})
-import("private.tools.gcc.parse_deps", {alias = "parse_deps_gcc"})
-import("private.tools.armcc.parse_deps", {alias = "parse_deps_armcc"})
 
 -- load depfiles
 function _load_depfiles(parser, dependinfo, depfiles, opt)
@@ -39,29 +34,39 @@ function _load_depfiles(parser, dependinfo, depfiles, opt)
     end
 end
 
--- load dependent info from the given file (.d)
-function load(dependfile, opt)
+-- get depfiles parser
+function _get_depfiles_parser(depfiles_format)
+    assert(depfiles_format, "no depfiles format")
+    local depfiles_parsers = _g._depfiles_parsers
+    if depfiles_parsers == nil then
+        depfiles_parsers = {}
+        _g._depfiles_parsers = depfiles_parsers
+    end
+    local parser = depfiles_parsers[depfiles_format]
+    if parser == nil then
+        parser = import("core.tools." .. depfiles_format .. ".parse_deps", {anonymous = true})
+        depfiles_parsers[depfiles_format] = parser or false
+    end
+    return parser or nil
+end
 
+-- load dependent info from the given file (.d)
+--
+-- @param dependfile    the depend file path
+-- @param opt           the options, e.g. {target = target}
+-- @return              the depend info table, or nil if not found
+--
+function load(dependfile, opt)
     if os.isfile(dependfile) then
         -- may be the depend file has been incomplete when if the compilation process is abnormally interrupted
         local dependinfo = try { function() return io.load(dependfile) end }
         if dependinfo then
             -- attempt to load depfiles from the compilers
-            if dependinfo.depfiles_gcc then
-                _load_depfiles(parse_deps_gcc, dependinfo, dependinfo.depfiles_gcc, opt)
-                dependinfo.depfiles_gcc = nil
-            elseif dependinfo.depfiles_cl_json then
-                _load_depfiles(parse_deps_cl_json, dependinfo, dependinfo.depfiles_cl_json, opt)
-                dependinfo.depfiles_cl_json = nil
-            elseif dependinfo.depfiles_cl then
-                _load_depfiles(parse_deps_cl, dependinfo, dependinfo.depfiles_cl, opt)
-                dependinfo.depfiles_cl = nil
-            elseif dependinfo.depfiles_rc then
-                _load_depfiles(parse_deps_rc, dependinfo, dependinfo.depfiles_rc, opt)
-                dependinfo.depfiles_rc = nil
-            elseif dependinfo.depfiles_armcc then
-                _load_depfiles(parse_deps_armcc, dependinfo, dependinfo.depfiles_armcc, opt)
-                dependinfo.depfiles_armcc = nil
+            local depfiles = dependinfo.depfiles
+            if depfiles then
+                local depfiles_parser = _get_depfiles_parser(dependinfo.depfiles_format)
+                _load_depfiles(depfiles_parser, dependinfo, depfiles, opt)
+                dependinfo.depfiles = nil
             end
             return dependinfo
         end
@@ -83,15 +88,29 @@ function _is_show_diagnosis_info()
 end
 
 -- save dependent info to file
+--
+-- @param dependinfo    the depend info table {files = {}, values = {}}
+-- @param dependfile    the depend file path
+--
 function save(dependinfo, dependfile)
     io.save(dependfile, dependinfo)
 end
 
--- Is the dependent info changed?
+-- is the dependent info changed?
 --
--- if not depend.is_changed(dependinfo, {filemtime = os.mtime(objectfile), values = {...}}) then
+-- @param dependinfo    the depend info table from depend.load()
+-- @param opt           the options
+--                      - lastmtime: the last modification time to compare
+--                      - values: the depend values to compare
+--                      - files: the depend files (optional, from dependinfo.files)
+--                      - timecache: enable time cache for performance (optional)
+-- @return              true if changed
+--
+-- @code
+-- if not depend.is_changed(dependinfo, {lastmtime = os.mtime(objectfile), values = {program, flags}}) then
 --      return
 -- end
+-- @endcode
 --
 function is_changed(dependinfo, opt)
 
@@ -103,14 +122,23 @@ function is_changed(dependinfo, opt)
     end
 
     -- check whether the dependent files are changed
+    local timecache = opt.timecache
     local lastmtime = opt.lastmtime or 0
     _g.files_mtime = _g.files_mtime or {}
     local files_mtime = _g.files_mtime
     for _, file in ipairs(files) do
 
         -- get and cache the file mtime
-        local mtime = files_mtime[file] or os.mtime(file)
-        files_mtime[file] = mtime
+        local mtime
+        if timecache then
+            mtime = files_mtime[file]
+            if mtime == nil then
+                mtime = os.mtime(file)
+                files_mtime[file] = mtime
+            end
+        else
+            mtime = os.mtime(file)
+        end
 
         -- source and header files have been changed or not exists?
         if mtime == 0 or mtime > lastmtime then
@@ -139,6 +167,9 @@ function is_changed(dependinfo, opt)
             end
             return true
         elseif deptype == "table" then
+            if #depvalue ~= #optvalue then
+                return true
+            end
             for subidx, subvalue in ipairs(depvalue) do
                 if subvalue ~= optvalue[subidx] then
                     if _is_show_diagnosis_info() then
@@ -159,7 +190,7 @@ function is_changed(dependinfo, opt)
         for idx, file in ipairs(files) do
             if file ~= optfiles[idx] then
                 if _is_show_diagnosis_info() then
-                    cprint("${color.warning}[check_build_deps]: file %s != %s at index %d", file, optfiles[subidx], idx)
+                    cprint("${color.warning}[check_build_deps]: file %s != %s at index %d", file, optfiles[idx], idx)
                 end
                 return true
             end
@@ -167,27 +198,23 @@ function is_changed(dependinfo, opt)
     end
 end
 
--- on changed for the dependent files and values
+-- run callback only when dependent files or values have changed
 --
--- e.g.
+-- @param callback      the callback function to run when changed
+-- @param opt           the options
+--                      - dependfile: the depend cache file path (required)
+--                      - files: the source files to track
+--                      - values: the values to track (e.g. flags, program)
 --
+-- @code
 -- depend.on_changed(function ()
---     -- do some thing
---     -- ..
---
---     -- maybe need update dependent files
---     dependinfo.files = {""}
---
---     -- return new dependinfo (optional)
---     return {files = {}, ..}
---
--- end, {dependfile = "/xx/xx",
---       values = {compinst:program(), compflags},
---       files = {sourcefile, ...}})
+--     -- do build work here
+-- end, {dependfile = target:dependfile(objectfile),
+--       files = {sourcefile},
+--       values = {compinst:program(), compflags}})
+-- @endcode
 --
 function on_changed(callback, opt)
-
-    -- init option
     opt = opt or {}
 
     -- dry run? we only do callback directly and do not change any status
@@ -209,7 +236,10 @@ function on_changed(callback, opt)
 
     -- @note we use mtime(dependfile) instead of mtime(objectfile) to ensure the object file is is fully compiled.
     -- @see https://github.com/xmake-io/xmake/issues/748
-    if not is_changed(dependinfo, {lastmtime = opt.lastmtime or os.mtime(dependfile), values = opt.values, files = opt.files}) then
+    if not is_changed(dependinfo, {
+            timecache = opt.timecache,
+            lastmtime = opt.lastmtime or os.mtime(dependfile),
+            values = opt.values, files = opt.files}) then
         return
     end
 

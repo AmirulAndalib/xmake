@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_clang.lua
@@ -37,6 +37,7 @@ import("lib.detect.find_programver")
 --
 function main(opt)
     opt = opt or {}
+    opt.norunfile = true
     local program = find_program(opt.program or "clang", opt)
     local version = nil
     if program and opt and opt.version then

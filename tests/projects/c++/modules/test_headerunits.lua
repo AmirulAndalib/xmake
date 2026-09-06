@@ -1,44 +1,19 @@
-import("lib.detect.find_tool")
-import("core.base.semver")
-import("detect.sdks.find_vstudio")
+inherit("test_base")
 
-function _build()
-    local ci = (os.getenv("CI") or os.getenv("GITHUB_ACTIONS") or ""):lower()
-    if ci == "true" then
-        os.exec("xmake -rvD")
-    else
-        os.exec("xmake -r")
-    end
+local _MSVC_MIN_VER = "14.30"
+
+function msvc_min_ver()
+    return _MSVC_MIN_VER
 end
 
 function main(t)
-    if is_subhost("windows") then
-        local vs = find_vstudio()
-        if vs and vs["2022"] then
-            os.exec("xmake f -c --yes")
-            _build()
-        end
-    elseif is_host("linux") then
-        local gcc = find_tool("gcc", {version = true})
-        if gcc and gcc.version and semver.compare(gcc.version, "11.0") >= 0 then
-            -- gcc trtbd dependency detection doesn't support header units atm
-            os.exec("xmake f --policies=build.c++.gcc.fallbackscanner -c --yes")
-            _build()
-        end
-        local clang = find_tool("clang", {version = true})
-        if clang and clang.version then
-            if semver.compare(clang.version, "15.0") >= 0 then
-                os.exec("xmake clean -a")
-                -- clang-scan-deps dependency detection doesn't support header units atm
-                os.exec("xmake f --toolchain=clang --policies=build.c++.clang.fallbackscanner -c")
-                _build()
-            -- elseif semver.compare(clang.version, "15.0") >= 0 then
-            -- there is currently a bug on llvm git that prevent to build STL header units https://github.com/llvm/llvm-project/issues/58540
-            -- os.exec("xmake clean -a")
-            -- clang-scan-deps dependency detection doesn't support header units atm
-            -- os.exec("xmake f --toolchain=clang  --policies=build.c++.modules.fallbackscanner.clang --cxxflags=\"-stdlib=libc++\" -c")
-            -- _build()
-            end
-        end
+    local gcc_options = {fallbackscanner = true, compiler = "gcc", version = gcc_min_ver()}
+    -- gcc/arm64: internal compiler error: in core_vals, at cp/module.cc:6108
+    -- on windows, mingw modulemapper doesn't handle headeunit path correctly, but it's working with mingw on macOS / Linux
+    if os.arch() == "arm64" or is_subhost("msys") then
+        gcc_options = nil
     end
+    local msvc_options = {version = msvc_min_ver()}
+    -- skip clang tests, headerunits with clang is not stable
+    run_tests(nil, gcc_options, msvc_options)
 end

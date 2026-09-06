@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -28,7 +28,7 @@ toolchain("iverilog")
         import("lib.detect.find_tool")
         local paths = {}
         for _, package in ipairs(toolchain:packages()) do
-            local envs = package:get("envs")
+            local envs = package:envs()
             if envs then
                 table.join2(paths, envs.PATH)
             end
@@ -49,6 +49,5 @@ toolchain("iverilog")
             cprint("${dim}checking for vvp ... ${color.nothing}${text.nothing}")
             raise("iverilog not found!")
         end
-        toolchain:configs_save()
         return true
     end)

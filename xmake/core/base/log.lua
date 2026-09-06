@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --o
 -- @author      ruki
 -- @file        log.lua
@@ -21,7 +21,10 @@
 -- define module: log
 local log = log or {}
 
--- get the log file
+-- get the log file object
+--
+-- @return      the file object
+--
 function log:file()
 
     -- disable?
@@ -56,7 +59,10 @@ function log:file()
     return self._FILE
 end
 
--- get the output file
+-- get the output log file path
+--
+-- @return      the log file path
+--
 function log:outputfile()
     if self._LOGFILE == nil then
         self._LOGFILE = os.getenv("XMAKE_LOGFILE") or false
@@ -64,19 +70,22 @@ function log:outputfile()
     return self._LOGFILE
 end
 
--- clear log
+-- clear the log file
 function log:clear(state)
     if os.isfile(self:outputfile()) then
         io.writefile(self:outputfile(), "")
     end
 end
 
--- enable log
+-- enable or disable logging
+--
+-- @param state  true to enable, false to disable
+--
 function log:enable(state)
     self._ENABLE = state
 end
 
--- flush log to file
+-- flush log buffer to file
 function log:flush()
     local file = self:file()
     if file then
@@ -92,7 +101,10 @@ function log:close()
     end
 end
 
--- print log to the log file
+-- print log with newline to the log file
+--
+-- @param ...   the format string and arguments
+--
 function log:print(...)
     local file = self:file()
     if file then
@@ -100,7 +112,10 @@ function log:print(...)
     end
 end
 
--- print variables to the log file
+-- print variables to the log file (verbose mode only)
+--
+-- @param ...   the variables to print
+--
 function log:printv(...)
     local file = self:file()
     if file then
@@ -120,7 +135,10 @@ function log:printv(...)
     end
 end
 
--- printf log to the log file
+-- printf log without newline to the log file
+--
+-- @param ...   the format string and arguments
+--
 function log:printf(...)
     local file = self:file()
     if file then
@@ -128,7 +146,10 @@ function log:printf(...)
     end
 end
 
--- write log the log file
+-- write raw data to the log file
+--
+-- @param ...   the data to write
+--
 function log:write(...)
     local file = self:file()
     if file then

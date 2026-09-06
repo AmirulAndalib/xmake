@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        languages.lua
@@ -24,8 +24,8 @@ import(".api_checker")
 function main(opt)
     opt = opt or {}
     local values = {
-        "ansi", "c89", "c90", "c99", "c11", "c17", "clatest",
-        "cxx98", "cxx03", "cxx11", "cxx14", "cxx17", "cxx1z", "cxx20", "cxx2a", "cxx23", "cxx2b", "cxxlatest"
+        "ansi", "c89", "c90", "c99", "c11", "c17", "c23", "clatest",
+        "cxx98", "cxx03", "cxx11", "cxx14", "cxx17", "cxx1z", "cxx20", "cxx2a", "cxx23", "cxx2b", "cxx2c", "cxx26", "cxxlatest"
     }
     local languages = {}
     for _, value in ipairs(values) do

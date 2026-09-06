@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        api_checker.lua
@@ -21,9 +21,27 @@
 -- imports
 import("core.base.option")
 import("core.base.hashset")
+import("core.package.package")
 import("core.project.project")
 import("private.check.checker")
 import("private.utils.target", {alias = "target_utils"})
+
+function _get_project_packages()
+    local project_packages = _g.project_packages
+    if not project_packages then
+        project_packages = {}
+        for name, _ in pairs(project.required_packages()) do
+            local pkg, errors = package.load_from_project(name)
+            if pkg then
+                table.insert(project_packages, pkg)
+            elseif errors then
+                raise(errors)
+            end
+        end
+        _g.project_packages = project_packages
+    end
+    return project_packages
+end
 
 -- get the most probable value
 function _get_most_probable_value(value, valueset)
@@ -59,7 +77,7 @@ function _do_show(str, opt)
 end
 
 -- show result
-function _show(apiname, value, target, opt)
+function _show(apiname, value, instance, opt)
     opt = opt or {}
 
     -- match level? verbose: note/warning/error, default: warning/error
@@ -69,13 +87,13 @@ function _show(apiname, value, target, opt)
     end
 
     -- get source information
-    local sourceinfo = target:sourceinfo(apiname, value) or {}
+    local sourceinfo = instance:sourceinfo(apiname, value) or {}
     local sourcetips = sourceinfo.file or ""
     if sourceinfo.line then
         sourcetips = sourcetips .. ":" .. (sourceinfo.line or -1)
     end
     if #sourcetips == 0 then
-        sourcetips = string.format("target(%s)", target:name())
+        sourcetips = string.format("%s(%s)", instance:type(), instance:name())
     end
 
     -- get level tips
@@ -105,36 +123,70 @@ function _show(apiname, value, target, opt)
         probable_value = probable_value})
 end
 
--- check target
-function _check_target(target, apiname, valueset, level, opt)
-    local target_valueset = valueset
+-- report the invalid value on the given instance
+function _report(instance, apiname, value, level, opt)
+    local reported = _show(apiname, value, instance, {
+        show = opt.show,
+        showstr = opt.showstr,
+        valueset = opt.valueset,
+        level = level})
+    if reported then
+        checker.update_stats(level)
+    end
+end
+
+-- check instance
+function _check_instance(instance, apiname, valueset, level, opt)
+    local instance_valueset = valueset
     if type(opt.values) == "function" then
-        local target_values = opt.values(target)
-        if target_values then
-            target_valueset = hashset.from(target_values)
+        local instance_values = opt.values(instance)
+        if instance_values then
+            instance_valueset = hashset.from(instance_values)
         end
     end
-    local values = target:get(apiname)
-    for _, value in ipairs(values) do
+    local values = instance:get(apiname)
+
+    -- check the keyvalues api, e.g. set_toolset("cxx", "clang")
+    -- the values is a dictionary, e.g. {cxx = "clang"}, so we report it on the key
+    -- @see https://github.com/xmake-io/xmake/pull/7597
+    if opt.keyvalues then
         if opt.check then
-            local ok, errors = opt.check(target, value)
-            if not ok then
-                local reported = _show(apiname, value, target, {
-                    show = opt.show,
-                    showstr = errors,
-                    level = level})
-                if reported then
-                    checker.update_stats(level)
+            for key, value in pairs(table.wrap(values)) do
+                local ok, errors = opt.check(instance, key, value)
+                if not ok then
+                    _report(instance, apiname, key, level, {show = opt.show, showstr = errors})
                 end
             end
-        elseif not target_valueset:has(value) then
-            local reported = _show(apiname, value, target, {
-                show = opt.show,
-                valueset = target_valueset,
-                level = level})
-            if reported then
-                checker.update_stats(level)
+        end
+        return
+    end
+
+    for _, value in ipairs(values) do
+        if opt.check then
+            local ok, errors = opt.check(instance, value)
+            if not ok then
+                _report(instance, apiname, value, level, {show = opt.show, showstr = errors})
             end
+        elseif not instance_valueset:has(value) then
+            _report(instance, apiname, value, level, {show = opt.show, valueset = instance_valueset})
+        end
+    end
+end
+
+-- check api configuration in instances
+function _check_instances(apiname, instance, instances_func, opt)
+    local level = opt.level or "warning"
+    local valueset
+    if opt.values and type(opt.values) ~= "function" then
+        valueset = hashset.from(opt.values)
+    else
+        valueset = hashset.new()
+    end
+    if instance then
+        _check_instance(instance, apiname, valueset, level, opt)
+    else
+        for _, instance in pairs(instances_func()) do
+            _check_instance(instance, apiname, valueset, level, opt)
         end
     end
 end
@@ -143,29 +195,24 @@ end
 -- @see https://github.com/xmake-io/xmake/issues/3594
 function check_flag(target, toolinst, flagkind, flag)
     local extraconf = target:extraconf(flagkind)
-    flag = target_utils.flag_belong_to_tool(target, flag, toolinst, extraconf)
+    flag = target_utils.flag_belong_to_tool(flag, toolinst, extraconf)
     if flag then
-        return toolinst:has_flags(flag)
-    else
-        return true
+        extraconf = extraconf and extraconf[flag]
+        if not extraconf or not extraconf.force then
+            return toolinst:has_flags(flag)
+        end
     end
+    return true
 end
 
 -- check api configuration in targets
 function check_targets(apiname, opt)
     opt = opt or {}
-    local level = opt.level or "warning"
-    local valueset
-    if opt.values and type(opt.values) ~= "function" then
-        valueset = hashset.from(opt.values)
-    else
-        valueset = hashset.new()
-    end
-    if opt.target then
-        _check_target(opt.target, apiname, valueset, level, opt)
-    else
-        for _, target in pairs(project.targets()) do
-            _check_target(target, apiname, valueset, level, opt)
-        end
-    end
+    _check_instances(apiname, opt.target, project.targets, opt)
+end
+
+-- check api configuration in packages
+function check_packages(apiname, opt)
+    opt = opt or {}
+    _check_instances(apiname, opt.package, _get_project_packages, opt)
 end

@@ -1,6 +1,6 @@
 <div align="center">
   <a href="https://xmake.io">
-    <img width="160" heigth="160" src="https://tboox.org/static/img/xmake/logo256c.png">
+    <img width="160" height="160" src="https://xmake.io/assets/img/logo.png">
   </a>
 
   <h1>xmake</h1>
@@ -35,7 +35,7 @@
     <a href="https://discord.gg/xmake">
       <img src="https://img.shields.io/badge/chat-on%20discord-7289da.svg?style=flat-square" alt="Discord" />
     </a>
-    <a href="https://xmake.io/#/sponsor">
+    <a href="https://xmake.io/about/sponsor.html">
       <img src="https://img.shields.io/badge/donate-us-orange.svg?style=flat-square" alt="Donate" />
     </a>
   </div>
@@ -46,18 +46,7 @@
 
 ## Support this project
 
-Support this project by [becoming a sponsor](https://xmake.io/#/about/sponsor). Your logo will show up here with a link to your website. 🙏
-
-<a href="https://opencollective.com/xmake#sponsors" target="_blank"><img src="https://opencollective.com/xmake/sponsors.svg?width=890"></a>
-<a href="https://opencollective.com/xmake#backers" target="_blank"><img src="https://opencollective.com/xmake/backers.svg?width=890"></a>
-
-## Technical support
-
-You can also consider sponsoring us to get extra technical support services via the [Github sponsor program](https://github.com/sponsors/waruqi). If you do, you can get access to the [xmake-io/technical-support](https://github.com/xmake-io/technical-support) repository, which has the following bennefits:
-
-- [X] Handling Issues with higher priority
-- [X] One-to-one technical consulting service
-- [X] Review your xmake.lua and provide suggestions for improvement
+Support this project by [becoming a sponsor](https://xmake.io/about/sponsor.html). Your logo will show up here with a link to your website. 🙏
 
 ## Introduction ([中文](/README_zh.md))
 
@@ -79,11 +68,11 @@ Although less precise, one can still understand Xmake in the following way:
 Xmake ≈ Make/Ninja + CMake/Meson + Vcpkg/Conan + distcc + ccache/sccache
 ```
 
-If you want to know more, please refer to: the [Documentation](https://xmake.io/#/getting_started), [GitHub](https://github.com/xmake-io/xmake) or [Gitee](https://gitee.com/tboox/xmake). You are also welcome to join our [community](https://xmake.io/#/about/contact).
+If you want to know more, please refer to the [Documentation](https://xmake.io/guide/quick-start), [GitHub](https://github.com/xmake-io/xmake) or [Gitee](https://gitee.com/tboox/xmake). You are also welcome to join our [community](https://xmake.io/about/contact).
 
 The official Xmake repository can be found at [xmake-io/xmake-repo](https://github.com/xmake-io/xmake-repo).
 
-![](https://github.com/xmake-io/xmake-docs/raw/master/assets/img/index/xmake-basic-render.gif)
+![](https://github.com/xmake-io/xmake-docs/raw/master/docs/public/assets/img/index/xmake-basic-render.gif)
 
 ## Installation
 
@@ -102,12 +91,12 @@ wget https://xmake.io/shget.text -O - | bash
 ### With PowerShell
 
 ```sh
-Invoke-Expression (Invoke-Webrequest 'https://xmake.io/psget.text' -UseBasicParsing).Content
+irm https://xmake.io/psget.text | iex
 ```
 
 ### Other installation methods
 
-If you don't want to use the above scripts to install Xmake, visit the [Installation Guide](https://xmake.io/#/guide/installation) for other installation methods (building from source, package managers, etc.).
+If you don't want to use the above scripts to install Xmake, visit the [Installation Guide](https://xmake.io/guide/quick-start.html#installation) for other installation methods (building from source, package managers, etc.).
 
 ## Simple Project Description
 
@@ -119,7 +108,7 @@ target("console")
 
 Creates a new target `console` of kind `binary`, and adds all the files ending in `.c` in the `src` directory.
 
-## Package dependences
+## Package dependencies
 
 ```lua
 add_requires("tbox 1.6.*", "zlib", "libpng ~1.6")
@@ -133,7 +122,7 @@ The official xmake package repository exists at: [xmake-repo](https://github.com
 <img src="https://github.com/xmake-io/xmake-docs/raw/master/assets/img/index/package.gif" width="650px" />
 </p>
 
-## Commandline interface reference
+## Command line interface reference
 
 The below assumes you are currently in the project's root directory.
 
@@ -180,69 +169,86 @@ $ xmake f --menu
 
 ## Supported platforms
 
-* Windows (x86, x64)
+* Windows (x86, x64, arm, arm64, arm64ec)
 * macOS (i386, x86_64, arm64)
-* Linux (i386, x86_64, cross-toolchains ..)
-* *BSD (i386, x86_64)
+* Linux (i386, x86_64, arm, arm64, riscv, mips, 390x, sh4 ...)
+* FreeBSD (i386, x86_64)
+* NetBSD (i386, x86_64)
+* OpenBSD (i386, x86_64)
+* DragonflyBSD (i386, x86_64)
+* Solaris (i386, x86_64)
 * Android (x86, x86_64, armeabi, armeabi-v7a, arm64-v8a)
 * iOS (armv7, armv7s, arm64, i386, x86_64)
 * WatchOS (armv7k, i386)
 * AppleTVOS (armv7, arm64, i386, x86_64)
+* AppleXROS (arm64, x86_64)
 * MSYS (i386, x86_64)
 * MinGW (i386, x86_64, arm, arm64)
 * Cygwin (i386, x86_64)
-* Wasm (wasm32)
+* Wasm (wasm32, wasm64)
+* Haiku (i386, x86_64)
+* Harmony (x86_64, armeabi-v7a, arm64-v8a)
 * Cross (cross-toolchains ..)
 
 ## Supported toolchains
 
-### IDE-Tied
-
-* Xcode
-* MSVC (Microsoft Visual C compiler)
-* Android NDK
-
-### Languages
-
-* Zig
-* Go(lang)
-* Swift
-* Nim
-* Rust
-* GCC (GNU Compiler Collection)
-* Clang
-* TinyCC
-* icc (Intel C Compiler)
-* icpc (Intel C++ Compiler)
-* icx (Intel LLVM C/C++ Compiler)
-* Clang-CL (Clang Compatability with MSVC)
-* DPC++ (Intel LLVM C++ Compiler using SYCL)
-* MinGW (GNU for Windows)
-* C51 (Keil C Compiler for the 8051)
-* GNU-RM (GNU Arm Embedded Toolchain)
-* ArmCC (Keil C Compiler for Keil MKD Version 5)
-* Circle (New C++20 compiler)
-* WASI (C/C++ WebAssembly Toolchain)
-* ArmClang (Version 6 of the Keil MDK)
-* SDCC (Small Device C Compiler)
-* GDC (GNU D Compiler)
-* LDC (LLVM D Compiler)
-* DMD (Dlang)
-* FPC (Free Pascal Programming Language Compiler)
-* GFortran (GNU Fortran Compiler)
-* Ifort (Intel Fortran Compiler)
-* CUDA (nvcc, nvc, nvc++, nvfortran)
-* Emscripten
-* LLVM
-* Icarus Verilog
-* Verilator (SystemVerilog simulator and lint system)
-
-### Assemblers
-
-* FASM
-* NASM
-* YASM
-* MASM32 (Microsoft Macro Assembler 32-bit SDK)
+```bash
+$ xmake show -l toolchains
+xcode         Xcode IDE
+msvc          Microsoft Visual C/C++ Compiler
+clang-cl      LLVM Clang C/C++ Compiler compatible with msvc
+yasm          The Yasm Modular Assembler
+clang         A C language family frontend for LLVM
+go            Go Programming Language Compiler
+dlang         D Programming Language Compiler (Auto)
+dmd           D Programming Language Compiler
+ldc           The LLVM-based D Compiler
+gdc           The GNU D Compiler (GDC)
+gfortran      GNU Fortran Programming Language Compiler
+flang         LLVM Fortran Compiler
+zig           Zig Programming Language Compiler
+zigcc         Use zig cc/c++ as C/C++ Compiler
+sdcc          Small Device C Compiler
+cuda          CUDA Toolkit (nvcc, nvc, nvc++, nvfortran)
+ndk           Android NDK
+rust          Rust Programming Language Compiler
+swift         Swift Programming Language Compiler
+llvm          A collection of modular and reusable compiler and toolchain technologies
+cross         Common cross compilation toolchain
+nasm          NASM Assembler
+gcc           GNU Compiler Collection
+mingw         Minimalist GNU for Windows
+gnu-rm        GNU Arm Embedded Toolchain
+envs          Environment variables toolchain
+fasm          Flat Assembler
+tinycc        Tiny C Compiler
+emcc          A toolchain for compiling to asm.js and WebAssembly
+icc           Intel C/C++ Compiler
+ifort         Intel Fortran Compiler
+ifx           Intel LLVM Fortran Compiler
+muslcc        The musl-based cross-compilation toolchain
+fpc           Free Pascal Programming Language Compiler
+wasi          WASI-enabled WebAssembly C/C++ toolchain
+nim           Nim Programming Language Compiler
+dotnet        .NET SDK Toolchain
+circle        A new C++20 compiler
+armcc         ARM Compiler Version 5 of Keil MDK
+armclang      ARM Compiler Version 6 of Keil MDK
+c51           Keil development tools for the 8051 Microcontroller Architecture
+icx           Intel LLVM C/C++ Compiler
+dpcpp         Intel LLVM C++ Compiler for data parallel programming model based on Khronos SYCL
+masm32        The MASM32 SDK
+iverilog      Icarus Verilog
+verilator     Verilator open-source SystemVerilog simulator and lint system
+cosmocc       build-once run-anywhere
+hdk           Harmony SDK
+ti-c2000      TI-CGT C2000 compiler
+ti-c6000      TI-CGT C6000 compiler
+iararm        IAR ARM C/C++ Compiler
+kotlin-native Kotlin Native Programming Language Compiler
+filc          A memory safe implementation of the C and C++ programming languages (https://fil-c.org/)
+ascendc       Huawei Ascend C (bisheng compiler driver)
+```
 
 ## Supported languages
 
@@ -265,6 +271,9 @@ $ xmake f --menu
 * YASM
 * MASM32
 * Cppfront
+* Kotlin
+* C#
+* Ascend C
 
 ## Features
 
@@ -321,7 +330,7 @@ Xmake can automatically fetch and install dependencies!
 
 * Official package repository [xmake-repo](https://github.com/xmake-io/xmake-repo) (tbox >1.6.1)
 * Official package manager [Xrepo](https://github.com/xmake-io/xrepo)
-* [User-built repositories](https://xmake.io/#/package/remote_package?id=using-self-built-private-package-repository)
+* [User-built repositories](https://xmake.io/guide/package-management/using-official-packages.html#using-self-built-private-package-repository)
 * Conan (conan::openssl/1.1.1g)
 * Conda (conda::libpng 1.3.67)
 * Vcpkg (vcpkg:ffmpeg)
@@ -334,6 +343,7 @@ Xmake can automatically fetch and install dependencies!
 * Nimble for nimlang (nimble::zip >1.3)
 * Cargo for rust (cargo::base64 0.13.0)
 * Zypper on openSUSE (zypper::libsfml2 2.5)
+* NuGet (nuget::Humanizer.Core 2.14.1)
 
 ### Package management features
 
@@ -364,15 +374,15 @@ Below is a diagram showing roughly the architecture of Xmake, and thus how it fu
 - [X] Support for real time compressed transfer of large files (lz4).
 - [X] Almost zero configuration cost, no shared filesystem required, for convenience and security.
 
-For more details see: [#274](https://github.com/xmake-io/xmake/issues/274)
+For more details see: [Distributed Compilation](https://xmake.io/guide/extras/distributed-compilation.html)
 
 ## Remote Compilation
 
-For more details see: [#622](https://github.com/xmake-io/xmake/issues/622)
+For more details see: [Remote Compilation](https://xmake.io/guide/extras/remote-compilation.html)
 
 ## Local/Remote Build Cache
 
-For more details see: [#622](https://github.com/xmake-io/xmake/issues/2371)
+For more details see: [Build Cache Acceleration](https://xmake.io/guide/extras/build-cache.html)
 
 ## Benchmark
 
@@ -456,7 +466,7 @@ target("test")
     set_kind("binary")
     add_files("src/*.cu")
     add_cugencodes("native")
-    add_cugencodes("compute_35")
+    add_cugencodes("compute_75")
 ```
 
 ### WDK/UMDF Driver Program
@@ -473,7 +483,7 @@ target("app")
     add_files("exe/*.cpp")
 ```
 
-For more WDK driver examples (UMDF/KMDF/WDM), please visit [WDK Program Examples](https://xmake.io/#/guide/project_examples?id=wdk-driver-program)
+For more WDK driver examples (UMDF/KMDF/WDM), please visit [WDK Program Examples](https://xmake.io/examples/cpp/wdk.html)
 
 ### Darwin Applications
 
@@ -556,7 +566,7 @@ target("test")
 
 ## Plugins
 
-#### Generate IDE project file plugin（makefile, vs2002 - vs2022 .. ）
+#### Generate IDE project file plugin（makefile, vs2002 - vs2026 .. ）
 
 ```bash
 $ xmake project -k vsxmake -m "debug,release" # New vsproj generator (Recommended)
@@ -582,7 +592,7 @@ $ xmake l
   }
 ```
 
-To see a list of bultin plugs, please visit [Builtin plugins](https://xmake.io/#/plugin/builtin_plugins).
+To see a list of builtin plugins, please visit [Builtin plugins](https://xmake.io/guide/extensions/builtin-plugins.html).
 
 Please download and install other plugins from the plugins repository [xmake-plugins](https://github.com/xmake-io/xmake-plugins).
 
@@ -600,6 +610,7 @@ Please download and install other plugins from the plugins repository [xmake-plu
 
 <img src="https://raw.githubusercontent.com/xmake-io/xmake-idea/master/res/problem.gif" width="650px" />
 
+* [xmake-zed](https://github.com/xmake-io/xmake-zed) (thanks [@jeleferai](https://github.com/jeleferai))
 * [xmake.vim](https://github.com/luzhlon/xmake.vim) (third-party, thanks [@luzhlon](https://github.com/luzhlon))
 * [xmake-visualstudio](https://github.com/HelloWorld886/xmake-visualstudio) (third-party, thanks [@HelloWorld886](https://github.com/HelloWorld886))
 * [xmake-qtcreator](https://github.com/Arthapz/xmake-project-manager) (third-party, thanks [@Arthapz](https://github.com/Arthapz))
@@ -659,9 +670,9 @@ with:
 
 ## Who is using Xmake?
 
-The list of people and projects who are using Xmake is available [here](https://xmake.io/#/about/who_is_using_xmake).
+The list of people and projects who are using Xmake is available [here](https://xmake.io/about/who_is_using_xmake.html).
 
-If you are using Xmake, you are welcome to submit your information to the above list through a PR, so that other users and the developers can gauge interest.  Ihis also let users to use xmake more confidently and give us motivation to continue to maintain it.
+If you are using Xmake, you are welcome to submit your information to the above list through a PR, so that other users and the developers can gauge interest.  This also lets users use xmake more confidently and gives us motivation to continue to maintain it.
 
 This will help the Xmake project and it's community grow stronger and expand!
 
@@ -686,4 +697,11 @@ This project exists thanks to all the people who have [contributed](CONTRIBUTING
 * [uael](https://github.com/uael): Provide the semantic versioning library [sv](https://github.com/uael/sv)
 * [OpportunityLiu](https://github.com/OpportunityLiu): Improve cuda, tests and ci
 * [xq144](https://github.com/xq114): Improve `xrepo env shell`, and contribute a lot of packages to the [xmake-repo](https://github.com/xmake-io/xmake-repo) repository.
+* [star-hengxing](https://github.com/star-hengxing): Contribute a lot of packages to the [xmake-repo](https://github.com/xmake-io/xmake-repo) repository.
+* [Arthapz](https://github.com/Arthapz): Contribute new C++ Modules implementation.
+* [SirLynix](https://github.com/SirLynix): Contributed many packages and let more people know about xmake.
 * `enderger`: Helped smooth out the edges on the English translation of the README
+
+### Powered by
+
+[![JetBrains logo.](https://resources.jetbrains.com/storage/products/company/brand/logos/jetbrains.svg)](https://jb.gg/OpenSource)

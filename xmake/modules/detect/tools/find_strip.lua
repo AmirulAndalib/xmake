@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_strip.lua
@@ -28,7 +28,7 @@ function _check_strip_of_xcode(program)
     -- make an stub source file
     local objectfile    = os.tmpfile() .. ".o"
     local sourcefile    = os.tmpfile() .. ".c"
-    io.writefile(sourcefile, "int test(void)\n{return 0;}")
+    io.writefile(sourcefile, "int test(void)\n{return 0;}\n")
 
     -- compile it
     compiler.compile(sourcefile, objectfile)

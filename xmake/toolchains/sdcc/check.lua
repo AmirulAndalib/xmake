@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        check.lua
@@ -20,6 +20,7 @@
 
 -- imports
 import("core.project.config")
+import("lib.detect.find_tool")
 import("detect.sdks.find_cross_toolchain")
 
 -- check the cross toolchain
@@ -30,9 +31,7 @@ function main(toolchain)
     if cross_toolchain then
         toolchain:config_set("cross", cross_toolchain.cross)
         toolchain:config_set("bindir", cross_toolchain.bindir)
-        toolchain:configs_save()
-    else
-        raise("sdcc toolchain not found!")
+        return true
     end
-    return cross_toolchain
+    return find_tool("sdcc")
 end

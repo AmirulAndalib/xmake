@@ -12,48 +12,26 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_vstudio.lua
 --
 
 -- imports
+import("core.base.option")
+import("core.base.semver")
+import("core.base.hashset")
 import("core.project.config")
 import("lib.detect.find_file")
 import("lib.detect.find_tool")
+import("lib.detect.find_directory")
 import("core.cache.global_detectcache")
 
--- init vc variables
-local vcvars = {"path",
-                "lib",
-                "libpath",
-                "include",
-                "DevEnvdir",
-                "VSInstallDir",
-                "VCInstallDir",
-                "WindowsSdkDir",
-                "WindowsLibPath",
-                "WindowsSDKVersion",
-                "WindowsSdkBinPath",
-                "WindowsSdkVerBinPath",
-                "ExtensionSdkDir",
-                "UniversalCRTSdkDir",
-                "UCRTVersion",
-                "VCToolsVersion",
-                "VCIDEInstallDir",
-                "VCToolsInstallDir",
-                "VCToolsRedistDir",
-                "VisualStudioVersion",
-                "VSCMD_VER",
-                "VSCMD_ARG_app_plat",
-                "VSCMD_ARG_HOST_ARCH",
-                "VSCMD_ARG_TGT_ARCH"}
-
 -- init vsvers
-local vsvers =
-{
-    ["17.0"] = "2022"
+local vsvers = {
+    ["18.0"] = "2026"
+,   ["17.0"] = "2022"
 ,   ["16.0"] = "2019"
 ,   ["15.0"] = "2017"
 ,   ["14.0"] = "2015"
@@ -70,9 +48,9 @@ local vsvers =
 }
 
 -- init vsenvs
-local vsenvs =
-{
-    ["17.0"] = "VS170COMNTOOLS"
+local vsenvs = {
+    ["18.0"] = "VS180COMNTOOLS"
+,   ["17.0"] = "VS170COMNTOOLS"
 ,   ["16.0"] = "VS160COMNTOOLS"
 ,   ["15.0"] = "VS150COMNTOOLS"
 ,   ["14.0"] = "VS140COMNTOOLS"
@@ -88,8 +66,37 @@ local vsenvs =
 ,   ["4.2"]  = "VS42COMNTOOLS"
 }
 
+-- the original environment variables
+local _env_orgs = {}
+
 -- get all known Visual Studio environment variables
 function get_vcvars()
+    local vcvars = {
+        "PATH",
+        "LIB",
+        "LIBPATH",
+        "INCLUDE",
+        "DevEnvdir",
+        "VSInstallDir",
+        "VCInstallDir",
+        "WindowsSdkDir",
+        "WindowsLibPath",
+        "WindowsSDKVersion",
+        "WindowsSdkBinPath",
+        "WindowsSdkVerBinPath",
+        "ExtensionSdkDir",
+        "UniversalCRTSdkDir",
+        "UCRTVersion",
+        "VCToolsVersion",
+        "VCIDEInstallDir",
+        "VCToolsInstallDir",
+        "VCToolsRedistDir",
+        "VisualStudioVersion",
+        "VSCMD_VER",
+        "VSCMD_ARG_app_plat",
+        "VSCMD_ARG_HOST_ARCH",
+        "VSCMD_ARG_TGT_ARCH"}
+
     local realvcvars = vcvars
     for _, v in pairs(vsenvs) do
         table.insert(realvcvars, v)
@@ -97,11 +104,148 @@ function get_vcvars()
     return realvcvars
 end
 
+function find_build_tools(opt)
+    opt = opt or {}
+
+    local sdkdir = opt.sdkdir
+    if not sdkdir or not os.isdir(sdkdir) then
+        return
+    end
+
+    local variables = {}
+    local VCInstallDir = path.join(sdkdir, "VC")
+    local VCToolsVersion = opt.vs_toolset
+    if not VCToolsVersion or not os.isdir(path.join(VCInstallDir, "Tools/MSVC", VCToolsVersion)) then
+        -- https://github.com/xmake-io/xmake/issues/6159
+        local latest_toolset
+        for _, dir in ipairs(os.dirs(path.join(sdkdir, "VC/Tools/MSVC/*"))) do
+            local toolset = path.filename(dir)
+            if not latest_toolset or semver.compare(toolset, latest_toolset) > 0 then
+                latest_toolset = toolset
+            end
+        end
+        if latest_toolset then
+            VCToolsVersion = latest_toolset
+        else
+            return
+        end
+    end
+    variables.VCInstallDir = VCInstallDir
+    variables.VCToolsVersion = VCToolsVersion
+    variables.VCToolsInstallDir = path.join(VCInstallDir, "Tools/MSVC", VCToolsVersion)
+
+    local WindowsSDKVersion
+    local vs_sdkver = opt.vs_sdkver
+    if vs_sdkver and os.isdir(path.join(sdkdir, "Windows Kits/10/Lib", vs_sdkver)) then
+        WindowsSDKVersion = vs_sdkver
+    else
+        local dir = find_directory("10*", path.join(sdkdir, "Windows Kits/10/Lib"))
+        if dir then
+            WindowsSDKVersion = path.filename(dir)
+        else
+            return
+        end
+    end
+    variables.WindowsSDKVersion = WindowsSDKVersion
+    variables.WindowsSdkDir = path.join(sdkdir, "Windows Kits/10")
+    variables.WindowsSdkBinPath = path.join(variables.WindowsSdkDir, "bin")
+    variables.WindowsSdkVerBinPath = path.join(variables.WindowsSdkBinPath, WindowsSDKVersion)
+    variables.ExtensionSdkDir = path.join(variables.WindowsSdkDir, "ExtensionSdkDir")
+    variables.UCRTVersion = WindowsSDKVersion
+    variables.UniversalCRTSdkDir = variables.WindowsSdkDir
+
+    local includedirs = {
+        path.join(variables.VCToolsInstallDir, "include"),
+        path.join(variables.VCToolsInstallDir, "atlmfc", "include"),
+        path.join(variables.WindowsSdkDir, "Include", WindowsSDKVersion, "ucrt"),
+        path.join(variables.WindowsSdkDir, "Include", WindowsSDKVersion, "shared"),
+        path.join(variables.WindowsSdkDir, "Include", WindowsSDKVersion, "um"),
+        path.join(variables.WindowsSdkDir, "Include", WindowsSDKVersion, "winrt"),
+        path.join(variables.WindowsSdkDir, "Include", WindowsSDKVersion, "cppwinrt"),
+    }
+
+    local linkdirs = {
+        path.join(variables.VCToolsInstallDir, "lib"),
+        path.join(variables.VCToolsInstallDir, "atlmfc", "lib"),
+        path.join(variables.WindowsSdkDir, "Lib", WindowsSDKVersion, "ucrt"),
+        path.join(variables.WindowsSdkDir, "Lib", WindowsSDKVersion, "um"),
+        path.join(variables.WindowsSdkDir, "Lib", WindowsSDKVersion, "km"),
+    }
+
+    local archs = {
+        "x86",
+        "x64",
+        "arm",
+        "arm64",
+    }
+
+    local vcvarsall = {}
+    for _, target_arch in ipairs(archs) do
+        local lib = {}
+        for _, lib_dir in ipairs(linkdirs) do
+            local dir = path.join(lib_dir, target_arch)
+            if os.isdir(dir) then
+                table.insert(lib, dir)
+            end
+        end
+
+        if #lib ~= 0 then
+            local vcvars = {
+                BUILD_TOOLS_ROOT = sdkdir,
+                VSInstallDir = sdkdir,
+
+                -- vs runs in a windows ctx, so the envsep is always ";"
+                INCLUDE = path.joinenv(includedirs, ';'),
+                LIB = path.joinenv(lib, ';'),
+
+                VSCMD_ARG_HOST_ARCH = "x64",
+
+                VCInstallDir = variables.VCInstallDir,
+                VCToolsVersion = variables.VCToolsVersion,
+                VCToolsInstallDir = variables.VCToolsInstallDir,
+
+                WindowsSDKVersion = variables.WindowsSDKVersion,
+                WindowsSdkDir = variables.WindowsSdkDir,
+                WindowsSdkBinPath = variables.WindowsSdkBinPath,
+                WindowsSdkVerBinPath = variables.WindowsSdkVerBinPath,
+                ExtensionSdkDir = variables.ExtensionSdkDir,
+                UCRTVersion = variables.UCRTVersion,
+                UniversalCRTSdkDir = variables.UniversalCRTSdkDir,
+            }
+
+            local build_tools_bin = {}
+            local host_dir = "Host" .. vcvars.VSCMD_ARG_HOST_ARCH
+            if is_host("windows") then
+                table.insert(build_tools_bin, path.join(vcvars.VCToolsInstallDir, "bin", host_dir, target_arch))
+                table.insert(build_tools_bin, path.join(vcvars.WindowsSdkDir, "bin", WindowsSDKVersion))
+                table.insert(build_tools_bin, path.join(vcvars.WindowsSdkDir, "bin", WindowsSDKVersion, "ucrt"))
+            elseif is_host("linux") then
+                -- for msvc-wine
+                table.insert(build_tools_bin, path.join(sdkdir, "bin", target_arch))
+            end
+
+            vcvars.VSCMD_ARG_TGT_ARCH = target_arch
+            vcvars.BUILD_TOOLS_BIN = path.joinenv(build_tools_bin)
+
+            local PATH = build_tools_bin
+            table.join2(PATH, path.splitenv(os.getenv("PATH")))
+            vcvars.PATH = path.joinenv(PATH)
+
+            vcvarsall[target_arch] = vcvars
+        end
+    end
+
+    return vcvarsall
+end
+
 -- load vcvarsall environment variables
-function _load_vcvarsall(vcvarsall, vsver, arch, opt)
+function _load_vcvarsall_impl(vcvarsall, vsver, arch, opt)
+    opt = opt or {}
+
+    -- is VsDevCmd.bat?
+    local is_vsdevcmd = path.basename(vcvarsall):lower() == "vsdevcmd"
 
     -- make the genvcvars.bat
-    opt = opt or {}
     local genvcvars_bat = os.tmpfile() .. "_genvcvars.bat"
     local file = io.open(genvcvars_bat, "w")
     file:print("@echo off")
@@ -115,10 +259,34 @@ function _load_vcvarsall(vcvarsall, vsver, arch, opt)
     if vsver and tonumber(vsver) >= 16 then
         file:print("set VSCMD_SKIP_SENDTELEMETRY=yes")
     end
-    if opt.vcvars_ver then
-        file:print("call \"%s\" %s %s -vcvars_ver=%s > nul", vcvarsall, arch, opt.sdkver and opt.sdkver or "", opt.vcvars_ver)
+    local host_arch = os.arch()
+    if is_vsdevcmd then
+        if vsver and tonumber(vsver) >= 16 then
+            if opt.toolset then
+                file:print("call \"%s\" -host_arch=%s -arch=%s -winsdk=%s -vcvars_ver=%s > nul", vcvarsall, host_arch, arch, opt.sdkver or "", opt.toolset or "")
+            else
+                file:print("call \"%s\" -host_arch=%s -arch=%s -winsdk=%s > nul", vcvarsall, host_arch, arch, opt.sdkver or "")
+            end
+        else
+            if opt.toolset then
+                file:print("call \"%s\" -arch=%s -winsdk=%s -vcvars_ver=%s > nul", vcvarsall, arch, opt.sdkver or "", opt.toolset or "")
+            else
+                file:print("call \"%s\" -arch=%s -winsdk=%s > nul", vcvarsall, arch, opt.sdkver or "")
+            end
+        end
     else
-        file:print("call \"%s\" %s %s > nul", vcvarsall, arch, opt.sdkver and opt.sdkver or "")
+        -- @see https://github.com/xmake-io/xmake/issues/5077
+        if vsver and tonumber(vsver) >= 16 and host_arch ~= arch then
+            if host_arch == "x64" then
+                host_arch = "amd64"
+            end
+            arch = host_arch .. "_" .. arch
+        end
+        if opt.toolset then
+            file:print("call \"%s\" %s %s -vcvars_ver=%s > nul", vcvarsall, arch, opt.sdkver or "", opt.toolset or "")
+        else
+            file:print("call \"%s\" %s %s > nul", vcvarsall, arch, opt.sdkver or "")
+        end
     end
     for idx, var in ipairs(get_vcvars()) do
         file:print("echo " .. var .. " = %%" .. var .. "%%")
@@ -126,7 +294,12 @@ function _load_vcvarsall(vcvarsall, vsver, arch, opt)
     file:close()
 
     -- run genvcvars.bat
-    local outdata = try {function () return os.iorun(genvcvars_bat) end}
+    -- @note we use iorunv here so the bat path is not split on whitespace by os.argv,
+    -- which breaks detection when the temp file lives under a path with spaces.
+    local outdata, errdata = try {function () return os.iorunv(genvcvars_bat) end}
+    if errdata and #errdata > 0 and option.get("verbose") and option.get("diagnosis") then
+        cprint("${color.warning}checkinfo: ${clear dim}get vcvars error: %s", errdata)
+    end
     if not outdata then
         return
     end
@@ -137,27 +310,37 @@ function _load_vcvarsall(vcvarsall, vsver, arch, opt)
         local p = line:find('=', 1, true)
         if p then
             local name = line:sub(1, p - 1):trim()
-            local value = line:sub(p + 1):trim()
-            variables[name] = value
+            if #name > 0 then
+                local value = line:sub(p + 1):trim()
+                if #value > 0 then
+                    variables[name] = value
+                end
+            end
         end
     end
-    if not variables.path then
+
+    -- check if the environment variables are truncated
+    _check_vcvarsall_env(variables)
+    if not variables.PATH then
         return
     end
 
-    -- remove some empty entries
-    for _, name in ipairs(vcvars) do
-        if variables[name] and #variables[name]:trim() == 0 then
-            variables[name] = nil
-        end
-    end
-
     -- fix WindowsSDKVersion
-    local WindowsSDKVersion = variables["WindowsSDKVersion"]
+    local WindowsSDKVersion = variables.WindowsSDKVersion
     if WindowsSDKVersion then
         WindowsSDKVersion = WindowsSDKVersion:gsub("\\", ""):trim()
         if WindowsSDKVersion ~= "" then
-            variables["WindowsSDKVersion"] = WindowsSDKVersion
+            variables.WindowsSDKVersion = WindowsSDKVersion
+        end
+    else
+        -- sometimes the variable `WindowsSDKVersion` is not available
+        -- then parse it from `WindowsSdkBinPath`, such as: `C:\\Program Files (x86)\\Windows Kits\\8.1\\bin`
+        local WindowsSdkBinPath = variables.WindowsSdkBinPath
+        if WindowsSdkBinPath then
+            WindowsSDKVersion = string.match(WindowsSdkBinPath, "\\(%d+%.%d+)\\bin$")
+            if WindowsSDKVersion then
+                variables.WindowsSDKVersion = WindowsSDKVersion
+            end
         end
     end
 
@@ -165,37 +348,103 @@ function _load_vcvarsall(vcvarsall, vsver, arch, opt)
     --
     -- @note vcvarsall.bat maybe detect error if install WDK and SDK at same time (multi-sdk version exists in include directory).
     --
-    local UCRTVersion = variables["UCRTVersion"]
+    local UCRTVersion = variables.UCRTVersion
     if UCRTVersion and WindowsSDKVersion and UCRTVersion ~= WindowsSDKVersion and WindowsSDKVersion ~= "" then
-        local lib = variables["lib"]
+        local lib = variables.LIB
         if lib then
             lib = lib:gsub(UCRTVersion, WindowsSDKVersion)
-            variables["lib"] = lib
+            variables.LIB = lib
         end
-        local include = variables["include"]
+        local include = variables.INCLUDE
         if include then
             include = include:gsub(UCRTVersion, WindowsSDKVersion)
-            variables["include"] = include
+            variables.INCLUDE = include
         end
         UCRTVersion = WindowsSDKVersion
-        variables["UCRTVersion"] = UCRTVersion
+        variables.UCRTVersion = UCRTVersion
     end
-
-    -- convert path/lib/include to PATH/LIB/INCLUDE
-    variables.PATH    = variables.path
-    variables.LIB     = variables.lib
-    variables.LIBPATH = variables.libpath
-    variables.INCLUDE = variables.include
-    variables.path    = nil
-    variables.lib     = nil
-    variables.include = nil
-    variables.libpath = nil
     return variables
+end
+
+-- strip toolset version, e.g. 14.16.27023 -> 14.16
+function _strip_toolset_ver(vs_toolset)
+    local version = semver.new(vs_toolset)
+    if version then
+        return version:major() .. "." .. version:minor()
+    end
+    return vs_toolset
+end
+
+-- check if the environment variables are truncated
+-- https://github.com/xmake-io/xmake/issues/7281
+function _check_vcvarsall_env(vars)
+    if not option.get("diagnosis") then
+        return
+    end
+    local check_vars = {"PATH", "INCLUDE", "LIB", "LIBPATH"}
+    for _, name in ipairs(check_vars) do
+        local value_org = _env_orgs[name]
+        if value_org == nil then
+            local value_str = os.getenv(name)
+            if value_str then
+                _env_orgs[name] = path.splitenv(value_str)
+            else
+                _env_orgs[name] = false
+            end
+            value_org = _env_orgs[name]
+        end
+        local value_new = vars[name]
+        if value_org and value_new and #value_org > 0 then
+            local values_new = hashset.from(path.splitenv(value_new))
+            for _, p in ipairs(value_org) do
+                local p = p
+                if not values_new:has(p) then
+                    if #p > 256 then
+                        p = p:sub(1, 256) .. "..."
+                    end
+                    wprint("%%%s%% is too long and truncated, msvc detection may fail, please clear some unused variables!\n  > %s", name, p)
+                    break
+                end
+            end
+        end
+    end
+end
+
+function _load_vcvarsall(vcvarsall, vsver, arch, opt)
+    opt = opt or {}
+    local vs_toolset = opt.toolset or opt.vcvars_ver
+    if vs_toolset then
+        opt.toolset = _strip_toolset_ver(vs_toolset)
+    end
+    local result = _load_vcvarsall_impl(vcvarsall, vsver, arch, opt)
+    if result and not vs_toolset then
+        -- if no vs toolset version is specified, we default to the latest version.
+        -- https://github.com/xmake-io/xmake/issues/6159
+        local latest_toolset
+        local VCToolsVersion = result.VCToolsVersion
+        local VCInstallDir = result.VCInstallDir
+        if VCToolsVersion and VCInstallDir then
+            for _, dir in ipairs(os.dirs(path.join(VCInstallDir, "Tools/MSVC/*"))) do
+                local toolset = path.filename(dir)
+                if not latest_toolset or semver.compare(toolset, latest_toolset) > 0 then
+                    latest_toolset = toolset
+                end
+            end
+        end
+        if latest_toolset and VCToolsVersion and semver.compare(latest_toolset, VCToolsVersion) > 0 then
+            opt.toolset = _strip_toolset_ver(latest_toolset)
+            result = _load_vcvarsall_impl(vcvarsall, vsver, arch, opt)
+        end
+    end
+    return result
 end
 
 -- find vstudio for msvc
 function _find_vstudio(opt)
     opt = opt or {}
+
+    -- clear local cache of environment variables
+    _env_orgs = {}
 
     -- find the single current MSVC/VS from environment variables
     local VCInstallDir = os.getenv("VCInstallDir")
@@ -239,12 +488,25 @@ function _find_vstudio(opt)
         if vcvarsall and os.isfile(vcvarsall) and vsvers[VisualStudioVersion] then
 
             -- load vcvarsall
-            local vcvarsall_x86 = _load_vcvarsall(vcvarsall, VisualStudioVersion, "x86", opt)
-            local vcvarsall_x64 = _load_vcvarsall(vcvarsall, VisualStudioVersion, "x64", opt)
+            local vcvarsall_x86     = _load_vcvarsall(vcvarsall, VisualStudioVersion, "x86", opt)
+            local vcvarsall_x64     = _load_vcvarsall(vcvarsall, VisualStudioVersion, "x64", opt)
+            local vcvarsall_arm     = _load_vcvarsall(vcvarsall, VisualStudioVersion, "arm", opt)
+            local vcvarsall_arm64   = _load_vcvarsall(vcvarsall, VisualStudioVersion, "arm64", opt)
+            local vcvarsall_arm64ec = vcvarsall_arm64
 
             -- save results
             local results = {}
-            results[vsvers[VisualStudioVersion]] = {version = VisualStudioVersion, vcvarsall_bat = vcvarsall, vcvarsall = {x86 = vcvarsall_x86, x64 = vcvarsall_x64}}
+            results[vsvers[VisualStudioVersion]] = {
+                version = VisualStudioVersion,
+                vcvarsall_bat = vcvarsall,
+                vcvarsall = {
+                    x86 = vcvarsall_x86,
+                    x64 = vcvarsall_x64,
+                    arm = vcvarsall_arm,
+                    arm64 = vcvarsall_arm64,
+                    arm64ec = vcvarsall_arm64ec
+                }
+            }
             return results
         end
     end
@@ -259,23 +521,27 @@ function _find_vstudio(opt)
     -- find vs2017 -> vs4.2
     local results = {}
     for _, version in ipairs(order_vsvers) do
+        local version = version
 
         -- find VC install path (and aux build path) using `vswhere` (for version >= 15.0)
         -- * version > 15.0 eschews registry entries; but `vswhere` (included with version >= 15.2) can be used to find VC install path
         -- ref: https://github.com/Microsoft/vswhere/blob/master/README.md @@ https://archive.is/mEmdu
-        local vswhere_VCAuxiliaryBuildDir = nil
+        local vswhere_VCAuxiliaryBuildDir = {}
+        local vswhere_Common7ToolsDir = {}
         if (tonumber(version) >= 15) and vswhere then
             local vswhere_vrange = format("%s,%s)", version, (version + 1))
             -- build tools: https://github.com/microsoft/vswhere/issues/22 @@ https://aka.ms/vs/workloads
             local result = os.iorunv(vswhere.program, {"-products", "*", "-prerelease", "-property", "installationpath", "-version", vswhere_vrange})
             if result then
-                vswhere_VCAuxiliaryBuildDir = path.join(result:trim(), "VC", "Auxiliary", "Build")
+                for _, vc_path in ipairs(result:split("\n")) do
+                    table.insert(vswhere_VCAuxiliaryBuildDir, path.join(vc_path:trim(), "VC", "Auxiliary", "Build"))
+                    table.insert(vswhere_Common7ToolsDir, path.join(vc_path:trim(), "Common7", "Tools"))
+                end
             end
         end
 
         -- init paths
-        local paths =
-        {
+        local paths = {
             format("$(reg HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\VisualStudio\\SxS\\VS7;%s)\\VC", version),
             format("$(reg HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\VisualStudio\\SxS\\VS7;%s)\\VC7\\bin", version),
             format("$(reg HKEY_LOCAL_MACHINE\\SOFTWARE\\Wow6432Node\\Microsoft\\VisualStudio\\SxS\\VS7;%s)\\VC", version),
@@ -285,8 +551,17 @@ function _find_vstudio(opt)
         if vsenvs[version] then
             table.insert(paths, format("$(env %s)\\..\\..\\VC", vsenvs[version]))
         end
-        if vswhere_VCAuxiliaryBuildDir and os.isdir(vswhere_VCAuxiliaryBuildDir) then
-            table.insert(paths, 1, vswhere_VCAuxiliaryBuildDir)
+
+        if vswhere_VCAuxiliaryBuildDir then
+            for _, vc_path in ipairs(vswhere_VCAuxiliaryBuildDir) do
+                if os.isdir(vc_path) then
+                    table.insert(paths, 1, vc_path)
+                end
+            end
+        end
+        if version == "6.0" and os.arch() == "x64" then
+            table.insert(paths, "$(reg HKEY_LOCAL_MACHINE\\SOFTWARE\\WOW6432Node\\Microsoft\\DevStudio\\6.0\\Products\\Microsoft Visual C++;ProductDir)\\Bin")
+            table.insert(paths, "$(reg HKEY_LOCAL_MACHINE\\SOFTWARE\\WOW6432Node\\Microsoft\\VisualStudio\\6.0\\Setup\\Microsoft Visual C++;ProductDir)\\Bin")
         end
 
         -- find vcvarsall.bat, vcvars32.bat for vs7.1
@@ -314,30 +589,46 @@ function _find_vstudio(opt)
                 table.insert(paths, path.join(logical_drive, "Program Files", "Microsoft Visual Studio " .. version, "VC"))
                 if version == "6.0" then
                     table.insert(paths, path.join(logical_drive, "Program Files", "Microsoft Visual Studio", "VC98", "Bin"))
+                    table.insert(paths, path.join(logical_drive, "Program Files (x86)", "Microsoft Visual Studio", "VC98", "Bin"))
                 end
             end
             vcvarsall = find_file("vcvarsall.bat", paths) or find_file("vcvars32.bat", paths)
         end
+        if not vcvarsall then
+            local paths = {
+                format("$(reg HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\VisualStudio\\SxS\\VS7;%s)\\Common7\\Tools", version),
+                format("$(reg HKEY_LOCAL_MACHINE\\SOFTWARE\\Wow6432Node\\Microsoft\\VisualStudio\\SxS\\VS7;%s)\\Common7\\Tools", version)
+            }
+            if vswhere_Common7ToolsDir then
+                for _, vc_path in ipairs(vswhere_Common7ToolsDir) do
+                    if os.isdir(vc_path) then
+                        table.insert(paths, 1, vc_path)
+                    end
+                end
+            end
+            vcvarsall = find_file("VsDevCmd.bat", paths)
+        end
         if vcvarsall then
 
             -- load vcvarsall
-            local vcvarsall_x86 = _load_vcvarsall(vcvarsall, version, "x86", opt)
-            local vcvarsall_x64 = _load_vcvarsall(vcvarsall, version, "x64", opt)
-
-            -- load vcvarsall for arm64
-            local arch
-            local arch_os = os.arch()
-            if arch_os == "x64" then
-                arch = "x64_arm64"
-            elseif arch_os == "x86" then
-                arch = "x86_arm64"
-            elseif arch_os == "arm64" then
-                arch = "arm64"
-            end
-            local vcvarsall_arm64 = arch and _load_vcvarsall(vcvarsall, version, arch, opt) or nil
+            local vcvarsall_x86     = _load_vcvarsall(vcvarsall, version, "x86", opt)
+            local vcvarsall_x64     = _load_vcvarsall(vcvarsall, version, "x64", opt)
+            local vcvarsall_arm     = _load_vcvarsall(vcvarsall, version, "arm", opt)
+            local vcvarsall_arm64   = _load_vcvarsall(vcvarsall, version, "arm64", opt)
+            local vcvarsall_arm64ec = vcvarsall_arm64
 
             -- save results
-            results[vsvers[version]] = {version = version, vcvarsall_bat = vcvarsall, vcvarsall = {x86 = vcvarsall_x86, x64 = vcvarsall_x64, arm64 = vcvarsall_arm64}}
+            results[vsvers[version]] = {
+                version = version,
+                vcvarsall_bat = vcvarsall,
+                vcvarsall = {
+                    x86 = vcvarsall_x86,
+                    x64 = vcvarsall_x64,
+                    arm = vcvarsall_arm,
+                    arm64 = vcvarsall_arm64,
+                    arm64ec = vcvarsall_arm64ec
+                }
+            }
         end
     end
     return results
@@ -393,37 +684,81 @@ function _get_last_mtime(vstudio)
     return mtime
 end
 
+function _show_vstudio_diagnosis_result(vstudio)
+    local found = {}
+    for vsver, msvc in pairs(vstudio) do
+        if type(msvc) == "table" and msvc.version then
+            local toolset
+            local vcvarsall = msvc.vcvarsall
+            if type(vcvarsall) == "table" then
+                for _, envs in pairs(vcvarsall) do
+                    if type(envs) == "table" and envs.VCToolsVersion then
+                        toolset = _strip_toolset_ver(envs.VCToolsVersion)
+                        break
+                    end
+                end
+            end
+            if toolset then
+                table.insert(found, tostring(vsver) .. "(" .. tostring(msvc.version) .. ", toolset:" .. tostring(toolset) .. ")")
+            else
+                table.insert(found, tostring(vsver) .. "(" .. tostring(msvc.version) .. ")")
+            end
+        else
+            table.insert(found, tostring(vsver))
+        end
+    end
+    table.sort(found, function (a, b) return a > b end)
+    cprint("${dim}detecting vstudio environment ... ${color.success}%s", table.concat(found, ", "))
+end
+
 -- find vstudio environment
 --
--- @param opt   the options, e.g. {vcvars_ver = 14.0, sdkver = "10.0.15063.0"}
+-- @param opt   the options, e.g. {toolset = 14.0, sdkver = "10.0.15063.0"}
 --
 -- @return      { 2008 = {version = "9.0", vcvarsall = {x86 = {path = .., lib = .., include = ..}}}
 --              , 2017 = {version = "15.0", vcvarsall = {x64 = {path = .., lib = ..}}}}
 --
 function main(opt)
+    opt = opt or {}
 
     -- only for windows
     if not is_host("windows") then
         return
     end
 
+    local key = "vstudio"
+    if opt.toolset then
+        key = key .. opt.toolset
+    end
+    if opt.sdkver then
+        key = key .. opt.sdkver
+    end
+
     -- attempt to get it from the global cache first
-    local vstudio = global_detectcache:get2("vstudio", "msvc")
+    local vstudio = global_detectcache:get2(key, "msvc")
     if vstudio then
         local mtime = _get_last_mtime(vstudio)
-        local mtimeprev = global_detectcache:get2("vstudio", "mtime")
+        local mtimeprev = global_detectcache:get2(key, "mtime")
         if mtime and mtimeprev and mtime > 0 and mtimeprev > 0 and mtime == mtimeprev then
             return vstudio
         end
     end
 
     -- find and cache result
+    cprint("${color.warning}Detecting Visual Studio environment (cached); run `xmake global --clean` first if vs updated.")
     vstudio = _find_vstudio(opt)
     if vstudio then
         local mtime = _get_last_mtime(vstudio)
-        global_detectcache:set2("vstudio", "msvc", vstudio)
-        global_detectcache:set2("vstudio", "mtime", mtime)
+        global_detectcache:set2(key, "msvc", vstudio)
+        global_detectcache:set2(key, "mtime", mtime)
         global_detectcache:save()
+    end
+    if option.get("diagnosis") then
+        if vstudio and not table.empty(vstudio) then
+            _show_vstudio_diagnosis_result(vstudio)
+        else
+            cprint("${dim}detecting vstudio environment ...${color.failure}${text.failure}")
+        end
     end
     return vstudio
 end

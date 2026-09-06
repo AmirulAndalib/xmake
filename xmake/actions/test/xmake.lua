@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -22,27 +22,26 @@ task("test")
     set_category("action")
     on_run("main")
     set_menu {
-        usage = "xmake test [options] [target] [arguments]",
+        usage = "xmake test [options] [tests]",
         description = "Run the project tests.",
         options = {
-            {'g', "group",      "kv",  nil  , "Run all tests of the given group. It support path pattern matching.",
-                                              "e.g.",
-                                              "    xmake test -g test",
-                                              "    xmake test -g test_*",
-                                              "    xmake test --group=benchmark/*"                                  },
-            {'w', "workdir",    "kv",  nil  , "Work directory of running targets, default is folder of targetfile",
-                                              "e.g.",
-                                              "    xmake test -w .",
-                                              "    xmake test --workdir=`pwd`"                                      },
-            {'j', "jobs",       "kv", "1",    "Set the number of parallel compilation jobs."                        },
+            {'g', "group",   "kv", nil,   "Run all tests of the given group. It supports path pattern matching.",
+                                          "e.g.",
+                                          "    xmake test -g test",
+                                          "    xmake test -g test_*",
+                                          "    xmake test --group=benchmark/*"},
+            {'w', "workdir", "kv", nil,   "Work directory of running targets, default is folder of targetfile",
+                                          "e.g.",
+                                          "    xmake test -w .",
+                                          "    xmake test --workdir=`pwd`"},
+            {'j', "jobs",    "kv", tostring(os.default_njob()),
+                                          "Set the number of parallel compilation jobs."},
+            {'r', "rebuild", "k",  nil,   "Rebuild the target."},
             {},
-            {nil, "tests",     "vs",  nil   , "The test names. It support pattern matching.",
-                                              "e.g.",
-                                              "    xmake test foo",
-                                              "    xmake test */foo",
-                                              "    xmake test targetname/*"                                         }
+            {nil, "tests",   "vs", nil,   "The test names. It supports pattern matching.",
+                                          "e.g.",
+                                          "    xmake test foo",
+                                          "    xmake test */foo",
+                                          "    xmake test targetname/*"},
         }
     }
-
-
-

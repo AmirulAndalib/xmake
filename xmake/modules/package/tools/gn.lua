@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        gn.lua
@@ -25,12 +25,15 @@ import("lib.detect.find_tool")
 import("package.tools.ninja")
 
 -- get build directory
-function _get_buildir(opt)
-    if opt and opt.buildir then
-        return opt.buildir
+function _get_builddir(opt)
+    if opt and (opt.builddir or opt.buildir) then
+        if opt.buildir then
+            wprint("{buildir = } has been deprecated, please use {builddir = } in gn.install")
+        end
+        return opt.builddir or opt.buildir
     else
-        _g.buildir = _g.buildir or ("build_" .. hash.uuid4():split('%-')[1])
-        return _g.buildir
+        _g.builddir = _g.builddir or ("build_" .. hash.uuid4():split('%-')[1])
+        return _g.builddir
     end
 end
 
@@ -66,13 +69,15 @@ function _get_configs(package, configs, opt)
     elseif package:is_arch("arm.*") then
         configs.target_cpu = "arm"
     end
-    configs.is_debug = package:is_debug()
+    if configs.is_debug == nil then
+        configs.is_debug = package:is_debug() and true or false
+    end
     return configs
 end
 
 -- get msvc
 function _get_msvc(package)
-    local msvc = toolchain.load("msvc", {plat = package:plat(), arch = package:arch()})
+    local msvc = package:toolchain("msvc")
     assert(msvc:check(), "vs not found!") -- we need to check vs envs if it has been not checked yet
     return msvc
 end
@@ -96,7 +101,7 @@ function generate(package, configs, opt)
     local argv = {}
     local args = {}
     table.insert(argv, "gen")
-    table.insert(argv, _get_buildir(opt))
+    table.insert(argv, _get_builddir(opt))
     for name, value in pairs(_get_configs(package, configs, opt)) do
         if type(value) == "string" then
             table.insert(args, name .. "=\"" .. value .. "\"")
@@ -121,8 +126,9 @@ function build(package, configs, opt)
     generate(package, configs, opt)
 
     -- do build
-    local buildir = _get_buildir(opt)
-    ninja.build(package, {}, {buildir = buildir, envs = opt.envs or buildenvs(package, opt)})
+    local builddir = _get_builddir(opt)
+    local targets = table.wrap(opt.targets or opt.target)
+    ninja.build(package, targets, {builddir = builddir, envs = opt.envs or buildenvs(package, opt)})
 end
 
 -- install package
@@ -133,6 +139,7 @@ function install(package, configs, opt)
     generate(package, configs, opt)
 
     -- do build and install
-    local buildir = _get_buildir(opt)
-    ninja.install(package, {}, {buildir = buildir, envs = opt.envs or buildenvs(package, opt)})
+    local builddir = _get_builddir(opt)
+    local targets = table.wrap(opt.targets or opt.target)
+    ninja.install(package, targets, {builddir = builddir, envs = opt.envs or buildenvs(package, opt)})
 end

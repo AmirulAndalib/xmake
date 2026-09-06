@@ -12,7 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Copyright (C) 2015-present, TBOOX Open Source Group.
+ * Copyright (C) 2015-present, Xmake Open Source Community.
  *
  * @author      ruki
  * @file        poller_spank.c
@@ -22,8 +22,8 @@
 /* //////////////////////////////////////////////////////////////////////////////////////
  * trace
  */
-#define TB_TRACE_MODULE_NAME    "poller_spank"
-#define TB_TRACE_MODULE_DEBUG   (0)
+#define TB_TRACE_MODULE_NAME "poller_spank"
+#define TB_TRACE_MODULE_DEBUG (0)
 
 /* //////////////////////////////////////////////////////////////////////////////////////
  * includes
@@ -36,13 +36,10 @@
  */
 
 // io.poller_spank()
-tb_int_t xm_io_poller_spank(lua_State* lua)
-{
-    // check
+tb_int_t xm_io_poller_spank(lua_State *lua) {
     tb_assert_and_check_return_val(lua, 0);
 
     // spank the poller, break the tb_poller_wait() and return all events
-    tb_poller_spak(xm_io_poller());
+    tb_poller_spak(xm_io_poller(lua));
     return 0;
 }
-

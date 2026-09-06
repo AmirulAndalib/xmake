@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        check.lua
@@ -37,7 +37,6 @@ function main(toolchain)
             cprint("checking for Intel Data Parallel C++ (%s) ... ${color.success}${text.success}", toolchain:arch())
             toolchain:config_set("icxenv", icxenv)
             toolchain:config_set("bindir", icxenv.bindir)
-            toolchain:configs_save()
             return true
         end
         return true

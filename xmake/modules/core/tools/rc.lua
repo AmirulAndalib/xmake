@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        rc.lua
@@ -22,7 +22,9 @@
 import("core.base.option")
 import("core.base.hashset")
 import("core.project.project")
+import("core.project.policy")
 import("private.tools.vstool")
+import("utils.progress")
 
 -- normailize path of a dependecy
 function _normailize_dep(dep, projectdir)
@@ -79,22 +81,20 @@ function nf_sysincludedir(self, dir)
 end
 
 -- make the compile arguments list
-function compargv(self, sourcefile, objectfile, flags)
+function compargv(self, sourcefile, objectfile, flags, opt)
     return self:program(), table.join(flags, "-Fo" .. objectfile, sourcefile)
 end
 
 -- compile the source file
-function compile(self, sourcefile, objectfile, dependinfo, flags)
-
-    -- ensure the object directory
+function compile(self, sourcefile, objectfile, dependinfo, flags, opt)
+    opt = opt or {}
     os.mkdir(path.directory(objectfile))
 
-    -- compile it
     try
     {
         function ()
             -- @note we don't need to use vstool.iorunv to enable unicode output for rc.exe
-            local program, argv = compargv(self, sourcefile, objectfile, flags)
+            local program, argv = compargv(self, sourcefile, objectfile, flags, opt)
             local outdata, errdata = os.iorunv(program, argv, {envs = self:runenvs()})
             return (outdata or "") .. (errdata or "")
         end,
@@ -115,8 +115,8 @@ function compile(self, sourcefile, objectfile, dependinfo, flags)
         finally
         {
             function (ok, warnings)
-                if warnings and #warnings > 0 and option.get("verbose") then
-                    cprint("${color.warning}%s", table.concat(table.slice(warnings:split('\n'), 1, 8), '\n'))
+                if warnings and #warnings > 0 and policy.build_warnings(opt) then
+                    progress.show_output("${color.warning}%s", table.concat(table.slice(warnings:split('\n'), 1, 8), '\n'))
                 end
             end
         }
@@ -124,11 +124,22 @@ function compile(self, sourcefile, objectfile, dependinfo, flags)
 
     -- try to use cl.exe to parse includes, but cl.exe maybe not exists in masm32 sdk
     -- @see https://github.com/xmake-io/xmake/issues/2562
-    local cl = self:toolchain():tool("cxx")
+    local cl
+    if opt.target then
+        cl = opt.target:tool("cxx")
+    elseif self:toolchain() then
+        cl = self:toolchain():tool("cxx")
+    end
     if cl then
         local outfile = os.tmpfile() .. ".rc.out"
         local errfile = os.tmpfile() .. ".rc.err"
-        local ok = try {function () os.execv(cl, {"-E", sourcefile}, {stdout = outfile, stderr = errfile, envs = self:runenvs()}); return true end}
+        local includeflags = {}
+        for _, flag in ipairs(flags) do
+            if flag:match("^[-/]I") then
+                table.insert(includeflags, flag)
+            end
+        end
+        local ok = try {function () os.execv(cl, table.join("-E", includeflags, sourcefile), {stdout = outfile, stderr = errfile, envs = self:runenvs()}); return true end}
         if ok and os.isfile(outfile) then
             local depfiles_rc
             local includeset = hashset.new()
@@ -148,7 +159,8 @@ function compile(self, sourcefile, objectfile, dependinfo, flags)
             end
             file:close()
             if dependinfo then
-                dependinfo.depfiles_rc = depfiles_rc
+                dependinfo.depfiles_format = "rc"
+                dependinfo.depfiles = depfiles_rc
             end
         end
         os.tryrm(outfile)

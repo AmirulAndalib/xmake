@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        macos.lua
@@ -25,7 +25,10 @@ local macos = macos or {}
 local os     = require("base/os")
 local semver = require("base/semver")
 
--- get system version
+-- get macOS system version
+--
+-- @return      the semver version object, e.g. macos.version():ge("14.0")
+--
 function macos.version()
 
     -- get it from cache first

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      SirLynix
 -- @file        find_emsdk.lua
@@ -33,9 +33,16 @@ function _find_emsdkdir(sdkdir)
         table.insert(paths, sdkdir)
     end
     table.insert(paths, "$(env EMSDK)")
+    if is_host("linux") then
+        table.join2(paths, {"/usr/share/emscripten/", "/usr/lib/emscripten/"})
+    end
     local emsdk = find_file("emsdk.py", paths, {suffixes = subdirs})
     if emsdk then
         return path.directory(emsdk)
+    end
+    local emcc_py = find_file("emcc.py", paths, {suffixes = subdirs})
+    if emcc_py then
+        return path.directory(emcc_py)
     end
 end
 
@@ -53,6 +60,9 @@ function _find_emsdk(sdkdir)
     local subdirs = {}
     table.insert(subdirs, path.join("*", "emscripten"))
     local emcc = find_file("emcc", sdkdir, {suffixes = subdirs})
+    emcc = emcc or find_file("emcc.py", sdkdir, {suffixes = subdirs})
+    emcc = emcc or find_file("emcc", sdkdir)
+    emcc = emcc or find_file("emcc.py", sdkdir)
     if emcc then
         emscripten = path.directory(emcc)
     end
@@ -92,7 +102,6 @@ function main(sdkdir, opt)
         if opt.verbose or option.get("verbose") then
             cprint("checking for emsdk directory ... ${color.success}%s", sdk.sdkdir)
         end
-
     else
         if opt.verbose or option.get("verbose") then
             cprint("checking for emsdk directory ... ${color.nothing}${text.nothing}")
@@ -102,6 +111,5 @@ function main(sdkdir, opt)
     -- save to cache
     cacheinfo.sdk = sdk or false
     detectcache:set(key, cacheinfo)
-    detectcache:save()
     return sdk
 end

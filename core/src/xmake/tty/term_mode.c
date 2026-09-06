@@ -12,7 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Copyright (C) 2015-present, TBOOX Open Source Group.
+ * Copyright (C) 2015-present, Xmake Open Source Community.
  *
  * @author      ruki
  * @file        term_mode.c
@@ -22,15 +22,15 @@
 /* //////////////////////////////////////////////////////////////////////////////////////
  * trace
  */
-#define TB_TRACE_MODULE_NAME                "term_mode"
-#define TB_TRACE_MODULE_DEBUG               (0)
+#define TB_TRACE_MODULE_NAME "term_mode"
+#define TB_TRACE_MODULE_DEBUG (0)
 
 /* //////////////////////////////////////////////////////////////////////////////////////
  * includes
  */
 #include "prefix.h"
 #ifdef TB_CONFIG_OS_WINDOWS
-#   include <windows.h>
+#include <windows.h>
 #endif
 
 /* //////////////////////////////////////////////////////////////////////////////////////
@@ -40,9 +40,7 @@
 /* local oldmode = tty.term_mode(stdtype)
  * local oldmode = tty.term_mode(stdtype, newmode)
  */
-tb_int_t xm_tty_term_mode(lua_State* lua)
-{
-    // check
+tb_int_t xm_tty_term_mode(lua_State *lua) {
     tb_assert_and_check_return_val(lua, 0);
 
 #ifdef TB_CONFIG_OS_WINDOWS
@@ -53,18 +51,23 @@ tb_int_t xm_tty_term_mode(lua_State* lua)
     // get and set terminal mode
     DWORD mode = 0;
     HANDLE console_handle = INVALID_HANDLE_VALUE;
-    switch (stdtype)
-    {
-    case 1: console_handle = GetStdHandle(STD_INPUT_HANDLE); break;
-    case 2: console_handle = GetStdHandle(STD_OUTPUT_HANDLE); break;
-    case 3: console_handle = GetStdHandle(STD_ERROR_HANDLE); break;
+    switch (stdtype) {
+    case 1:
+        console_handle = GetStdHandle(STD_INPUT_HANDLE);
+        break;
+    case 2:
+        console_handle = GetStdHandle(STD_OUTPUT_HANDLE);
+        break;
+    case 3:
+        console_handle = GetStdHandle(STD_ERROR_HANDLE);
+        break;
     }
     GetConsoleMode(console_handle, &mode);
-    if (lua_isnumber(lua, 2))
-    {
+    if (lua_isnumber(lua, 2)) {
         tb_int_t newmode = (tb_int_t)lua_tointeger(lua, 2);
-        if (console_handle != INVALID_HANDLE_VALUE)
+        if (console_handle != INVALID_HANDLE_VALUE) {
             SetConsoleMode(console_handle, (DWORD)newmode);
+        }
     }
 #else
     tb_int_t mode = 0;

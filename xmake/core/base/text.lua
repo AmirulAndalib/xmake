@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      OpportunityLiu
 -- @file        text.lua
@@ -160,7 +160,13 @@ function text._lastwbr(str, width, wordbreak)
     end
 end
 
--- break lines
+-- break text into lines at the given width with word wrapping
+--
+-- @param str   the text string or lines array
+-- @param width the maximum line width in characters
+-- @param opt   the options (optional)
+-- @return      the wrapped lines array
+--
 function text.wordwrap(str, width, opt)
 
     opt = opt or {}
@@ -176,6 +182,7 @@ function text.wordwrap(str, width, opt)
 
     -- handle lines
     for _, v in ipairs(lines) do
+        local v = v
 
         -- remove tailing spaces, include "\r", which will be produced by `("l1\r\nl2"):split(...)`
         v = v:rtrim()

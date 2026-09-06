@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        check_cxsnippets.lua
@@ -171,6 +171,12 @@ end
 --  }]], {tryrun = true})
 -- @endcode
 --
+-- check C/C++ code snippets for compilation
+--
+-- @param snippets   the code snippets table
+-- @param opt        the options, e.g. {target = target, sourcekind = "cc", includes = {}, configs = {}}
+-- @return           true and output on success, or false
+--
 function main(snippets, opt)
 
     -- init options
@@ -239,22 +245,35 @@ function main(snippets, opt)
             if option.get("diagnosis") then
                 cprint("${dim}> %s", compiler.compcmd(sourcefile, objectfile, opt))
             end
+            opt = table.clone(opt)
+            opt.build_warnings = false
             compiler.compile(sourcefile, objectfile, opt)
-            if #links > 0 or opt.tryrun then
+            if #links > 0 or opt.tryrun or opt.binary_match then
                 if option.get("diagnosis") then
                     cprint("${dim}> %s", linker.linkcmd("binary", {"cc", "cxx"}, objectfile, binaryfile, opt))
                 end
                 linker.link("binary", {"cc", "cxx"}, objectfile, binaryfile, opt)
             end
             if opt.tryrun then
+                -- @note we use the *v variants so the binary path is not split on
+                -- whitespace by os.argv. mostly hits on Windows where TEMP lives
+                -- under the user profile and may contain spaces.
                 if opt.output then
-                    local output = os.iorun(binaryfile)
+                    local output = os.iorunv(binaryfile)
                     if output then
                         output = output:trim()
                     end
                     return true, output
                 else
-                    os.vrun(binaryfile)
+                    os.vrunv(binaryfile)
+                end
+            end
+            local binary_match = opt.binary_match
+            if binary_match then
+                local content = io.readfile(binaryfile, {encoding = "binary"})
+                local match = type(binary_match) == "function" and binary_match(content) or content:match(binary_match)
+                if match ~= nil then
+                    return true, match
                 end
             end
             return true

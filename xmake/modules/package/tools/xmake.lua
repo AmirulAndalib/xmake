@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -23,6 +23,7 @@ import("core.base.option")
 import("core.base.global")
 import("core.tool.toolchain")
 import("core.project.project")
+import("core.package.package", {alias = "package_core"})
 import("core.package.repository")
 import("private.action.require.impl.package", {alias = "require_package"})
 import("private.utils.toolchain", {alias = "toolchain_utils"})
@@ -48,7 +49,7 @@ end
 
 -- get configs for qt
 function _get_configs_for_qt(package, configs, opt)
-    local names = {"qt", "qt_sdkver"}
+    local names = {"qt", "qt_sdkver", "qt_host"}
     for _, name in ipairs(names) do
         local value = get_config(name)
         if value ~= nil then
@@ -77,10 +78,10 @@ function _get_configs_for_windows(package, configs, opt)
             table.insert(configs, "--" .. name .. "=" .. tostring(value))
         end
     end
-    -- pass vs_runtime from package configs
-    local vs_runtime = package:config("vs_runtime")
-    if vs_runtime then
-        table.insert(configs, "--vs_runtime=" .. vs_runtime)
+    -- pass runtimes from package configs
+    local runtimes = package:config("runtimes")
+    if runtimes then
+        table.insert(configs, "--runtimes=" .. runtimes)
     end
     _get_configs_for_qt(package, configs, opt)
     _get_configs_for_vcpkg(package, configs, opt)
@@ -88,6 +89,13 @@ function _get_configs_for_windows(package, configs, opt)
     -- we can switch some toolchains, e.g. llvm/clang
     if package:config("toolchains") and _is_toolchain_compatible_with_host(package) then
         _get_configs_for_host_toolchain(package, configs, opt)
+    end
+
+    if not is_host("windows") then
+        local sdkdir = _get_config_from_toolchains(package, "sdkdir") or get_config("sdk")
+        if sdkdir and #sdkdir > 0 then
+            table.insert(configs, "--sdk=" .. sdkdir)
+        end
     end
 end
 
@@ -108,6 +116,10 @@ function _get_configs_for_appleos(package, configs, opt)
     local appledev = get_config("appledev")
     if appledev then
         table.insert(configs, "--appledev=" .. appledev)
+    end
+    local runtimes = package:config("runtimes")
+    if runtimes then
+        table.insert(configs, "--runtimes=" .. runtimes)
     end
     _get_configs_for_qt(package, configs, opt)
     _get_configs_for_vcpkg(package, configs, opt)
@@ -135,6 +147,10 @@ function _get_configs_for_mingw(package, configs, opt)
             table.insert(configs, "--" .. name .. "=" .. tostring(value))
         end
     end
+    local runtimes = package:config("runtimes")
+    if runtimes then
+        table.insert(configs, "--runtimes=" .. runtimes)
+    end
     _get_configs_for_qt(package, configs, opt)
     _get_configs_for_vcpkg(package, configs, opt)
 end
@@ -151,6 +167,10 @@ function _get_configs_for_generic(package, configs, opt)
             table.insert(configs, "--" .. name .. "=" .. tostring(value))
         end
     end
+    local runtimes = package:config("runtimes")
+    if runtimes then
+        table.insert(configs, "--runtimes=" .. runtimes)
+    end
     _get_configs_for_qt(package, configs, opt)
     _get_configs_for_vcpkg(package, configs, opt)
 end
@@ -164,6 +184,10 @@ function _get_configs_for_host_toolchain(package, configs, opt)
     local sdkdir = _get_config_from_toolchains(package, "sdkdir") or get_config("sdk")
     if sdkdir then
         table.insert(configs, "--sdk=" .. sdkdir)
+    end
+    local runtimes = package:config("runtimes")
+    if runtimes then
+        table.insert(configs, "--runtimes=" .. runtimes)
     end
     local toolchain_name = get_config("toolchain")
     if toolchain_name then
@@ -187,6 +211,10 @@ function _get_configs_for_cross(package, configs, opt)
     if sdkdir then
         table.insert(configs, "--sdk=" .. sdkdir)
     end
+    local runtimes = package:config("runtimes")
+    if runtimes then
+        table.insert(configs, "--runtimes=" .. runtimes)
+    end
     local toolchain_name = get_config("toolchain")
     if toolchain_name then
         table.insert(configs, "--toolchain=" .. toolchain_name)
@@ -198,6 +226,8 @@ function _get_configs_for_cross(package, configs, opt)
             table.insert(configs, "--" .. name .. "=" .. tostring(value))
         end
     end
+    _get_configs_for_qt(package, configs, opt)
+    _get_configs_for_vcpkg(package, configs, opt)
 end
 
 -- get configs
@@ -243,30 +273,32 @@ function _get_configs(package, configs, opt)
     end
 
     local policies = get_config("policies")
+    local policies_list = policies and policies:split(",") or {}
     if package:config("lto") and (not policies or not policies:find("build.optimization.lto", 1, true)) then
-        if policies then
-            policies = policies .. ",build.optimization.lto"
-        else
-            policies = "build.optimization.lto"
-        end
+        table.insert(policies_list, "build.optimization.lto")
     end
     if package:config("asan") and (not policies or not policies:find("build.sanitizer.address", 1, true)) then
-        if policies then
-            policies = policies .. ",build.sanitizer.address"
-        else
-            policies = "build.sanitizer.address"
-        end
+        table.insert(policies_list, "build.sanitizer.address")
     end
     if not package:use_external_includes() and (not policies or not policies:find("package.include_external_headers", 1, true)) then
-        if policies then
-            policies = policies .. ",package.include_external_headers:n"
-        else
-            policies = "package.include_external_headers:n"
+        table.insert(policies_list, "package.include_external_headers:n")
+    end
+    -- the sub-process must install its packages locally too, otherwise they go to the
+    -- global directory while we expect them under our build directory,
+    -- @see https://github.com/xmake-io/xmake/issues/7716
+    for _, policyname in ipairs({"package.install_locally", "package.host.install_locally"}) do
+        if project.policy(policyname) and (not policies or not policies:find(policyname, 1, true)) then
+            table.insert(policies_list, policyname)
         end
     end
-    if policies then
-        table.insert(configs, "--policies=" .. policies)
+    if policies and policies:find("package.build.ccache", 1, true) then
+        table.insert(configs, "--ccachedir=" .. path.join(path.directory(package:cachedir()), "build_cache"))
+        table.insert(policies_list, "build.ccache")
     end
+    if #policies_list > 0 then
+        table.insert(configs, "--policies=" .. table.concat(policies_list, ","))
+    end
+
     if not package:is_plat("windows", "mingw") and package:config("pic") ~= false then
         table.insert(cxflags, "-fPIC")
     end
@@ -288,9 +320,12 @@ function _get_configs(package, configs, opt)
     if shflags and #shflags > 0 then
         table.insert(configs, "--shflags=" .. table.concat(shflags, ' '))
     end
-    local buildir = opt.buildir or package:buildir()
-    if buildir then
-        table.insert(configs, "--buildir=" .. buildir)
+    local builddir = opt.builddir or opt.buildir or package:builddir()
+    if builddir then
+        table.insert(configs, "--builddir=" .. builddir)
+    end
+    if opt.buildir then
+        wprint("{buildir = } has been deprecated, please use {builddir = } in xmake.install")
     end
     return configs
 end
@@ -421,11 +456,40 @@ function _get_package_depconfs_envs(envs, package, opt)
     local requireconfs = {}
     for _, dep in ipairs(package:librarydeps()) do
         local requireinfo = dep:requireinfo()
-        if requireinfo and (requireinfo.override or (requireinfo.configs and not table.empty(requireinfo.configs))) then
+        -- {
+        --  requirekey = "imgui#8b6c4fbd",
+        --  originstr = "imgui",
+        --  configs = { },
+        --  resolvedinfo = {
+        --    version = "v1.91.1",
+        --    configs = { }
+        --  },
+        --  version = "v1.91.1"
+        --}
+        local passed_requireinfo
+        if requireinfo then
+            local resolvedinfo = requireinfo.resolvedinfo
+            if resolvedinfo then
+                requireinfo = resolvedinfo
+            end
+        end
+        if requireinfo then
+            if requireinfo.version and requireinfo.version ~= "latest" then
+                passed_requireinfo = passed_requireinfo or {}
+                passed_requireinfo.version = requireinfo.version
+                passed_requireinfo.override = true
+            end
+            if requireinfo.configs and not table.empty(requireinfo.configs) then
+                passed_requireinfo = passed_requireinfo or {}
+                passed_requireinfo.configs = requireinfo.configs
+                passed_requireinfo.override = true
+            end
+        end
+        if passed_requireinfo then
             local requirepaths = {}
             _get_package_requirepaths(requirepaths, package, dep, {})
             if #requirepaths > 0 then
-                table.insert(requireconfs, {requirepaths = requirepaths, requireinfo = requireinfo})
+                table.insert(requireconfs, {requirepaths = requirepaths, requireinfo = passed_requireinfo})
             end
         end
     end
@@ -457,17 +521,41 @@ end
 
 -- install package
 function install(package, configs, opt)
+    opt = opt or {}
+
+    -- copy the ported xmake.lua in the default position if it's missing
+    local xmakefile = path.join(opt.curdir or os.curdir(), "xmake.lua")
+    if not os.isfile(xmakefile) and package:repo() ~= nil then
+        local xmakefile_port = path.join(package:scriptdir(), "port", "xmake.lua")
+        if os.isfile(xmakefile_port) then
+            os.cp(xmakefile_port, xmakefile)
+        end
+    end
 
     -- get build environments
-    opt = opt or {}
     local envs = opt.envs or buildenvs(package)
+
+    -- if the package is installed locally, pass our local packages directory to the
+    -- child xmake process, so the packages it installs locally land in the same place
+    -- and the deps we have already installed are found instead of installed again
+    --
+    -- @note we must not override `XMAKE_PKG_INSTALLDIR` here: it is the *global* root
+    -- of the child, and overriding it hides `~/.xmake/packages` from it, so the host
+    -- packages it needs (e.g. the toolchains) would be installed again under our
+    -- build directory, @see https://github.com/xmake-io/xmake/issues/7716
+    --
+    -- @see https://github.com/xmake-io/xmake/discussions/7441
+    if package:is_local() and not package:is_source_embed() then
+        envs = table.clone(envs)
+        envs.XMAKE_PKG_LOCALDIR = package_core.installdir({localdir = true})
+    end
 
     -- pass local repositories
     for _, repo in ipairs(repository.repositories()) do
         local repo_argv = {"repo"}
         _set_builtin_argv(package, repo_argv)
         table.join2(repo_argv, {"--add", repo:name(), repo:directory()})
-        os.vrunv("xmake", repo_argv, {envs = envs})
+        os.vrunv(os.programfile(), repo_argv, {envs = envs, curdir = opt.curdir})
     end
 
     -- pass configurations
@@ -477,7 +565,7 @@ function install(package, configs, opt)
     table.insert(argv, "-y")
     table.insert(argv, "-c")
     for name, value in pairs(_get_configs(package, configs, opt)) do
-        value = tostring(value):trim()
+        local value = tostring(value):trim()
         if type(name) == "number" then
             if value ~= "" then
                 table.insert(argv, value)
@@ -488,21 +576,27 @@ function install(package, configs, opt)
     end
 
     -- do configure
-    os.vrunv("xmake", argv, {envs = envs})
+    os.vrunv(os.programfile(), argv, {envs = envs, curdir = opt.curdir})
 
     -- do build
     argv = {"build"}
     _set_builtin_argv(package, argv)
-    if opt.target then
-        table.insert(argv, opt.target)
+    local njob = opt.jobs or option.get("jobs")
+    if njob then
+        table.insert(argv, "--jobs=" .. njob)
     end
-    os.vrunv("xmake", argv, {envs = envs})
+    local targets = table.wrap(opt.targets or opt.target)
+    if #targets ~= 0 then
+        table.join2(argv, targets)
+    end
+    os.vrunv(os.programfile(), argv, {envs = envs, curdir = opt.curdir})
 
     -- do install
-    argv = {"install", "-y", "--nopkgs", "-o", package:installdir()}
+    argv = {"install", "-y", "--packages=n", "-o", package:installdir()}
     _set_builtin_argv(package, argv)
-    if opt.target then
-        table.insert(argv, opt.target)
+    local targets = table.wrap(opt.targets or opt.target)
+    if #targets ~= 0 then
+        table.join2(argv, targets)
     end
-    os.vrunv("xmake", argv, {envs = envs})
+    os.vrunv(os.programfile(), argv, {envs = envs, curdir = opt.curdir})
 end

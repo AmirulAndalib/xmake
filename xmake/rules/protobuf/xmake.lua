@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -22,29 +22,27 @@
 rule("protobuf.cpp")
     add_deps("c++")
     set_extensions(".proto")
-    on_load(function(target)
+    after_load(function(target)
         import("proto").load(target, "cxx")
     end)
-    before_buildcmd_file(function (target, batchcmds, sourcefile_proto, opt)
-        import("proto").buildcmd(target, batchcmds, sourcefile_proto, opt, "cxx")
+    on_preparecmd_file(function(target, batchcmds, sourcefile_proto, opt)
+        import("proto").buildcmd_pfile(target, batchcmds, sourcefile_proto, "cxx", opt)
     end)
-    before_build_files(function (target, batchjobs, sourcebatch, opt)
-        import("proto").build_batchjobs(target, batchjobs, sourcebatch, opt, "cxx")
-    end, {batch = true})
+    on_buildcmd_file(function(target, batchcmds, sourcefile_proto, opt)
+        import("proto").buildcmd_cxfile(target, batchcmds, sourcefile_proto, "cxx", opt)
+    end)
 
 
 -- define rule: protobuf.c
 rule("protobuf.c")
     add_deps("c++")
     set_extensions(".proto")
-    on_load(function(target)
+    after_load(function(target)
         import("proto").load(target, "cc")
     end)
-    before_buildcmd_file(function (target, batchcmds, sourcefile_proto, opt)
-        import("proto").buildcmd(target, batchcmds, sourcefile_proto, opt, "cc")
+    on_preparecmd_file(function(target, batchcmds, sourcefile_proto, opt)
+        import("proto").buildcmd_pfile(target, batchcmds, sourcefile_proto, "cc", opt)
     end)
-    before_build_files(function (target, batchjobs, sourcebatch, opt)
-        import("proto").build_batchjobs(target, batchjobs, sourcebatch, opt, "cc")
-    end, {batch = true})
-
-
+    on_buildcmd_file(function(target, batchcmds, sourcefile_proto, opt)
+        import("proto").buildcmd_cxfile(target, batchcmds, sourcefile_proto, "cc", opt)
+    end)

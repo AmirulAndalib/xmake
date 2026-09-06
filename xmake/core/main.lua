@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        main.lua
@@ -41,19 +41,22 @@ local project       = require("project/project")
 local localcache    = require("cache/localcache")
 local profiler      = require("base/profiler")
 local debugger      = require("base/debugger")
+local thread        = require("base/thread")
 
 -- init the option menu
 local menu =
 {
     title = "${bright}xmake v" .. _VERSION .. ", A cross-platform build utility based on " .. (xmake._LUAJIT and "LuaJIT" or "Lua") .. "${clear}"
-,   copyright = "Copyright (C) 2015-present Ruki Wang, ${underline}tboox.org${clear}, ${underline}xmake.io${clear}"
+,   copyright = "Copyright (C) 2015-present Ruki Wang, ${underline}https://xmake.io${clear}"
 
     -- the tasks: xmake [task]
 ,   function ()
         local tasks = task.tasks() or {}
-        local ok, project_tasks = pcall(project.tasks)
-        if ok then
-            table.join2(tasks, project_tasks)
+        if xmake.in_main_thread() then
+            local ok, project_tasks = pcall(project.tasks)
+            if ok then
+                table.join2(tasks, project_tasks)
+            end
         end
         return task.menu(tasks)
     end
@@ -65,7 +68,7 @@ function main._show_help()
     if option.get("help") then
         option.show_menu(option.taskname())
         return true
-    elseif option.get("version") then
+    elseif option.get("version") and not option.taskname() then
         if menu.title then
             utils.cprint(menu.title)
         end
@@ -103,6 +106,13 @@ function main._find_root(projectfile)
     return projectfile
 end
 
+-- get project directory and project file from the argument option
+--
+-- @note we need to put `-P` in the first argument avoid option.parse() parsing errors
+-- e.g. `xmake f -c -P xxx` will be parsed as `-c=-P`, it's incorrect.
+--
+-- @see https://github.com/xmake-io/xmake/issues/4857
+--
 function main._basicparse()
 
     -- check command
@@ -114,8 +124,29 @@ function main._basicparse()
         xmake._COMMAND_ARGV = xmake._ARGV
     end
 
-    -- parse options
-    return option.parse(xmake._COMMAND_ARGV, task.common_options(), { allow_unknown = true })
+    -- parse options, only parse -P xxx/-F xxx/--project=xxx/--file=xxx
+    local options = {}
+    local argv = xmake._COMMAND_ARGV
+    local idx = 1
+    while idx <= #argv do
+        local arg = argv[idx]
+        if arg == "-P" and idx < #argv then
+            options.project = argv[idx + 1]
+            idx = idx + 1
+        elseif arg == "-F" and idx < #argv then
+            options.file = argv[idx + 1]
+            idx = idx + 1
+        elseif arg:startswith("--project=") then
+            options.project = arg:sub(11)
+        elseif arg:startswith("--file=") then
+            options.file = arg:sub(8)
+        end
+        idx = idx + 1
+        if options.project and options.file then
+            break
+        end
+    end
+    return options
 end
 
 -- get the project configuration from cache if we are in the independent working directory
@@ -152,11 +183,6 @@ function main._init()
     scheduler:enable(false)
 
     -- get project directory and project file from the argument option
-    --
-    -- @note we need to put `-P` in the first argument avoid option.parse() parsing errors
-    -- e.g. `xmake f -c -P xxx` will be parsed as `-c=-P`, it's incorrect.
-    --
-    -- maybe we will improve this later
     local options, errors = main._basicparse()
     if not options then
         return false, errors
@@ -194,21 +220,13 @@ function main._init()
         xmake._PROJECT_FILE = projectfile
 
         -- enter the project directory
-        if os.isdir(os.projectdir()) then
+        if os.isdir(os.projectdir()) and xmake.in_main_thread() then
             os.cd(os.projectdir())
         end
     else
         -- patch a fake project file and directory for other lua programs with xmake/engine
         xmake._PROJECT_DIR  = path.join(os.tmpdir(), "local")
         xmake._PROJECT_FILE = path.join(xmake._PROJECT_DIR, xmake._NAME .. ".lua")
-    end
-
-    -- add the directory of the program file (xmake) to $PATH environment
-    local programfile = os.programfile()
-    if programfile and os.isfile(programfile) then
-        os.addenv("PATH", path.directory(programfile))
-    else
-        os.addenv("PATH", os.programdir())
     end
     return true
 end
@@ -238,6 +256,27 @@ function main._exit(ok, errors)
     return retval
 end
 
+-- limit root? @see https://github.com/xmake-io/xmake/pull/4513
+function main._limit_root()
+    return not option.get("root") and option.boolean(os.getenv("XMAKE_ROOT")) ~= true and os.host() ~= 'haiku'
+end
+
+-- run task
+function main._run_task(taskname)
+    local taskinst = task.task(taskname) or project.task(taskname)
+    if not taskinst then
+        return false, string.format("do unknown task(%s)!", taskname)
+    end
+
+    scheduler:co_start_named("xmake " .. taskname, function ()
+        local ok, errors = taskinst:run()
+        if not ok then
+            os.raise(errors)
+        end
+    end)
+    return true
+end
+
 -- the main entry function
 function main.entry()
 
@@ -265,51 +304,60 @@ function main.entry()
         return main._exit(ok, errors)
     end
 
-    -- check run command as root
-    if not option.get("root") and os.getenv("XMAKE_ROOT") ~= 'y' then
-        if os.isroot() then
-            errors = [[Running xmake as root is extremely dangerous and no longer supported.
-As xmake does not drop privileges on installation you would be giving all
-build scripts full access to your system.
-Or you can add `--root` option or XMAKE_ROOT=y to allow run as root temporarily.
-            ]]
-            return main._exit(false, errors)
+    -- the project file failed to load when building the option menu? report it and exit now,
+    -- so that we do not continue into config/build and print the same error again later
+    local menu_load_error = project.menu_load_error()
+    if menu_load_error then
+        return main._exit(false, menu_load_error)
+    end
+
+    if xmake.in_main_thread() then
+
+        -- check run command as root
+        if main._limit_root() then
+            if os.isroot() then
+                errors = [[Running xmake as root is extremely dangerous and no longer supported.
+    As xmake does not drop privileges on installation you would be giving all
+    build scripts full access to your system.
+    Or you can add `--root` option or XMAKE_ROOT=y to allow run as root temporarily.
+                ]]
+                return main._exit(false, errors)
+            end
+        end
+
+        -- show help?
+        if main._show_help() then
+            return main._exit(true)
+        end
+
+        -- save command lines to history and we need to make sure that the .xmake directory is not generated everywhere
+        local skip_history = (os.getenv('XMAKE_SKIP_HISTORY') or ''):trim()
+        if os.projectfile() and os.isfile(os.projectfile()) and os.isdir(config.directory()) and skip_history == '' then
+            local cmdlines = table.wrap(localcache.get("history", "cmdlines"))
+            if #cmdlines > 64 then
+                table.remove(cmdlines, 1)
+            end
+            table.insert(cmdlines, option.cmdline())
+            localcache.set("history", "cmdlines", cmdlines)
+            localcache.save("history")
         end
     end
 
-    -- show help?
-    if main._show_help() then
-        return main._exit(true)
-    end
-
-    -- save command lines to history and we need to make sure that the .xmake directory is not generated everywhere
-    local skip_history = (os.getenv('XMAKE_SKIP_HISTORY') or ''):trim()
-    if os.projectfile() and os.isfile(os.projectfile()) and os.isdir(config.directory()) and skip_history == '' then
-        local cmdlines = table.wrap(localcache.get("history", "cmdlines"))
-        if #cmdlines > 64 then
-            table.remove(cmdlines, 1)
-        end
-        table.insert(cmdlines, option.cmdline())
-        localcache.set("history", "cmdlines", cmdlines)
-        localcache.save("history")
-    end
-
-    -- get task instance
-    local taskname = option.taskname() or "build"
-    local taskinst = task.task(taskname) or project.task(taskname)
-    if not taskinst then
-        return main._exit(false, string.format("do unknown task(%s)!", taskname))
-    end
-
-    -- run task
+    -- enable scheduler
     scheduler:enable(true)
-    scheduler:co_start_named("xmake " .. taskname, function ()
-        local ok, errors = taskinst:run()
-        if not ok then
-            os.raise(errors)
-        end
 
-    end)
+    -- run task or thread
+    local thread_callback = xmake._THREAD_CALLBACK
+    if thread_callback then
+        ok, errors = thread._run_thread(thread_callback, xmake._THREAD_CALLINFO)
+    else
+        ok, errors = main._run_task(option.taskname() or "build")
+    end
+    if not ok then
+        return main._exit(ok, errors)
+    end
+
+    -- start runloop
     ok, errors = scheduler:runloop()
     if not ok then
         return main._exit(ok, errors)
@@ -326,3 +374,4 @@ end
 
 -- return module: main
 return main
+

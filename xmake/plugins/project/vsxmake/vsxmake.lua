@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      OpportunityLiu
 -- @file        vsxmake.lua
@@ -26,16 +26,33 @@ import("render")
 import("getinfo")
 import("core.project.config")
 import("core.cache.localcache")
+import("vstudio.impl.vsutils", {rootdir = path.join(os.programdir(), "plugins", "project")})
 
-local template_root = path.join(os.scriptdir(), "vsproj", "templates")
+local template_root = path.join(os.programdir(), "scripts", "vsxmake", "vsproj", "templates")
 local template_sln = path.join(template_root, "sln", "vsxmake.sln")
 local template_vcx = path.join(template_root, "vcxproj", "#target#.vcxproj")
+local template_csproj = path.join(template_root, "csproj", "#target#.csproj")
 
 local template_fil = path.join(template_root, "vcxproj.filters", "#target#.vcxproj.filters")
 local template_props = path.join(template_root, "Xmake.Custom.props")
 local template_targets = path.join(template_root, "Xmake.Custom.targets")
 local template_items = path.join(template_root, "Xmake.Custom.items")
 local template_itemfil = path.join(template_root, "Xmake.Custom.items.filters")
+
+-- the source file extensions natively supported by the vsxmake project, keyed by the template import name
+-- the `filenone` group collects everything else (e.g. files added by add_files but handled by a custom rule)
+local _source_exts = {
+    filec   = {".c"},
+    filecxx = {".cpp", ".cc", ".cxx"},
+    filempp = {".mpp", ".mxx", ".cppm", ".ixx"},
+    filecu  = {".cu"},
+    fileobj = {".obj", ".o"},
+    filerc  = {".rc"},
+    fileui  = {".ui"},
+    fileqrc = {".qrc"},
+    filets  = {".ts"},
+    filecs  = {".cs"}
+}
 
 function _filter_files(files, includeexts, excludeexts)
     local positive = not excludeexts
@@ -120,30 +137,55 @@ function _buildparams(info, target, default)
         end
         if args.filec then
             local files = info._targets[target].sourcefiles
-            table.insert(r, _filter_files(files, {".c"}))
+            table.insert(r, _filter_files(files, _source_exts.filec))
         elseif args.filecxx then
             local files = info._targets[target].sourcefiles
-            table.insert(r, _filter_files(files, {".cpp", ".cc", ".cxx"}))
+            table.insert(r, _filter_files(files, _source_exts.filecxx))
         elseif args.filempp then
             local files = info._targets[target].sourcefiles
-            table.insert(r, _filter_files(files, {".mpp", ".mxx", ".cppm", ".ixx"}))
+            table.insert(r, _filter_files(files, _source_exts.filempp))
         elseif args.filecu then
             local files = info._targets[target].sourcefiles
-            table.insert(r, _filter_files(files, {".cu"}))
+            table.insert(r, _filter_files(files, _source_exts.filecu))
         elseif args.fileobj then
             local files = info._targets[target].sourcefiles
-            table.insert(r, _filter_files(files, {".obj", ".o"}))
+            table.insert(r, _filter_files(files, _source_exts.fileobj))
         elseif args.filerc then
             local files = info._targets[target].sourcefiles
-            table.insert(r, _filter_files(files, {".rc"}))
+            table.insert(r, _filter_files(files, _source_exts.filerc))
         elseif args.fileui then -- for qt/.ui
             local files = info._targets[target].sourcefiles
-            table.insert(r, _filter_files(files, {".ui"}))
+            table.insert(r, _filter_files(files, _source_exts.fileui))
+        elseif args.fileqrc then -- for qt/.qrc
+            local files = info._targets[target].sourcefiles
+            table.insert(r, _filter_files(files, _source_exts.fileqrc))
+        elseif args.filets then -- for qt/.ts
+            local files = info._targets[target].sourcefiles
+            table.insert(r, _filter_files(files, _source_exts.filets))
+        elseif args.filecs then -- for c#
+            local files = info._targets[target].sourcefiles
+            table.insert(r, _filter_files(files, _source_exts.filecs))
+        elseif args.filenone then -- for custom build steps, e.g. files added by add_files but handled by a custom rule
+            -- collect the source files not natively supported by vsxmake, and exclude the header/extra files
+            -- to avoid duplicate display with the include group (add_extrafiles)
+            local _target = info._targets[target]
+            local excludeexts = {}
+            for _, exts in table.orderpairs(_source_exts) do
+                table.join2(excludeexts, exts)
+            end
+            local excludefiles = hashset.from(table.join(_target.headerfiles or {}, _target.extrafiles or {}))
+            local files = {}
+            for _, file in ipairs(_target.sourcefiles) do
+                if not excludefiles:has(file) then
+                    table.insert(files, file)
+                end
+            end
+            table.insert(r, _filter_files(files, nil, excludeexts))
         elseif args.incc then
             local files = table.join(info._targets[target].headerfiles or {}, info._targets[target].extrafiles)
             table.insert(r, _filter_files(files, nil, {".natvis"}))
         elseif args.incnatvis then
-            local files = info._targets[target].headerfiles
+            local files = table.join(info._targets[target].headerfiles or {}, info._targets[target].extrafiles)
             table.insert(r, _filter_files(files, {".natvis"}))
         end
         return r
@@ -160,6 +202,7 @@ end
 function _trycp(file, target, targetname)
     targetname = targetname or path.filename(file)
     local targetfile = path.join(target, targetname)
+    targetfile = vsutils.translate_path(targetfile)
     if os.isfile(targetfile) then
         dprint("skipped file %s since the file already exists", path.relative(targetfile))
         return
@@ -168,6 +211,7 @@ function _trycp(file, target, targetname)
 end
 
 function _writefileifneeded(file, content)
+    file = vsutils.translate_path(file)
     if os.isfile(file) and io.readfile(file) == content then
         dprint("skipped file %s since the file has the same content", path.relative(file))
         return
@@ -213,11 +257,7 @@ function make(version)
     end
 
     return function(outputdir)
-
-        -- trace
         vprint("using project kind vs%d", version)
-
-        -- check
         assert(version >= 2010, "vsxmake does not support vs version lower than 2010")
 
         -- get info and params
@@ -229,25 +269,32 @@ function make(version)
         _writefileifneeded(sln, render(template_sln, "#([A-Za-z0-9_,%.%*%(%)]+)#", "@([^@]+)@", paramsprovidersln))
 
         -- add solution custom file
-        _trycp(template_props, info.solution_dir)
-        _trycp(template_targets, info.solution_dir)
+        _trycp(template_props, info.vcxproj_rootdir)
+        _trycp(template_targets, info.vcxproj_rootdir)
 
         for _, target in ipairs(info.targets) do
             local paramsprovidertarget = _buildparams(info, target, "<!-- nil -->")
-            local proj_dir = info._targets[target].vcxprojdir
+            local _target = info._targets[target]
+            local vcxproj_dir = _target.vcxprojdir
+            local projkind = _target.projkind or "cxx"
+            local projext = _target.projext or "vcxproj"
 
             -- write project file
-            local proj = path.join(proj_dir, target .. ".vcxproj")
-            _writefileifneeded(proj, render(template_vcx, "#([A-Za-z0-9_,%.%*%(%)]+)#", "@([^@]+)@", paramsprovidertarget))
+            local proj_file = path.join(vcxproj_dir, target .. "." .. projext)
+            local proj_template = (projkind == "csharp") and template_csproj or template_vcx
+            _writefileifneeded(proj_file, render(proj_template, "#([A-Za-z0-9_,%.%*%(%)]+)#", "@([^@]+)@", paramsprovidertarget))
 
-            local projfil = path.join(proj_dir, target .. ".vcxproj.filters")
-            _writefileifneeded(projfil, render(template_fil, "#([A-Za-z0-9_,%.%*%(%)]+)#", "@([^@]+)@", paramsprovidertarget))
+            -- .csproj does not use a .filters sidecar (legacy .vcxproj-only mechanism)
+            if projkind ~= "csharp" then
+                local vcxproj_filters = path.join(vcxproj_dir, target .. ".vcxproj.filters")
+                _writefileifneeded(vcxproj_filters, render(template_fil, "#([A-Za-z0-9_,%.%*%(%)]+)#", "@([^@]+)@", paramsprovidertarget))
+            end
 
             -- add project custom file
-            _trycp(template_props, proj_dir)
-            _trycp(template_targets, proj_dir)
-            _trycp(template_items, proj_dir)
-            _trycp(template_itemfil, proj_dir)
+            _trycp(template_props, vcxproj_dir)
+            _trycp(template_targets, vcxproj_dir)
+            _trycp(template_items, vcxproj_dir)
+            _trycp(template_itemfil, vcxproj_dir)
         end
 
         -- clear config and local cache

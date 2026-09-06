@@ -12,14 +12,13 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
 --
 
 toolchain("rust")
-
     set_homepage("https://www.rust-lang.org/")
     set_description("Rust Programming Language Compiler")
 
@@ -29,11 +28,16 @@ toolchain("rust")
     set_toolset("rcar", "$(env RC)", "rustc")
 
     on_load(function (toolchain)
-        -- e.g. x86_64-pc-windows-msvc, aarch64-unknown-none
-        local arch = toolchain:arch()
-        if arch and #arch:split("%-") > 1 then
-            toolchain:add("rcshflags", "--target=" .. arch)
-            toolchain:add("rcldflags", "--target=" .. arch)
+        import("core.tools.rustc.target_triple")
+
+        local opt = {}
+        if toolchain:config("appledev") == "simulator" then
+            opt.apple_sim = true
+        end
+
+        local target = target_triple(toolchain:plat(), toolchain:arch(), opt)
+        if target then
+            toolchain:add("rcflags", "--target=" .. target)
         else
             toolchain:set("rcshflags", "")
             toolchain:set("rcldflags", "")

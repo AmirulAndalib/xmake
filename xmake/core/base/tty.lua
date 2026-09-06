@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        tty.lua
@@ -23,9 +23,11 @@ local tty = tty or {}
 
 -- load modules
 local io = require("base/io")
+local path = require("base/path")
 
 -- save metatable and builtin functions
 tty._term_mode = tty._term_mode or tty.term_mode
+tty._session_id = tty._session_id or tty.session_id
 
 -- @see https://www2.ccs.neu.edu/research/gpc/VonaUtils/vona/terminal/vtansi.htm
 -- http://www.termsys.demon.co.uk/vtansi.htm
@@ -135,6 +137,90 @@ function tty.cursor_and_attrs_restore()
     return tty
 end
 
+-- move cursor to absolute position (row, col)
+-- row and col are 1-based (1, 1) is the top-left corner
+function tty.cursor_move(row, col)
+    if tty.has_vtansi() then
+        row = row or 1
+        col = col or 1
+        if row > 0 and col > 0 then
+            tty._iowrite(string.format("\x1b[%d;%dH", row, col))
+        end
+    end
+    return tty
+end
+
+-- move cursor up by n lines
+function tty.cursor_move_up(n)
+    if tty.has_vtansi() then
+        n = n or 1
+        if n > 0 then
+            tty._iowrite(string.format("\x1b[%dA", n))
+        end
+    end
+    return tty
+end
+
+-- move cursor down by n lines
+function tty.cursor_move_down(n)
+    if tty.has_vtansi() then
+        n = n or 1
+        if n > 0 then
+            tty._iowrite(string.format("\x1b[%dB", n))
+        end
+    end
+    return tty
+end
+
+-- move cursor forward (right) by n columns
+function tty.cursor_move_right(n)
+    if tty.has_vtansi() then
+        n = n or 1
+        if n > 0 then
+            tty._iowrite(string.format("\x1b[%dC", n))
+        end
+    end
+    return tty
+end
+
+-- move cursor backward (left) by n columns
+function tty.cursor_move_left(n)
+    if tty.has_vtansi() then
+        n = n or 1
+        if n > 0 then
+            tty._iowrite(string.format("\x1b[%dD", n))
+        end
+    end
+    return tty
+end
+
+-- move cursor to specified column
+function tty.cursor_move_to_col(col)
+    if tty.has_vtansi() then
+        col = col or 1
+        if col > 0 then
+            tty._iowrite(string.format("\x1b[%dG", col))
+        end
+    end
+    return tty
+end
+
+-- hide cursor
+function tty.cursor_hide()
+    if tty.has_vtansi() then
+        tty._iowrite("\x1b[?25l")
+    end
+    return tty
+end
+
+-- show cursor
+function tty.cursor_show()
+    if tty.has_vtansi() then
+        tty._iowrite("\x1b[?25h")
+    end
+    return tty
+end
+
 -- carriage return
 function tty.cr()
     tty._iowrite("\r")
@@ -149,10 +235,46 @@ function tty.flush()
     return tty
 end
 
--- get shell name
-function tty.shell()
-    local shell = tty._SHELL
-    if shell == nil then
+function tty._find_shell_from_parent_on_windows()
+    local shell
+    local winos = require("base/winos")
+    if winos.processes then
+        local processes = winos.processes()
+        if processes then
+            local pid = os.getpid()
+            local processes_map = {}
+            for _, process in ipairs(processes) do
+                processes_map[process.pid] = process
+            end
+            local count = 0
+            while pid and pid ~= 0 and count < 10 do
+                count = count + 1
+                local process = processes_map[pid]
+                if not process then
+                    break
+                end
+                local name = process.name
+                if name then
+                    name = name:lower()
+                    if name:sub(-4) == ".exe" then
+                        name = name:sub(1, #name - 4)
+                    end
+                    for _, shellname in ipairs({"zsh", "bash", "fish", "nu", "elvish", "pwsh", "powershell", "cmd", "sh"}) do
+                        if name == shellname then
+                            shell = shellname
+                            break
+                        end
+                    end
+                end
+                if shell then
+                    break
+                end
+                pid = process.parent_pid or process.ppid -- for backward compatibility
+            end
+        end
+    end
+
+    if not shell then
         local subhost = xmake._SUBHOST
         if subhost == "windows" then
             if os.getenv("PROMPT") then
@@ -165,16 +287,99 @@ function tty.shell()
                     shell = "powershell"
                 end
             end
-        else
+        end
+    end
+    return shell
+end
+
+
+function tty._find_shell_from_parent_on_linux()
+    local pid = os.getpid()
+    local count = 0
+    local shell
+    while pid ~= 0 and count < 4 do
+        count = count + 1
+        local shell_name = nil
+        local shell_path = nil
+        if os.isfile("/proc/" .. pid .. "/exe") then
+            local link = os.readlink("/proc/" .. pid .. "/exe")
+            if link then
+                shell_path = link
+            end
+        end
+
+        if not shell_path and os.isfile("/proc/" .. pid .. "/comm") then
+             shell_name = io.readfile("/proc/" .. pid .. "/comm")
+             if shell_name then
+                 shell_name = shell_name:trim()
+             end
+        end
+        if shell_path then
+            shell_name = path.filename(shell_path)
+        end
+
+        if shell_name then
+            shell_name = shell_name:ltrim("-")
+            for _, name in ipairs({"zsh", "bash", "fish", "nu", "elvish", "pwsh", "sh"}) do
+                if shell_name == name then
+                    shell = name
+                    break
+                end
+            end
+            if shell then
+                break
+            end
+        end
+
+        local stat = io.readfile("/proc/" .. pid .. "/stat")
+        local ppid = stat and tonumber(stat:match(".*%) %S+ (%d+)"))
+        if not ppid or ppid == 0 then
+            break
+        end
+        pid = ppid
+    end
+    return shell
+end
+
+-- find the shell from the parent process
+function tty._find_shell_from_parent()
+
+    -- for windows
+    if os.host() == "windows" then
+        return tty._find_shell_from_parent_on_windows()
+    end
+
+    -- for linux
+    if os.host() == "linux" and os.isfile("/proc/self/stat") then
+        return tty._find_shell_from_parent_on_linux()
+    end
+end
+
+-- get shell name, e.g. "bash", "zsh", "powershell", "cmd", "nu"
+--
+-- @return      the shell name string
+--
+function tty.shell()
+    local shell = tty._SHELL
+    if shell == nil then
+        if os.getenv("NU_VERSION") then
+            shell = "nu"
+        end
+        -- try to find the shell from the parent process
+        if not shell then
+            shell = tty._find_shell_from_parent()
+        end
+
+        if not shell then
             shell = os.getenv("XMAKE_SHELL")
-            if not shell then
-                shell = os.getenv("SHELL")
-                if shell then
-                    for _, shellname in ipairs({"zsh", "bash", "sh"}) do
-                        if shell:find(shellname) then
-                            shell = shellname
-                            break
-                        end
+        end
+        if not shell then
+            shell = os.getenv("SHELL")
+            if shell then
+                for _, shellname in ipairs({"zsh", "bash", "fish", "nu", "elvish", "pwsh", "sh"}) do
+                    if shell:find(shellname) then
+                        shell = shellname
+                        break
                     end
                 end
             end
@@ -201,6 +406,7 @@ end
 --  - terminator
 --  - rxvt
 --  - lxterminal
+--  - ghostty
 --  - unknown
 --
 function tty.term()
@@ -215,6 +421,8 @@ function tty.term()
                     term = "vscode"
                 elseif TERM_PROGRAM == "mintty" then
                     term = "mintty" -- git bash
+                elseif TERM_PROGRAM == "ghostty" then
+                    term = "ghostty"
                 end
             end
         end
@@ -223,10 +431,14 @@ function tty.term()
         if term == nil then
             local TERM = os.getenv("TERM")
             if TERM ~= nil then
-                if TERM:find("xterm", 1, true) then
+                if TERM:find("ghostty", 1, true) then
+                    term = "ghostty"
+                elseif TERM:find("xterm", 1, true) then
                     term = "xterm"
                 elseif TERM == "cygwin" then
                     term = "cygwin"
+                elseif TERM:find("alacritty", 1, true) then
+                    term = "alacritty"
                 end
             end
         end
@@ -255,7 +467,10 @@ function tty.term()
     return tty._TERM
 end
 
--- has emoji?
+-- does the terminal support emoji?
+--
+-- @return      true if supported
+--
 function tty.has_emoji()
     local has_emoji = tty._HAS_EMOJI
     if has_emoji == nil then
@@ -281,7 +496,10 @@ function tty.has_emoji()
     return has_emoji
 end
 
--- has vtansi?
+-- does the terminal support VT/ANSI escape codes?
+--
+-- @return      true if supported
+--
 function tty.has_vtansi()
     return tty.has_color8()
 end
@@ -441,6 +659,28 @@ function tty.term_mode(stdtype, newmode)
         end
     end
     return oldmode
+end
+
+-- get the terminal session id
+--
+-- @return      the session id string
+--
+function tty.session_id()
+    local session_id = tty._SESSION_ID
+    if session_id == nil then
+        if tty._session_id then
+            local sid = tty._session_id()
+            if sid then
+                local hash = require("base/hash")
+                session_id = hash.strhash32(sid)
+            end
+        end
+        if not session_id then
+            session_id = "00000000"
+        end
+        tty._SESSION_ID = session_id
+    end
+    return session_id
 end
 
 -- return module

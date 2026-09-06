@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        package.lua
@@ -32,6 +32,8 @@ sandbox_core_package_package.installdir = package.installdir
 sandbox_core_package_package.searchdirs = package.searchdirs
 sandbox_core_package_package.targetplat = package.targetplat
 sandbox_core_package_package.targetarch = package.targetarch
+sandbox_core_package_package.apis       = package.apis
+sandbox_core_package_package.new        = package.new
 
 -- load the package from the project file
 function sandbox_core_package_package.load_from_project(packagename)

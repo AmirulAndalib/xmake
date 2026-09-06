@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -21,24 +21,11 @@
 -- define rule: qt/wasm application
 rule("qt._wasm_app")
     add_deps("qt.env")
-    after_build(function (target)
-        local qt = target:data("qt")
-        local pluginsdir = qt and qt.pluginsdir
-        if pluginsdir then
-            local targetdir = target:targetdir()
-            local htmlfile = path.join(targetdir, target:basename() .. ".html")
-            if os.isfile(path.join(pluginsdir, "platforms/wasm_shell.html")) then
-                os.vcp(path.join(pluginsdir, "platforms/wasm_shell.html"), htmlfile)
-                io.gsub(htmlfile, "@APPNAME@", target:name())
-                os.vcp(path.join(pluginsdir, "platforms/qtloader.js"), targetdir)
-                os.vcp(path.join(pluginsdir, "platforms/qtlogo.svg"), targetdir)
-            end
-        end
-    end)
+    after_build("build_qt_wasm_app")
 
 -- define rule: qt static library
 rule("qt.static")
-    add_deps("qt.qrc", "qt.ui", "qt.moc")
+    add_deps("qt.qrc", "qt.ui", "qt.moc", "qt.ts")
 
     -- we must set kind before target.on_load(), may we will use target in on_load()
     on_load(function (target)
@@ -51,7 +38,7 @@ rule("qt.static")
 
 -- define rule: qt shared library
 rule("qt.shared")
-    add_deps("qt.qrc", "qt.ui", "qt.moc")
+    add_deps("qt.qrc", "qt.ui", "qt.moc", "qt.ts")
 
     -- we must set kind before target.on_load(), may we will use target in on_load()
     on_load(function (target)
@@ -62,9 +49,12 @@ rule("qt.shared")
         import("load")(target, {frameworks = {"QtCore"}})
     end)
 
+    after_install("windows", "install.windows")
+    after_install("mingw", "install.mingw")
+
 -- define rule: qt console
 rule("qt.console")
-    add_deps("qt.qrc", "qt.ui", "qt.moc")
+    add_deps("qt.qrc", "qt.ui", "qt.moc", "qt.ts")
 
     -- we must set kind before target.on_load(), may we will use target in on_load()
     on_load(function (target)
@@ -80,7 +70,7 @@ rule("qt.console")
 
 -- define rule: qt widgetapp
 rule("qt.widgetapp")
-    add_deps("qt.ui", "qt.moc", "qt._wasm_app", "qt.qrc")
+    add_deps("qt.ui", "qt.moc", "qt._wasm_app", "qt.qrc", "qt.ts")
 
     -- we must set kind before target.on_load(), may we will use target in on_load()
     on_load(function (target)
@@ -113,9 +103,13 @@ rule("qt.widgetapp")
     after_install("windows", "install.windows")
     after_install("mingw", "install.mingw")
 
+    -- install application for xpack
+    on_installcmd("installcmd")
+    on_uninstallcmd("uninstallcmd")
+
 -- define rule: qt static widgetapp
 rule("qt.widgetapp_static")
-    add_deps("qt.ui", "qt.moc", "qt._wasm_app", "qt.qrc")
+    add_deps("qt.ui", "qt.moc", "qt._wasm_app", "qt.qrc", "qt.ts")
 
     -- we must set kind before target.on_load(), may we will use target in on_load()
     on_load(function (target)
@@ -141,9 +135,13 @@ rule("qt.widgetapp_static")
     after_install("windows", "install.windows")
     after_install("mingw", "install.mingw")
 
+    -- install application for xpack
+    on_installcmd("installcmd")
+    on_uninstallcmd("uninstallcmd")
+
 -- define rule: qt quickapp
 rule("qt.quickapp")
-    add_deps("qt.qrc", "qt.moc", "qt._wasm_app")
+    add_deps("qt.qrc", "qt.moc", "qt._wasm_app", "qt.ts")
 
     -- we must set kind before target.on_load(), may we will use target in on_load()
     on_load(function (target)
@@ -163,9 +161,13 @@ rule("qt.quickapp")
     after_install("windows", "install.windows")
     after_install("mingw", "install.mingw")
 
+    -- install application for xpack
+    on_installcmd("installcmd")
+    on_uninstallcmd("uninstallcmd")
+
 -- define rule: qt static quickapp
 rule("qt.quickapp_static")
-    add_deps("qt.qrc", "qt.moc", "qt._wasm_app")
+    add_deps("qt.qrc", "qt.moc", "qt._wasm_app", "qt.ts")
 
     -- we must set kind before target.on_load(), may we will use target in on_load()
     on_load(function (target)
@@ -187,9 +189,13 @@ rule("qt.quickapp_static")
     after_install("windows", "install.windows")
     after_install("mingw", "install.mingw")
 
+    -- install application for xpack
+    on_installcmd("installcmd")
+    on_uninstallcmd("uninstallcmd")
+
 -- define rule: qt qmlplugin
 rule("qt.qmlplugin")
-    add_deps("qt.shared", "qt.qmltyperegistrar")
+    add_deps("qt.shared", "qt.qmltyperegistrar", "qt.ts")
     on_config(function(target)
         import("load")(target, {frameworks = { "QtCore", "QtGui", "QtQuick", "QtQml", "QtNetwork" }})
     end)

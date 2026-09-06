@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        language.lua
@@ -50,7 +50,7 @@ function _instance:get(name)
     end
 
     if self._g == nil and info.load ~= nil then
-        local ok, results = sandbox.load(info.load)
+        local ok, results = sandbox.call(info.load)
         if not ok then
             os.raise(results)
         end

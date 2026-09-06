@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -34,12 +34,11 @@ task("check")
                                             "    - xmake check api.target.languages",
                                             "",
                                             "The supported checkers list:",
-                values = function (complete, opt)
-                    return import("private.check.checker").complete(complete, opt)
-                end},
+                                            values = function (complete, opt)
+                                                return import("private.check.checker").complete(complete, opt)
+                                            end},
             {nil, "arguments", "vs", nil,   "Set the checker arguments.",
                                             "e.g.",
-                                            "    - xmake check clang.tidy [arguments]"}
+                                            "    - xmake check clang.tidy [arguments]"},
         }
     }
-

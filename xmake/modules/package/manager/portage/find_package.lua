@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_package.lua
@@ -22,6 +22,7 @@
 import("core.base.option")
 import("lib.detect.find_file")
 import("lib.detect.find_tool")
+import("private.core.base.is_cross")
 import("package.manager.pkgconfig.find_package", {alias = "find_package_from_pkgconfig"})
 
 -- find package from the system directories
@@ -30,9 +31,10 @@ import("package.manager.pkgconfig.find_package", {alias = "find_package_from_pkg
 -- @param opt   the options, e.g. {verbose = true, version = "1.12.x")
 --
 function main(name, opt)
-
-    -- init options
     opt = opt or {}
+    if is_cross(opt.plat, opt.arch) then
+        return
+    end
 
     -- for msys2/mingw? mingw-w64-[i686|x86_64]-xxx
     if opt.plat == "mingw" then
@@ -61,7 +63,7 @@ function main(name, opt)
     local has_includes = false
     local pkgconfig_files = {}
     for _, line in ipairs(list) do
-        line = line:trim():split('%s+')[1]
+        local line = line:trim():split('%s+')[1]
         if line:find("/pkgconfig/", 1, true) and line:endswith(".pc") then
             pkgconfig_files[path.basename(line)] = line
         end

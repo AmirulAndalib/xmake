@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        install_package.lua
@@ -41,9 +41,13 @@ function _install_package(manager_name, package_name, opt)
         table.insert(managers, "portage")
         table.insert(managers, "brew")
         table.insert(managers, "zypper")
+        table.insert(managers, "nix")
     elseif is_host("macosx") then
         table.insert(managers, "vcpkg")
         table.insert(managers, "brew")
+        table.insert(managers, "nix")
+    elseif is_host("bsd") then
+        table.insert(managers, "pkg") -- freebsd/dragonflybsd
     end
     assert(#managers > 0, "no suitable package manager!")
 

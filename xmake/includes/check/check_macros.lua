@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        check_macros.lua
@@ -38,14 +38,14 @@ function check_macros(definition, macros, opt)
                 table.insert(snippets, ([[
                 #if %s
                 #else
-                #   #error %s is not satisfied!
+                    #error %s is not satisfied!
                 #endif
                 ]]):format(macro, macro))
             else
                 table.insert(snippets, ([[
                 #if%s %s
                 #else
-                #   #error %s is not defined!
+                    #error %s is not defined!
                 #endif
                 ]]):format(opt.defined ~= false and "def" or "ndef", macro, macro))
             end
@@ -59,6 +59,9 @@ function check_macros(definition, macros, opt)
         if opt.languages then
             set_languages(opt.languages)
         end
+        if opt.defines then
+            add_defines(opt.defines)
+        end
         if opt.cflags then
             add_cflags(opt.cflags)
         end
@@ -67,6 +70,11 @@ function check_macros(definition, macros, opt)
         end
         if opt.cxxflags then
             add_cxxflags(opt.cxxflags)
+        end
+        if opt.languages and opt.languages:startswith("c++") then
+            add_cxxincludes(opt.includes)
+        else
+            add_cincludes(opt.includes)
         end
     option_end()
     interp_restore_scope()
@@ -92,14 +100,14 @@ function configvar_check_macros(definition, macros, opt)
                 table.insert(snippets, ([[
                 #if %s
                 #else
-                #   #error %s is not satisfied!
+                    #error %s is not satisfied!
                 #endif
                 ]]):format(macro, macro))
             else
                 table.insert(snippets, ([[
                 #if%s %s
                 #else
-                #   #error %s is not defined!
+                    #error %s is not defined!
                 #endif
                 ]]):format(opt.defined ~= false and "def" or "ndef", macro, macro))
             end
@@ -115,6 +123,9 @@ function configvar_check_macros(definition, macros, opt)
         if opt.languages then
             set_languages(opt.languages)
         end
+        if opt.defines then
+            add_defines(opt.defines)
+        end
         if opt.cflags then
             add_cflags(opt.cflags)
         end
@@ -123,6 +134,13 @@ function configvar_check_macros(definition, macros, opt)
         end
         if opt.cxxflags then
             add_cxxflags(opt.cxxflags)
+        end
+        if opt.includes then
+            if opt.languages and opt.languages:startswith("c++") then
+                add_cxxincludes(opt.includes)
+            else
+                add_cincludes(opt.includes)
+            end
         end
     option_end()
     interp_restore_scope()

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        unity_build.lua
@@ -32,11 +32,11 @@ function _merge_unityfile(target, sourcefile_unity, sourcefiles, opt)
         local uniqueid = target:data("unity_build.uniqueid")
         local unityfile = io.open(sourcefile_unity, "w")
         for _, sourcefile in ipairs(sourcefiles) do
-            sourcefile = path.absolute(sourcefile)
+            local sourcefile = path.absolute(sourcefile)
             sourcefile_unity = path.absolute(sourcefile_unity)
             sourcefile = path.relative(sourcefile, path.directory(sourcefile_unity))
             if uniqueid then
-                unityfile:print("#define %s %s", uniqueid, "unity_" .. hash.uuid():split("-", {plain = true})[1])
+                unityfile:print("#define %s %s", uniqueid, "unity_" .. hash.rand64())
             end
             unityfile:print("#include \"%s\"", sourcefile)
             if uniqueid then
@@ -84,6 +84,8 @@ function main(target, sourcebatch)
     local uniqueid = extraconf and extraconf.uniqueid
     local id = 1
     local count = 0
+    local group_id = {}
+    local group_count = {}
     local unity_batch = {}
     local sourcefiles = {}
     local objectfiles = {}
@@ -95,7 +97,20 @@ function main(target, sourcebatch)
         local dependfile = sourcebatch.dependfiles[idx]
         local fileconfig = target:fileconfig(sourcefile)
         if fileconfig and fileconfig.unity_group then
-            sourcefile_unity = path.join(sourcedir, "unity_group_" .. fileconfig.unity_group .. path.extension(sourcefile))
+            if fileconfig.batchsize then
+                local curr_group_id = group_id[fileconfig.unity_group] or 1
+                local curr_group_count = group_count[fileconfig.unity_group] or 0
+                if curr_group_count >= fileconfig.batchsize then
+                    curr_group_id = curr_group_id + 1
+                    curr_group_count = 0
+                    group_id[fileconfig.unity_group] = curr_group_id
+                    group_count[fileconfig.unity_group] = curr_group_count
+                end
+                sourcefile_unity = path.join(sourcedir, "unity_group_" .. fileconfig.unity_group .. "_" .. tostring(curr_group_id) .. path.extension(sourcefile))
+                group_count[fileconfig.unity_group] = curr_group_count + 1
+            else
+                sourcefile_unity = path.join(sourcedir, "unity_group_" .. fileconfig.unity_group .. path.extension(sourcefile))
+            end
         elseif (fileconfig and fileconfig.unity_ignored) or (batchsize and batchsize <= 1) then
             -- we do not add these files to unity file
             table.insert(sourcefiles, sourcefile)

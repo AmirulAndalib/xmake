@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_vswhere.lua
@@ -55,6 +55,7 @@ function main(opt)
         "$(env ProgramFiles%(x86%))\\Microsoft Visual Studio\\Installer",
         "$(env ProgramFiles)\\Microsoft Visual Studio\\Installer"
     }
+    opt.paths = table.wrap(opt.paths)
     local program = find_program(opt.program or "vswhere.exe", opt)
 
     -- find program version

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        install_package.lua
@@ -27,6 +27,7 @@ import("core.platform.platform")
 import("lib.detect.find_tool")
 import("devel.git")
 import("net.fasturl")
+import("private.utils.toolchain", {alias = "toolchain_utils"})
 
 -- get build env
 function _conan_get_build_env(name, plat)
@@ -46,7 +47,7 @@ end
 
 -- get build directory
 function _conan_get_build_directory(name)
-    return path.absolute(path.join(config.buildir() or os.tmpdir(), ".conan", name))
+    return path.absolute(path.join(config.builddir() or os.tmpdir(), ".conan", name))
 end
 
 -- generate conanfile.txt
@@ -76,6 +77,7 @@ function _conan_generate_conanfile(name, configs, opt)
         if #options > 0 then
             conanfile:print("[options]")
             for _, item in ipairs(options) do
+                local item = item
                 if not item:find(":", 1, true) then
                     item = name .. ":" .. item
                 end
@@ -128,16 +130,16 @@ function main(conan, name, opt)
     local configs = opt.configs or {}
 
     -- get build directory
-    local buildir = _conan_get_build_directory(name)
+    local builddir = _conan_get_build_directory(name)
 
     -- clean the build directory
-    os.tryrm(buildir)
-    if not os.isdir(buildir) then
-        os.mkdir(buildir)
+    os.tryrm(builddir)
+    if not os.isdir(builddir) then
+        os.mkdir(builddir)
     end
 
     -- enter build directory
-    local oldir = os.cd(buildir)
+    local oldir = os.cd(builddir)
 
     -- install xmake generator
     _conan_install_xmake_generator(conan)
@@ -197,23 +199,14 @@ function main(conan, name, opt)
 
     -- set compiler settings
     if opt.plat == "windows" then
-        local vsvers = {["2022"] = "17",
-                        ["2019"] = "16",
-                        ["2017"] = "15",
-                        ["2015"] = "14",
-                        ["2013"] = "12",
-                        ["2012"] = "11",
-                        ["2010"] = "10",
-                        ["2008"] = "9",
-                        ["2005"] = "8"}
         local vs = assert(config.get("vs"), "vs not found!")
         table.insert(argv, "-s")
         table.insert(argv, "compiler=Visual Studio")
         table.insert(argv, "-s")
-        table.insert(argv, "compiler.version=" .. assert(vsvers[vs], "unknown msvc version!"))
-        if configs.vs_runtime then
+        table.insert(argv, "compiler.version=" .. toolchain_utils.get_vsver(vs))
+        if configs.runtimes then
             table.insert(argv, "-s")
-            table.insert(argv, "compiler.runtime=" .. configs.vs_runtime)
+            table.insert(argv, "compiler.runtime=" .. configs.runtimes)
         end
     elseif opt.plat == "iphoneos" then
         local target_minver = nil

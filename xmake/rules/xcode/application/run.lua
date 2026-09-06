@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        run.lua
@@ -61,6 +61,7 @@ function _run_on_simulator(target, opt)
     -- find the booted devices
     local name, deviceid
     for _, line in ipairs(list:split('\n', {plain = true})) do
+        local line = line
         if line:find("(Booted)", 1, true) then
             line = line:trim()
             name, deviceid = line:match("(.-)%s+%(([%w%-]+)%)")

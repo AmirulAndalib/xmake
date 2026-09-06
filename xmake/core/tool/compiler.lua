@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        compiler.lua
@@ -93,15 +93,23 @@ end
 
 -- load compiler tool
 function compiler._load_tool(sourcekind, target)
-
-    -- get program from target
     local program, toolname, toolchain_info
     if target and target.tool then
         program, toolname, toolchain_info = target:tool(sourcekind)
     end
 
+    -- is host?
+    local is_host
+    if target and target.is_host then
+        is_host = target:is_host()
+    end
+
     -- load the compiler tool from the source kind
-    local result, errors = tool.load(sourcekind, {program = program, toolname = toolname, toolchain_info = toolchain_info})
+    local result, errors = tool.load(sourcekind, {
+        host = is_host,
+        program = program,
+        toolname = toolname,
+        toolchain_info = toolchain_info})
     if not result then
         return nil, errors
     end
@@ -109,33 +117,45 @@ function compiler._load_tool(sourcekind, target)
 end
 
 -- load the compiler from the given source kind
+--
+-- @param sourcekind    the source kind, e.g. "cc", "cxx", "mm", "mxx", "as", "gc", "dc", "rc", "sc", "cs"
+-- @param target        the target or options table, e.g. {target = target}
+-- @return              the compiler instance, or nil and error info
+--
 function compiler.load(sourcekind, target)
     if not sourcekind then
         return nil, "unknown source kind!"
     end
 
-    -- load compiler tool first (with cache)
-    local compiler_tool, program_or_errors = compiler._load_tool(sourcekind, target)
-    if not compiler_tool then
-        return nil, program_or_errors
-    end
-
     -- init cache key
     -- @note we need plat/arch,
     -- because it is possible for the compiler to do cross-compilation with the -target parameter
-    local plat = compiler_tool:plat() or config.plat() or os.host()
-    local arch = compiler_tool:arch() or config.arch() or os.arch()
+    local plat = config.plat() or os.host()
+    local arch = config.arch() or os.arch()
+    if target and target.tool then
+        local _, _, toolchain_info = target:tool(sourcekind)
+        if toolchain_info then
+            plat = toolchain_info.plat
+            arch = toolchain_info.arch
+        end
+    end
     local cachekey = sourcekind .. (program_or_errors or "") .. plat .. arch
+    if target then
+        cachekey = cachekey .. tostring(target)
+    end
 
     -- get it directly from cache dirst
     compiler._INSTANCES = compiler._INSTANCES or {}
     local instance = compiler._INSTANCES[cachekey]
     if not instance then
-
-        -- new instance
         instance = table.inherit(compiler, builder)
 
-        -- save the compiler tool
+        -- load compiler tool
+        -- @NOTE We cannot cache the tool, otherwise it may cause duplicate toolchain flags to be added
+        local compiler_tool, program_or_errors = compiler._load_tool(sourcekind, target)
+        if not compiler_tool then
+            return nil, program_or_errors
+        end
         instance._TOOL = compiler_tool
 
         -- load the compiler language from the source kind
@@ -181,7 +201,7 @@ function compiler.load(sourcekind, target)
 
     -- we need to load it at the end because in tool.load().
     -- because we may need to call has_flags, which requires the full platform toolchain flags
-    local ok, errors = compiler_tool:_load_once()
+    local ok, errors = instance:_tool():_load_once()
     if not ok then
         return nil, errors
     end
@@ -189,9 +209,12 @@ function compiler.load(sourcekind, target)
 end
 
 -- build the source files (compile and link)
+--
+-- @param sourcefiles   the source file paths
+-- @param targetfile    the target file path
+-- @param opt           the options, e.g. {target = target, configs = {}}
+--
 function compiler:build(sourcefiles, targetfile, opt)
-
-    -- init options
     opt = opt or {}
 
     -- get compile flags
@@ -215,15 +238,11 @@ function compiler:build(sourcefiles, targetfile, opt)
     if not targetkind and opt.target and opt.target.targetkind then
         targetkind = opt.target:kind()
     end
-
-    -- get it
-    return sandbox.load(self:_tool().build, self:_tool(), sourcefiles, targetkind or "binary", targetfile, flags)
+    return sandbox.call(self:_tool().build, self:_tool(), sourcefiles, targetkind or "binary", targetfile, flags, opt)
 end
 
 -- get the build arguments list (compile and link)
 function compiler:buildargv(sourcefiles, targetfile, opt)
-
-    -- init options
     opt = opt or {}
 
     -- get compile flags
@@ -247,9 +266,7 @@ function compiler:buildargv(sourcefiles, targetfile, opt)
     if not targetkind and opt.target and opt.target.targetkind then
         targetkind = opt.target:kind()
     end
-
-    -- get it
-    return self:_tool():buildargv(sourcefiles, targetkind or "binary", targetfile, flags)
+    return self:_tool():buildargv(sourcefiles, targetkind or "binary", targetfile, flags, opt)
 end
 
 -- get the build command
@@ -258,10 +275,15 @@ function compiler:buildcmd(sourcefiles, targetfile, opt)
 end
 
 -- compile the source files
+--
+-- @param sourcefiles   the source file paths
+-- @param objectfile    the output object file path
+-- @param opt           the options, e.g. {target = target, compflags = {}, dependinfo = {}}
+--
 function compiler:compile(sourcefiles, objectfile, opt)
+    opt = opt or {}
 
     -- get compile flags
-    opt = opt or {}
     local compflags = opt.compflags
     if not compflags then
         -- patch sourcefile to get flags of the given source file
@@ -275,15 +297,13 @@ function compiler:compile(sourcefiles, objectfile, opt)
     opt = table.copy(opt)
     opt.target = self:target()
     profiler:enter(self:name(), "compile", sourcefiles)
-    local ok, errors = sandbox.load(self:_tool().compile, self:_tool(), sourcefiles, objectfile, opt.dependinfo, compflags, opt)
+    local ok, errors = sandbox.call(self:_tool().compile, self:_tool(), sourcefiles, objectfile, opt.dependinfo, compflags, opt)
     profiler:leave(self:name(), "compile", sourcefiles)
     return ok, errors
 end
 
 -- get the compile arguments list
 function compiler:compargv(sourcefiles, objectfile, opt)
-
-    -- init options
     opt = opt or {}
 
     -- get compile flags
@@ -312,14 +332,10 @@ end
 -- @return      flags list
 --
 function compiler:compflags(opt)
-
-    -- init options
     opt = opt or {}
 
     -- get target
-    local target = opt.target
-
-    -- get target kind
+    local target = opt.target or self:target()
     local targetkind = opt.targetkind
     if not targetkind and target and target:type() == "target" then
         targetkind = target:kind()
@@ -335,9 +351,6 @@ function compiler:compflags(opt)
     local flags = {}
     self:_add_flags_from_compiler(flags, targetkind)
     self:_add_flags_from_toolchains(flags, targetkind, target)
-
-    -- add flags from user configuration
-    self:_add_flags_from_config(flags)
 
     -- add flags from target
     self:_add_flags_from_target(flags, target)
@@ -355,6 +368,9 @@ function compiler:compflags(opt)
     if configs then
         self:_add_flags_from_argument(flags, target, configs)
     end
+
+    -- add flags from user configuration
+    self:_add_flags_from_config(flags)
 
     -- preprocess flags
     return self:_preprocess_flags(flags)

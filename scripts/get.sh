@@ -47,7 +47,7 @@ test_nq() {
 
 # print a LOGO!
 echo 'xmake, A cross-platform build utility based on Lua.   '
-echo 'Copyright (C) 2015-present Ruki Wang, tboox.org, xmake.io'
+echo 'Copyright (C) 2015-present Ruki Wang, https://xmake.io'
 echo '                         _                            '
 echo '    __  ___ __  __  __ _| | ______                    '
 echo '    \ \/ / |  \/  |/ _  | |/ / __ \                   '
@@ -55,8 +55,8 @@ echo '     >  <  | \__/ | /_| |   <  ___/                   '
 echo '    /_/\_\_|_|  |_|\__ \|_|\_\____|                   '
 echo '                         by ruki, xmake.io            '
 echo '                                                      '
-echo '   👉  Manual: https://xmake.io/#/getting_started     '
-echo '   🙏  Donate: https://xmake.io/#/sponsor             '
+echo '   👉  Manual: https://xmake.io/guide/quick-start     '
+echo '   🙏  Donate: https://xmake.io/about/sponsor         '
 echo '                                                      '
 
 # has sudo?
@@ -109,12 +109,16 @@ get_host_speed() {
 }
 
 get_fast_host() {
-    speed_gitee=$(get_host_speed "gitee.com")
-    speed_github=$(get_host_speed "github.com")
-    if [ $speed_gitee -le $speed_github ]; then
-        echo "gitee.com"
-    else
+    if test_eq "$GITHUB_ACTIONS" "true" || test_eq "$GITHUB_ACTIONS" "1"; then
         echo "github.com"
+    else
+        speed_gitee=$(get_host_speed "gitee.com")
+        speed_github=$(get_host_speed "github.com")
+        if [ $speed_gitee -le $speed_github ]; then
+            echo "gitee.com"
+        else
+            echo "github.com"
+        fi
     fi
 }
 
@@ -163,19 +167,20 @@ test_tools() {
 }
 
 install_tools() {
-    { apt --version >/dev/null 2>&1 && $sudoprefix apt install -y git build-essential libreadline-dev ccache; } ||
-    { yum --version >/dev/null 2>&1 && $sudoprefix yum install -y git readline-devel ccache bzip2 && $sudoprefix yum groupinstall -y 'Development Tools'; } ||
-    { zypper --version >/dev/null 2>&1 && $sudoprefix zypper --non-interactive install git readline-devel ccache && $sudoprefix zypper --non-interactive install -t pattern devel_C_C++; } ||
-    { pacman -V >/dev/null 2>&1 && $sudoprefix pacman -S --noconfirm --needed git base-devel ncurses readline ccache; } ||
-    { emerge -V >/dev/null 2>&1 && $sudoprefix emerge -atv dev-vcs/git ccache; } ||
-    { pkg list-installed >/dev/null 2>&1 && $sudoprefix pkg install -y git getconf build-essential readline ccache; } || # termux
-    { pkg help >/dev/null 2>&1 && $sudoprefix pkg install -y git readline ccache ncurses; } || # freebsd
+    { apt --version >/dev/null 2>&1 && $sudoprefix apt install -y git build-essential libreadline-dev; } ||
+    { dnf --version >/dev/null 2>&1 && $sudoprefix dnf install -y git readline-devel bzip2 @development-tools; } ||
+    { yum --version >/dev/null 2>&1 && $sudoprefix yum install -y git readline-devel bzip2 && $sudoprefix yum groupinstall -y 'Development Tools'; } ||
+    { zypper --version >/dev/null 2>&1 && $sudoprefix zypper --non-interactive install git readline-devel && $sudoprefix zypper --non-interactive install -t pattern devel_C_C++; } ||
+    { pacman -V >/dev/null 2>&1 && $sudoprefix pacman -S --noconfirm --needed git base-devel ncurses readline; } ||
+    { emerge -V >/dev/null 2>&1 && $sudoprefix emerge -atv dev-vcs/git; } ||
+    { pkg list-installed >/dev/null 2>&1 && $sudoprefix pkg install -y git getconf build-essential readline; } || # termux
+    { pkg help >/dev/null 2>&1 && $sudoprefix pkg install -y git readline ncurses; } || # freebsd
     { nix-env --version >/dev/null 2>&1 && nix-env -i git gcc readline ncurses; } || # nixos
     { apk --version >/dev/null 2>&1 && $sudoprefix apk add git gcc g++ make readline-dev ncurses-dev libc-dev linux-headers; } ||
-    { xbps-install --version >/dev/null 2>&1 && $sudoprefix xbps-install -Sy git base-devel ccache; } #void
+    { xbps-install --version >/dev/null 2>&1 && $sudoprefix xbps-install -Sy git base-devel; } #void
 
 }
-test_tools || { install_tools && test_tools; } || raise "$(echo -e 'Dependencies Installation Fail\nThe getter currently only support these package managers\n\t* apt\n\t* yum\n\t* zypper\n\t* pacman\n\t* portage\n\t* xbps\n Please install following dependencies manually:\n\t* git\n\t* build essential like `make`, `gcc`, etc\n\t* libreadline-dev (readline-devel)\n\t* ccache (optional)')" 1
+test_tools || { install_tools && test_tools; } || raise "$(echo -e 'Dependencies Installation Fail\nThe getter currently only support these package managers\n\t* apt\n\t* dnf\n\t* yum\n\t* zypper\n\t* pacman\n\t* portage\n\t* xbps\n Please install following dependencies manually:\n\t* git\n\t* build essential like `make`, `gcc`, etc\n\t* libreadline-dev (readline-devel)')" 1
 
 #-----------------------------------------------------------------------------
 # install xmake
@@ -188,13 +193,8 @@ if test_eq "$branch" "__local__"; then
     fi
     cp -r . $projectdir
 elif test_eq "$branch" "__run__"; then
-    version=$(git ls-remote --tags "$gitrepo" | tail -c 7)
-    if xz --version >/dev/null 2>&1
-    then
-        pack=xz
-    else
-        pack=gz
-    fi
+    version=$(git ls-remote --tags "$gitrepo" | tail -c7)
+    pack=gz
     mkdir -p $projectdir
     runfile_url="https://fastly.jsdelivr.net/gh/xmake-mirror/xmake-releases@$version/xmake-$version.$pack.run"
     echo "downloading $runfile_url .."
@@ -208,7 +208,7 @@ elif test_eq "$branch" "__run__"; then
 else
     echo "cloning $gitrepo $branch .."
     if test_nz "$2"; then
-        git clone --depth=50 -b "$branch" "$gitrepo" --recurse-submodules $projectdir || raise "clone failed, check your network or branch name"
+        git clone --filter=tree:0 --no-checkout -b "$branch" "$gitrepo" --recurse-submodules $projectdir || raise "clone failed, check your network or branch name"
         cd $projectdir || raise 'chdir failed!'
         git checkout -qf "$2"
         cd - || raise 'chdir failed!'
@@ -224,7 +224,7 @@ if test_nq "$2" "__install_only__"; then
         ./configure || raise "configure failed!"
         cd - || raise 'chdir failed!'
     fi
-    $make -C $projectdir --no-print-directory || raise "make failed!"
+    $make -C $projectdir --no-print-directory -j4 || raise "make failed!"
 fi
 
 # do install
@@ -242,7 +242,7 @@ fi
 #
 install_profile() {
     export XMAKE_ROOTDIR="$prefix/bin"
-    export PATH="$XMAKE_ROOTDIR:$PATH"
+    [[ "$PATH" =~ (^|:)"$XMAKE_ROOTDIR"(:|$) ]] || export PATH="$XMAKE_ROOTDIR:$PATH"
     xmake --version
     xmake update --integrate
 }

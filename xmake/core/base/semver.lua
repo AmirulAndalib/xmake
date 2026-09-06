@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        semver.lua
@@ -28,8 +28,6 @@ local string    = require("base/string")
 
 -- get the version info
 function _instance:get(name)
-
-    -- get it from info first
     local value = self._INFO[name]
     if value ~= nil then
         return value
@@ -152,17 +150,29 @@ end
 
 -- v1 == v2?
 function _instance:__eq(version)
-    return self:eq(version)
+    if type(self) == "string" then
+        return version:eq(self)
+    else
+        return self:eq(version)
+    end
 end
 
 -- v1 < v2?
 function _instance:__lt(version)
-    return self:lt(version)
+    if type(self) == "string" then
+        return version:gt(self)
+    else
+        return self:lt(version)
+    end
 end
 
 -- v1 <= v2?
 function _instance:__le(version)
-    return self:le(version)
+    if type(self) == "string" then
+        return version:ge(self)
+    else
+        return self:le(version)
+    end
 end
 
 -- get the raw version string
@@ -181,7 +191,11 @@ function _instance.__concat(op1, op2)
     end
 end
 
--- new an instance
+-- create a new semver instance
+--
+-- @param version   the version string, e.g. "1.2.3", ">=1.0 <2.0"
+-- @return          the semver instance, or nil and error info
+--
 function semver.new(version)
 
     -- parse version first
@@ -197,6 +211,12 @@ function semver.new(version)
 end
 
 -- try to match valid version from string
+--
+-- @param str       the input string
+-- @param pos       the start position (optional, default is 1)
+-- @param pattern   the match patterns (optional)
+-- @return          the semver instance, or nil if not found
+--
 function semver.match(str, pos, pattern)
     local patterns = pattern or {"%d+[.]%d+[-+.%w]*", "%d+[.]%d+[.]%d+", "%d+[.]%d+"}
     for _, pattern in ipairs(table.wrap(patterns)) do
@@ -210,6 +230,16 @@ function semver.match(str, pos, pattern)
             end
         end
     end
+end
+
+-- is a valid semantic version? e.g. "1.2.3", "v1.2.3-beta"
+function semver.is_valid(version)
+    return semver.parse(version) ~= nil
+end
+
+-- is a valid semantic version range? e.g. ">=1.0 <2.0", "^1.2", "master || >1.4"
+function semver.is_valid_range(range)
+    return semver.satisfies("1.0", range) ~= nil
 end
 
 -- return module: semver

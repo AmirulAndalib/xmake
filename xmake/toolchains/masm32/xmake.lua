@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -36,7 +36,6 @@ toolchain("masm32")
         if masm32 and masm32.sdkdir and masm32.bindir and find_tool("ml.exe", {program = path.join(masm32.bindir, "ml.exe")}) then
             toolchain:config_set("sdkdir", masm32.sdkdir)
             toolchain:config_set("bindir", masm32.bindir)
-            toolchain:configs_save()
             return true
         end
     end)

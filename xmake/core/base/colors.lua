@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        colors.lua
@@ -233,6 +233,10 @@ end
 -- "${hello xmake}"
 -- "${hello xmake $beer}"
 --
+-- @param str   the string with color/emoji markup
+-- @param opt   the options, e.g. {patch_reset = true, ignore = false}
+-- @return      the translated string with ANSI escape codes
+--
 function colors.translate(str, opt)
 
     -- check string
@@ -359,7 +363,11 @@ function colors.translate(str, opt)
     return str
 end
 
--- ignore all colors
+-- ignore all colors, strip color markup from string
+--
+-- @param str   the string with color markup
+-- @return      the plain string without colors
+--
 function colors.ignore(str)
     if str then
         -- strip "${red}" and "${theme color}"

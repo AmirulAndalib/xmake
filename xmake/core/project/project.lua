@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        project.lua
@@ -25,6 +25,7 @@ local project = project or {}
 local os                    = require("base/os")
 local io                    = require("base/io")
 local path                  = require("base/path")
+local hash                  = require("base/hash")
 local task                  = require("base/task")
 local utils                 = require("base/utils")
 local table                 = require("base/table")
@@ -32,6 +33,7 @@ local global                = require("base/global")
 local process               = require("base/process")
 local hashset               = require("base/hashset")
 local baseoption            = require("base/option")
+local semver                = require("base/semver")
 local deprecated            = require("base/deprecated")
 local interpreter           = require("base/interpreter")
 local instance_deps         = require("base/private/instance_deps")
@@ -43,6 +45,8 @@ local option                = require("project/option")
 local policy                = require("project/policy")
 local project_package       = require("project/package")
 local deprecated_project    = require("project/deprecated/project")
+local addon                 = require("package/addon")
+local addons                = require("project/addons")
 local package               = require("package/package")
 local platform              = require("platform/platform")
 local toolchain             = require("tool/toolchain")
@@ -85,6 +89,11 @@ function project._api_is_arch(interp, ...)
     return config.is_arch(...)
 end
 
+-- the current platform and architecture is cross-compilation?
+function project._api_is_cross(interp)
+    return config.is_cross()
+end
+
 -- the current kind is belong to the given kinds?
 function project._api_is_kind(interp, ...)
 
@@ -102,12 +111,28 @@ end
 
 -- the current config is belong to the given config values?
 function project._api_is_config(interp, name, ...)
-    return config.is_value(name, ...)
+    local value = config.get(name)
+    local namespace = interp:namespace()
+    if value == nil and namespace then
+        value = config.get(namespace .. "::" .. name)
+    end
+    return config._is_value(value, ...)
 end
 
 -- some configs are enabled?
 function project._api_has_config(interp, ...)
-    return config.has(...)
+    local names = table.pack(...)
+    local namespace = interp:namespace()
+    for _, name in ipairs(names) do
+        local value = config.get(name)
+        if value == nil and namespace then
+            value = config.get(namespace .. "::" .. name)
+        end
+        if value then
+            return true
+        end
+    end
+    return false
 end
 
 -- some packages are enabled?
@@ -115,8 +140,19 @@ function project._api_has_package(interp, ...)
     -- only for loading targets
     local requires = project._memcache():get("requires")
     if requires then
-        for _, name in ipairs(table.pack(...)) do
-            local pkg = requires[name]
+        for _, packagename in ipairs(table.pack(...)) do
+            local pkg = requires[packagename]
+            -- attempt to get package with namespace
+            if pkg == nil and packagename:find("::", 1, true) then
+                local parts = packagename:split("::", {plain = true})
+                local namespace_pkg = requires[parts[#parts]]
+                if namespace_pkg and namespace_pkg:namespace() then
+                    local fullname = namespace_pkg:fullname()
+                    if fullname:endswith(packagename) then
+                        pkg = namespace_pkg
+                    end
+                end
+            end
             if pkg and pkg:enabled() then
                 return true
             end
@@ -126,28 +162,36 @@ end
 
 -- get config from the given name
 function project._api_get_config(interp, name)
-    return config.get(name)
+    local value = config.get(name)
+    local namespace = interp:namespace()
+    if value == nil and namespace then
+        value = config.get(namespace .. "::" .. name)
+    end
+    return value
+end
+
+-- translate directory path for custom project apis
+function project._translate_directory(interp, dir)
+    dir = interp:filter():handle(dir)
+    if not path.is_absolute(dir) then
+        dir = path.absolute(dir, interp:scriptdir())
+    end
+    return dir
 end
 
 -- add module directories
 function project._api_add_moduledirs(interp, ...)
-    local scriptdir = project.interpreter():scriptdir()
     for _, dir in ipairs({...}) do
-        if not path.is_absolute(dir) then
-            dir = path.absolute(dir, scriptdir)
-        end
+        local dir = project._translate_directory(interp, dir)
         sandbox_module.add_directories(dir)
     end
 end
 
 -- add plugin directories load all plugins from the given directories
 function project._api_add_plugindirs(interp, ...)
-    local scriptdir = project.interpreter():scriptdir()
     local plugindirs = {}
     for _, dir in ipairs({...}) do
-        if not path.is_absolute(dir) then
-            dir = path.absolute(dir, scriptdir)
-        end
+        local dir = project._translate_directory(interp, dir)
         table.insert(plugindirs, dir .. "/*")
     end
     interp:api_builtin_includes(plugindirs)
@@ -155,20 +199,161 @@ end
 
 -- add platform directories
 function project._api_add_platformdirs(interp, ...)
-    local scriptdir = project.interpreter():scriptdir()
     for _, dir in ipairs({...}) do
-        if not path.is_absolute(dir) then
-            dir = path.absolute(dir, scriptdir)
-        end
+        local dir = project._translate_directory(interp, dir)
         platform.add_directories(dir)
     end
 end
 
+-- add toolchain directories
+function project._api_add_toolchaindirs(interp, ...)
+    for _, dir in ipairs({...}) do
+        local dir = project._translate_directory(interp, dir)
+        toolchain.add_directories(dir)
+        -- auto-register modules directories under each toolchain
+        -- e.g. toolchains/my-c6000/modules/ will be added as module search path
+        -- so that custom toolchain can bundle its tool modules together
+        local toolchain_subdirs = os.dirs(path.join(dir, "*"))
+        if toolchain_subdirs then
+            local modulesdirs = {}
+            for _, toolchain_subdir in ipairs(toolchain_subdirs) do
+                local modulesdir = path.join(toolchain_subdir, "modules")
+                if os.isdir(modulesdir) then
+                    table.insert(modulesdirs, modulesdir)
+                end
+            end
+            if #modulesdirs > 0 then
+                sandbox_module.add_directories(table.unpack(modulesdirs))
+            end
+        end
+    end
+end
+
+-- install the addons which this project declares
+--
+-- @note we cannot install them here, we are loading the project, so we do it in a
+-- sub-process, @see xmake/modules/private/action/addon/impl/install_addons.lua
+--
+function project._install_addons(rootinfo)
+    -- @note we need to cache the result, the project may be loaded many times,
+    -- otherwise the failure would be ignored by the next load
+    local result = project._ADDONS_RESULT
+    if result == nil then
+        result = project._do_install_addons(rootinfo)
+        project._ADDONS_RESULT = result
+    end
+    return result
+end
+
+-- activate the addon versions which this project locks
+--
+-- @note an addon can be installed with several versions at the same time, the other
+-- projects may lock the other versions of it, @see core/package/addon.lua
+--
+function project._pin_addons()
+    for name, lockinfo in pairs(addons.locked() or {}) do
+        -- @note we can only pin an installed version, otherwise this addon would be
+        -- invisible and every reference to it would just say `not found`
+        --
+        -- the locked version is installed by the auto-fetch, @see addons.satisfied()
+        --
+        if lockinfo.version and table.contains(addon.versions(name), lockinfo.version) then
+            addon.pin(name, lockinfo.version)
+        end
+    end
+end
+
+-- do install the addons which this project declares
+-- install the addons which this project declares, e.g. add_addons("esp32-devel 1.0.x")
+--
+-- @return      the result, e.g. {ok = true, installed = true}, {ok = false, errors = ".."}
+--
+function project._do_install_addons(rootinfo)
+
+    -- this project declares nothing?
+    local requires = table.wrap(rootinfo:get("addons"))
+    if #requires == 0 then
+        return {ok = true}
+    end
+    local ok, errors = addons.validate(requires)
+    if not ok then
+        return {ok = false, errors = errors}
+    end
+
+    -- they have been installed already?
+    if addons.satisfied(requires) then
+        return {ok = true}
+    end
+
+    -- tell the user why we are installing something, it may need to confirm and download,
+    -- e.g. `xmake --help` in a project directory which declares some addons
+    utils.cprint("${color.warning}note: ${clear}this project needs the addons(${bright}%s${clear}), installing them ..",
+        table.concat(requires, ", "))
+    if baseoption.get("help") then
+        -- the help menu also shows the options which the addons provide, but the user
+        -- did not ask for an installation, so we tell them how to skip it
+        utils.cprint("${dim}we can run it outside of the project directory to skip the installation${clear}")
+    end
+
+    -- we pass the declarations to the installer, it must not load this project again,
+    -- @see xmake/modules/private/action/addon/impl/install_addons.lua
+    local datafile = os.tmpfile()
+    local ok, errors = io.save(datafile, {addons = requires, repositories = table.wrap(rootinfo:get("repositories"))})
+    if not ok then
+        return {ok = false, errors = errors}
+    end
+
+    -- @note we run it in a working directory which has no project, @see addon.workdir(),
+    -- otherwise it would load this project again
+    --
+    -- @note we may be called when building the option menu, the command line has not
+    -- been parsed yet, so we can only get the common flags from the raw arguments
+    --
+    local argv = {"lua"}
+    local flags = {["-y"] = "--yes", ["--yes"] = "--yes",
+                   ["-v"] = "--verbose", ["--verbose"] = "--verbose",
+                   ["-D"] = "--diagnosis", ["--diagnosis"] = "--diagnosis"}
+    local flags_added = {}
+    for _, arg in ipairs(xmake._COMMAND_ARGV or {}) do
+        local flag = flags[arg]
+        if flag and not flags_added[flag] then
+            table.insert(argv, flag)
+            flags_added[flag] = true
+        end
+    end
+    table.insert(argv, "private.action.addon.impl.install_addons")
+    table.insert(argv, os.projectdir())
+    table.insert(argv, datafile)
+    local exitcode, errors = os.execv(os.programfile(), argv, {curdir = addon.workdir()})
+    os.rm(datafile)
+    if exitcode ~= 0 then
+        return {ok = false, errors = errors or "install the addons of this project failed!"}
+    end
+
+    -- we have loaded the registry and its caches before installing them, so we need to reload it
+    addon.reload()
+    project._pin_addons()
+    rule.clear()
+    task.clear()
+    return {ok = true, installed = true}
+end
+
 -- load the project file
-function project._load(force, disable_filter)
+--
+-- @param opt   the options
+--              - force: load the project file again even if it has been loaded
+--              - disable_filter: disable the interpreter filter, e.g. `$(plat)`
+--              - skip_addons: do not install the addons which this project declares
+--              - addons_installed: the addons have been installed, we are loading it again
+--
+function project._load(opt)
+    opt = opt or {}
+
+    -- use the locked versions of the addons which this project declares
+    project._pin_addons()
 
     -- has already been loaded?
-    if project._memcache():get("rootinfo") and not force then
+    if project._memcache():get("rootinfo") and not opt.force then
         return true
     end
 
@@ -180,6 +365,12 @@ function project._load(force, disable_filter)
 
     -- get interpreter
     local interp = project.interpreter()
+
+    -- this project declares the addons which it needs, e.g. add_addons("esp32-devel"),
+    -- but we can only know them after loading it, so this pass must survive the references
+    -- of the addons which are not installed yet, and we load it again after installing them,
+    -- e.g. includes("@addon/esp32-devel/board")
+    interp:includes_unresolved_set(not opt.addons_installed)
 
     -- load script
     local ok, errors = interp:load(project.rootfile(), {on_load_data = function (data)
@@ -198,13 +389,30 @@ function project._load(force, disable_filter)
     end
 
     -- load the root info of the project
-    local rootinfo, errors = project._load_scope("root", true, not disable_filter)
+    local rootinfo, errors = project._load_scope("root", true, not opt.disable_filter)
     if not rootinfo then
         return false, errors
     end
 
+    -- install the addons which this project declares, and then load it again with them
+    --
+    -- @note we do not install them for the option menu, it merges the project tasks in a
+    -- best-effort way and every command builds it, @see project._load_tasks()
+    --
+    if not opt.skip_addons and not opt.addons_installed then
+        local result = project._install_addons(rootinfo)
+        if not result.ok then
+            os.cd(oldir)
+            return false, result.errors
+        end
+        if result.installed then
+            os.cd(oldir)
+            return project._load({force = true, disable_filter = opt.disable_filter, addons_installed = true})
+        end
+    end
+
     -- load the root info of the target
-    local rootinfo_target, errors = project._load_scope("root.target", true, not disable_filter)
+    local rootinfo_target, errors = project._load_scope("root.target", true, not opt.disable_filter)
     if not rootinfo_target then
         return false, errors
     end
@@ -248,6 +456,11 @@ function project._load_scope(scope_kind, deduplicate, enable_filter)
 end
 
 -- load tasks
+--
+-- @note we should not install the addons which this project declares here, the option menu
+-- merges the project tasks in a best-effort way and every command builds it,
+-- e.g. `xmake lua`, `xmake addon --remove --all`, @see xmake/core/main.lua
+--
 function project._load_tasks()
 
     -- the project file is not found?
@@ -256,7 +469,7 @@ function project._load_tasks()
     end
 
     -- load the project file first and disable filter
-    local ok, errors = project._load(true, true)
+    local ok, errors = project._load({force = true, disable_filter = true, skip_addons = true})
     if not ok then
         return nil, errors
     end
@@ -337,7 +550,7 @@ function project._load_targets()
 
     -- load all requires first and reload the project file to ensure has_package() works for targets
     local requires = project.required_packages()
-    local ok, errors = project._load(true)
+    local ok, errors = project._load({force = true})
     if not ok then
         return nil, errors
     end
@@ -368,7 +581,8 @@ function project._load_targets()
         for _, sourcefile in ipairs(table.wrap(t:get("files"))) do
             local extension = path.extension((sourcefile:gsub("|.*$", "")))
             if not extensions[extension] then
-                local lang = language.load_ex(extension)
+                local sourcekind = t:extraconf("files", sourcefile, "sourcekind")
+                local lang = sourcekind and language.load_sk(sourcekind) or language.load_ex(extension)
                 if lang and lang:rules() then
                     table.join2(rulenames, lang:rules())
                 end
@@ -377,7 +591,7 @@ function project._load_targets()
         end
         rulenames = table.unique(rulenames)
         for _, rulename in ipairs(rulenames) do
-            local r = project.rule(rulename) or rule.rule(rulename)
+            local r = project.rule(rulename, {namespace = t:namespace()}) or rule.rule(rulename)
             if r then
                 -- only add target rules
                 if r:kind() == "target" then
@@ -417,7 +631,7 @@ function project._load_options(disable_filter)
     end
 
     -- reload the project file to ensure `if is_plat() then add_packagedirs() end` works
-    local ok, errors = project._load(true, disable_filter)
+    local ok, errors = project._load({force = true, disable_filter = disable_filter})
     if not ok then
         return nil, errors
     end
@@ -495,8 +709,12 @@ function project._load_requires()
     requires_extra = requires_extra or {}
     for _, requirestr in ipairs(table.wrap(requires_str)) do
 
-        -- get the package name
+        -- get the package name, e.g. packagename[foo,bar] >1.0
         local packagename = requirestr:split("%s")[1]
+        local packagename_raw, _ = packagename:match("(.-)%[(.*)%]")
+        if packagename_raw and not packagename:find("::", 1, true) then
+            packagename = packagename_raw
+        end
 
         -- get alias and requireconfs
         local alias = nil
@@ -514,7 +732,7 @@ function project._load_requires()
         end
 
         -- add require info
-        requires[alias or packagename] = instance
+        requires[name] = instance
     end
     return requires
 end
@@ -587,6 +805,9 @@ function project.apis()
         ,   "add_requires"
         ,   "add_requireconfs"
         ,   "add_repositories"
+            -- the addons which this project needs, they are installed automatically,
+            -- e.g. add_addons("esp32-devel 1.0.x"), @see core/project/addons.lua
+        ,   "add_addons"
         }
     ,   paths =
         {
@@ -600,21 +821,23 @@ function project.apis()
     ,   custom =
         {
             -- is_xxx
-            {"is_os",                   project._api_is_os            }
-        ,   {"is_kind",                 project._api_is_kind          }
-        ,   {"is_arch",                 project._api_is_arch          }
-        ,   {"is_mode",                 project._api_is_mode          }
-        ,   {"is_plat",                 project._api_is_plat          }
-        ,   {"is_config",               project._api_is_config        }
+            {"is_os",                   project._api_is_os             }
+        ,   {"is_kind",                 project._api_is_kind           }
+        ,   {"is_arch",                 project._api_is_arch           }
+        ,   {"is_mode",                 project._api_is_mode           }
+        ,   {"is_plat",                 project._api_is_plat           }
+        ,   {"is_cross",                project._api_is_cross          }
+        ,   {"is_config",               project._api_is_config         }
             -- get_xxx
-        ,   {"get_config",              project._api_get_config       }
+        ,   {"get_config",              project._api_get_config        }
             -- has_xxx
-        ,   {"has_config",              project._api_has_config       }
-        ,   {"has_package",             project._api_has_package      }
+        ,   {"has_config",              project._api_has_config        }
+        ,   {"has_package",             project._api_has_package       }
             -- add_xxx
-        ,   {"add_moduledirs",          project._api_add_moduledirs   }
-        ,   {"add_plugindirs",          project._api_add_plugindirs   }
-        ,   {"add_platformdirs",        project._api_add_platformdirs }
+        ,   {"add_moduledirs",          project._api_add_moduledirs    }
+        ,   {"add_plugindirs",          project._api_add_plugindirs    }
+        ,   {"add_platformdirs",        project._api_add_platformdirs  }
+        ,   {"add_toolchaindirs",       project._api_add_toolchaindirs }
         }
     }
 end
@@ -636,6 +859,10 @@ function project.interpreter()
 
     -- set root scope
     interp:rootscope_set("target")
+
+    -- the project file can reference the includes files of the addons,
+    -- e.g. includes("@addon/esp32-devel/board")
+    interp:includes_resolver_add(addon.find_includes)
 
     -- define apis for rule
     interp:api_define(rule.apis())
@@ -679,9 +906,12 @@ function project.interpreter()
         -- check
         assert(variable)
 
-        -- hack buildir first
-        if variable == "buildir" then
-            return config.buildir()
+        -- hack builddir first
+        if variable == "builddir" or variable == "buildir" then
+            if variable == "buildir" then
+                utils.warning("$(buildir) has been deprecated, please use $(builddir)")
+            end
+            return config.builddir()
         end
 
         -- attempt to get it directly from the configure
@@ -708,16 +938,7 @@ function project.interpreter()
             if type(result) == "function" then
                 result = result()
             end
-
-            -- attempt to get it from the platform tools, e.g. cc, cxx, ld ..
-            -- because these values may not exist in config cache when call `config.get()`, we need check and get it.
-            --
-            if not result then
-                result = platform.tool(variable)
-            end
         end
-
-        -- ok?
         return result
     end)
 
@@ -767,6 +988,9 @@ function project.rcfiles()
 end
 
 -- get the project directory
+--
+-- @return      the project root directory path
+--
 function project.directory()
     return os.projectdir()
 end
@@ -783,6 +1007,10 @@ function project.filelock()
 end
 
 -- get the root configuration
+--
+-- get root values in project, e.g project.get("name")
+-- get root values in target, e.g. project.get("target.name")
+-- get root values in specific namespace, e.g. project.get("ns1::ns2::name"), project.get("target.ns1::ns2::name")
 function project.get(name)
     local rootinfo
     if name and name:startswith("target.") then
@@ -807,6 +1035,9 @@ function project.extraconf(name, item, key)
 end
 
 -- get the project name
+--
+-- @return      the project name string defined by set_project()
+--
 function project.name()
     local name = project.get("project")
     -- TODO multi project names? we only get the first name now.
@@ -822,10 +1053,39 @@ function project.version()
     return project.get("target.version")
 end
 
+-- get the project namespaces
+function project.namespaces()
+    return project.interpreter():namespaces()
+end
+
+-- init default policies
+-- @see https://github.com/xmake-io/xmake/issues/5527
+function project._init_default_policies()
+    local compatibility_version = project.policy("compatibility.version")
+    if compatibility_version then
+        if semver.compare(compatibility_version, "3.0") >= 0 then
+            policy.set_default("package.cmake_generator.ninja", true)
+            policy.set_default("build.c++.msvc.runtime", "MD")
+            policy.set_default("run.autobuild", true)
+        else
+            policy.set_default("package.cmake_generator.ninja", false)
+            policy.set_default("build.c++.msvc.runtime", "MT")
+        end
+    end
+end
+
 -- get the project policy, the root policy of the target scope
 function project.policy(name)
     local policies = project._memcache():get("policies")
     if not policies then
+
+        -- init default policies
+        if name ~= "compatibility.version" then
+            if not project._DEFAULT_POLICIES_INITED then
+                project._init_default_policies()
+                project._DEFAULT_POLICIES_INITED = true
+            end
+        end
 
         -- get policies from project, e.g. set_policy("xxx", true)
         policies = project.get("target.policy")
@@ -880,15 +1140,45 @@ function project.policy(name)
     return policy.check(name, policies and policies[name])
 end
 
+-- set the project policy in memory
+function project.policy_set(name, value)
+    -- get current policies from cache or initialize
+    local policies = project._memcache():get("policies")
+    if not policies then
+        -- force initialization by calling policy() once
+        project.policy(name)
+        policies = project._memcache():get("policies")
+    end
+    policies = policies or {}
+    
+    -- set the policy value
+    policies[name] = value
+    
+    -- update cache
+    project._memcache():set("policies", policies)
+end
+
 -- project has been loaded?
 function project.is_loaded()
     return project._memcache():get("targets_loaded")
 end
 
--- get the given target
-function project.target(name)
+-- get the given target by name
+--
+-- @param name  the target name
+-- @param opt   the options (optional)
+-- @return      the target instance, or nil if not found
+--
+function project.target(name, opt)
+    opt = opt or {}
     local targets = project.targets()
-    return targets and targets[name]
+    if targets then
+        local t = targets[name]
+        if not t and opt.namespace then
+            t = targets[opt.namespace .. "::" .. name]
+        end
+        return t
+    end
 end
 
 -- add the given target, @note if the target name is the same, it will be replaced
@@ -900,7 +1190,10 @@ function project.target_add(t)
     end
 end
 
--- get targets
+-- get all targets
+--
+-- @return      the targets table {name = target_instance, ...}
+--
 function project.targets()
     local loading = false
     local targets = project._memcache():get("targets")
@@ -938,8 +1231,16 @@ function project.ordertargets()
 end
 
 -- get the given option
-function project.option(name)
-    return project.options()[name]
+function project.option(name, opt)
+    opt = opt or {}
+    local options = project.options()
+    if options then
+        local o = options[name]
+        if not o and opt.namespace then
+            o = options[opt.namespace .. "::" .. name]
+        end
+        return o
+    end
 end
 
 -- get options
@@ -962,6 +1263,9 @@ function project.required_package(name)
 end
 
 -- get required packages
+--
+-- @return      the required packages table {name = package_instance, ...}
+--
 function project.required_packages()
     local requires = project._memcache():get("requires")
     if not requires then
@@ -982,18 +1286,45 @@ function project.requires_str()
     if not requires_str then
 
         -- reload the project file to handle `has_config()`
-        local ok, errors = project._load(true)
+        local ok, errors = project._load({force = true})
         if not ok then
             os.raise(errors)
         end
 
         -- get raw requires
         requires_str, requires_extra = project.get("requires"), project.get("__extra_requires")
+        local namespaces = project.namespaces()
+        if namespaces then
+            for _, namespace in ipairs(namespaces) do
+                local ns_requires_str, ns_requires_extra = project.get(namespace .. "::requires"), project.get(namespace .. "::__extra_requires")
+                if ns_requires_str then
+                    requires_str = table.wrap(requires_str)
+                    table.join2(requires_str, ns_requires_str)
+                end
+                if ns_requires_extra then
+                    requires_extra = table.wrap(requires_extra)
+                    table.join2(requires_extra, ns_requires_extra)
+                end
+            end
+        end
         project._memcache():set("requires_str", requires_str or false)
         project._memcache():set("requires_extra", requires_extra)
 
         -- get raw requireconfs
         local requireconfs_str, requireconfs_extra = project.get("requireconfs"), project.get("__extra_requireconfs")
+        if namespaces then
+            for _, namespace in ipairs(project.namespaces()) do
+                local ns_requireconfs_str, ns_requireconfs_extra = project.get(namespace .. "::requireconfs"), project.get(namespace .. "::__extra_requireconfs")
+                if ns_requireconfs_str then
+                    requireconfs_str = table.wrap(requireconfs_str)
+                    table.join2(requireconfs_str, ns_requireconfs_str)
+                end
+                if ns_requireconfs_extra then
+                    requireconfs_extra = table.wrap(requireconfs_extra)
+                    table.join2(requireconfs_extra, ns_requireconfs_extra)
+                end
+            end
+        end
         project._memcache():set("requireconfs_str", requireconfs_str or false)
         project._memcache():set("requireconfs_extra", requireconfs_extra)
     end
@@ -1005,6 +1336,45 @@ function project.requireconfs_str()
     project.requires_str()
     local requireconfs_str   = project._memcache():get("requireconfs_str")
     local requireconfs_extra = project._memcache():get("requireconfs_extra")
+    -- synchronize requires configuration to all package dependencies.
+    -- @see https://github.com/xmake-io/xmake/issues/5745#issuecomment-2513951471
+    if project.policy("package.sync_requires_to_deps") then
+        local requires_str   = project._memcache():get("requires_str")
+        local requires_extra = project._memcache():get("requires_extra")
+        local sync_requires_to_deps = project._memcache():get("package.sync_requires_to_deps")
+        if requires_str and not sync_requires_to_deps then
+            local package_utils = project._package_utils
+            if package_utils == nil then
+                package_utils = sandbox_module.import("private.utils.package", {anonymous = true})
+                project._package_utils = package_utils
+            end
+            requires_extra = requires_extra and table.wrap(requires_extra) or {}
+            requireconfs_str = requireconfs_str and table.wrap(requireconfs_str) or {}
+            requireconfs_extra = requireconfs_extra and table.wrap(requireconfs_extra) or {}
+            for _, require_str in ipairs(table.wrap(requires_str)) do
+                if not require_str:find("::", 1, true) then
+                    local packagename, packageversion = package_utils.parse_requirestr(require_str)
+                    local requireconf_str = "**." .. packagename
+                    local requireconf_extra = table.clone(requires_extra[require_str])
+                    if requireconf_extra then
+                        requireconf_extra.configs = table.clone(requireconf_extra.configs) or {}
+                    end
+                    if packageversion then
+                        requireconf_extra = requireconf_extra or {configs = {}}
+                        requireconf_extra.version = packageversion
+                    end
+                    if requireconf_extra then
+                        requireconf_extra.override = true
+                        table.insert(requireconfs_str, requireconf_str)
+                        requireconfs_extra[requireconf_str] = requireconf_extra
+                    end
+                end
+            end
+            project._memcache():set("requireconfs_str", requireconfs_str)
+            project._memcache():set("requireconfs_extra", requireconfs_extra)
+            project._memcache():set("package.sync_requires_to_deps", true)
+        end
+    end
     return requireconfs_str, requireconfs_extra
 end
 
@@ -1019,8 +1389,13 @@ function project.requireslock_version()
 end
 
 -- get the given rule
-function project.rule(name)
-    return project.rules()[name]
+function project.rule(name, opt)
+    opt = opt or {}
+    local r = project.rules()[name]
+    if r == nil and opt.namespace then
+        r = project.rules()[opt.namespace .. "::" .. name]
+    end
+    return r
 end
 
 -- get project rules
@@ -1039,8 +1414,21 @@ end
 
 -- get the given toolchain
 function project.toolchain(name, opt)
-    local toolchain_name = toolchain.parsename(name) -- we need to ignore `@packagename`
+    opt = opt or {}
+    local parseinfo = toolchain.parsename(name) -- we need to ignore `@packagename`
+    -- the addon toolchains are only loaded from the addons, e.g. set_toolchains("@addon/esp32/xtensa")
+    if parseinfo.addon_prefix then
+        return nil
+    end
+    local toolchain_name = parseinfo.name
     local info = project._toolchains()[toolchain_name]
+    if info == nil and opt.namespace then
+        local requirestr = parseinfo.requirestr
+        if requirestr then
+            toolchain_name = toolchain_name .. "[" .. requirestr .. "]"
+        end
+        info = project._toolchains()[opt.namespace .. "::" .. toolchain_name]
+    end
     if info then
         return toolchain.load_withinfo(name, info, opt)
     end
@@ -1097,8 +1485,18 @@ function project.mtimes()
     return mtimes
 end
 
+-- get the error of loading the project file when building the option menu
+function project.menu_load_error()
+    return project._memcache():get("menu_load_error")
+end
+
 -- get the project menu
 function project.menu()
+
+    -- we cannot only get it in main thread
+    if not xmake.in_main_thread() then
+        return {}
+    end
 
     -- attempt to load options from the project file
     local options = nil
@@ -1109,7 +1507,12 @@ function project.menu()
 
     -- failed?
     if not options then
-        if errors then utils.error(errors) end
+        -- record the error and let main() report it once and exit, instead of continuing into
+        -- config/build and reporting it again. we cannot abort here directly, because we are inside
+        -- the sandboxed menu loader, which would wrap the clean error with extra prefixes.
+        if errors then
+            project._memcache():set("menu_load_error", errors)
+        end
         return {}
     end
 
@@ -1123,7 +1526,7 @@ function project.menu()
         options_by_category[category] = options_by_category[category] or {}
 
         -- append option to the current category
-        options_by_category[category][opt:name()] = opt
+        options_by_category[category][opt:fullname()] = opt
     end
 
     -- make menu by category
@@ -1210,7 +1613,8 @@ function project.tmpfile(opt_or_key)
         key = opt_or_key.key
         opt = opt_or_key
     end
-    return path.join(project.tmpdir(opt), "_" .. (hash.uuid4(key):gsub("-", "")))
+    local filename = "_" .. (key and hash.strhash128(key) or (hash.rand128()))
+    return path.join(project.tmpdir(opt), "_" .. filename)
 end
 
 -- get all modes

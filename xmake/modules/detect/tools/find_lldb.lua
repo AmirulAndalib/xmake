@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_lldb.lua
@@ -37,19 +37,11 @@ import("lib.detect.find_programver")
 -- @endcode
 --
 function main(opt)
-
-    -- init options
     opt = opt or {}
-
-    -- find program
     local program = find_program(opt.program or "lldb", opt)
-
-    -- find program version
     local version = nil
     if program and opt and opt.version then
         version = find_programver(program, opt)
     end
-
-    -- ok?
     return program, version
 end

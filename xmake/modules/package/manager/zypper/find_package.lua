@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki, Lingfeng Fu
 -- @file        find_package.lua
@@ -23,6 +23,7 @@ import("core.base.option")
 import("core.project.config")
 import("core.project.target")
 import("lib.detect.find_tool")
+import("private.core.base.is_cross")
 import("package.manager.pkgconfig.find_package", { alias = "find_package_from_pkgconfig" })
 
 -- find package
@@ -37,7 +38,7 @@ function _find_package(rpm, name, opt)
     end }
     if listinfo then
         for _, line in ipairs(listinfo:split('\n', { plain = true })) do
-            line = line:trim()
+            local line = line:trim()
 
             -- get includedirs
             local pos = line:find("include/", 1, true)
@@ -137,7 +138,7 @@ end
 --
 function main(name, opt)
     opt = opt or {}
-    if not is_host(opt.plat) or os.arch() ~= opt.arch then
+    if is_cross(opt.plat, opt.arch) then
         return
     end
     local rpm = find_tool("rpm")

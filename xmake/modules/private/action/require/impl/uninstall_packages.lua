@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        uninstall_packages.lua
@@ -23,6 +23,11 @@ import("core.cache.localcache")
 import("private.action.require.impl.package")
 
 -- uninstall packages
+-- uninstall required packages
+--
+-- @param requires  the requires table
+-- @param opt       the options
+--
 function main(requires, opt)
 
     -- init options

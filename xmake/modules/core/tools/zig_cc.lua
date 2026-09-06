@@ -12,17 +12,17 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        zig_cc.lua
 --
 
--- inherit gcc
-inherit("gcc")
+-- inherit clang
+inherit("clang")
 
 -- make the strip flag
-function nf_strip(self, level, target)
+function nf_strip(self, level)
     local maps = {
         debug = "-Wl,-S"
     ,   all   = "-s"
@@ -30,3 +30,8 @@ function nf_strip(self, level, target)
     return maps[level]
 end
 
+-- make the runtime flag
+function nf_runtime(self, runtime, opt)
+    -- zig cc does not take -stdlib flag, it links the bundled libc++ statically
+    return
+end

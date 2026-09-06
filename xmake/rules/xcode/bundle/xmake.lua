@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -62,7 +62,7 @@ rule("xcode.bundle")
         end
     end)
 
-    after_build(function (target, opt)
+    after_link(function (target, opt)
 
         -- imports
         import("core.base.option")
@@ -103,7 +103,7 @@ rule("xcode.bundle")
             end
 
             -- do codesign
-            local codesign_identity = target:values("xcode.codesign_identity") or get_config("xcode_codesign_identity")
+            local codesign_identity = target:values("xcode.codesign_identity") or codesign.xcode_codesign_identity()
             if target:is_plat("macosx") or (target:is_plat("iphoneos") and target:is_arch("x86_64", "i386")) then
                 codesign_identity = nil
             end

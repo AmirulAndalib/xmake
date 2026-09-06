@@ -12,13 +12,14 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        env.lua
 --
 
 -- imports
+import("core.base.tty")
 import("core.base.option")
 import("core.base.task")
 import("core.base.hashset")
@@ -40,17 +41,7 @@ function menu_options()
     -- menu options
     local options =
     {
-        {'k', "kind",       "kv", nil, "Enable static/shared library.",
-                                       values = {"static", "shared"}         },
-        {'p', "plat",       "kv", nil, "Set the given platform."             },
-        {'a', "arch",       "kv", nil, "Set the given architecture."         },
-        {'m', "mode",       "kv", nil, "Set the given mode.",
-                                       values = {"release", "debug"}         },
         {nil, "show",       "k",  nil, "Only show environment information."  },
-        {'f', "configs",    "kv", nil, "Set the given extra package configs.",
-                                       "e.g.",
-                                       "    - xrepo env -f \"vs_runtime='MD'\" zlib cmake ..",
-                                       "    - xrepo env -f \"regex=true,thread=true\" \"zlib,boost\" cmake .."},
         {nil, "add",        "k",  nil, "Add global environment config.",
                                        "e.g.",
                                        "    - xrepo env --add base.lua",
@@ -98,15 +89,15 @@ end
 
 -- enter the working project
 function _enter_project()
-    local workdir = path.join(os.tmpdir(), "xrepo", "working")
+    local workdir = path.join(os.tmpdir(), "xrepo", "working-" .. tty.session_id())
     if not os.isdir(workdir) then
         os.mkdir(workdir)
         os.cd(workdir)
-        os.vrunv("xmake", {"create", "-P", "."})
+        os.vrunv(os.programfile(), {"create", "-P", "."})
     else
         os.cd(workdir)
         os.rm("*")
-        os.vrunv("xmake", {"create", "-P", "."})
+        os.vrunv(os.programfile(), {"create", "-P", "."})
     end
     project.chdir(workdir)
 end
@@ -139,18 +130,39 @@ function _get_envsdir_builtin()
     return path.join(os.programdir(), "scripts", "xrepo", "envs")
 end
 
--- get bound environment or packages
-function _get_boundenv(opt)
-    local bind = (opt and opt.bind) or option.get("bind")
-    if bind then
-        for _, envsdir in ipairs({_get_envsdir(), _get_envsdir_builtin()}) do
-            local envfile = path.join(envsdir, bind .. ".lua")
-            if envfile and os.isfile(envfile) then
-                return envfile
-            end
+-- get envfironment files
+function _get_envfiles()
+    local envfiles = {}
+    for _, envsdir in ipairs({_get_envsdir(), _get_envsdir_builtin()}) do
+        for _, envfile in ipairs(os.files(path.join(envsdir, "*.lua"))) do
+            envfiles[path.basename(envfile)] = envfile
         end
     end
-    return bind
+    return envfiles
+end
+
+-- get bound environment files or packages
+function _get_boundenvs(opt)
+    local packages = {}
+    local files = {}
+    local bind = (opt and opt.bind) or option.get("bind")
+    if bind then
+        local envfiles = _get_envfiles()
+        for _, binditem in ipairs(bind:split(',', {plain = true})) do
+            local binditem = binditem:trim()
+            if envfiles[binditem] then
+                table.insert(files, envfiles[binditem])
+            else
+                table.insert(packages, binditem)
+            end
+        end
+    else
+        local program = option.get("program")
+        if program then
+            table.insert(packages, program)
+        end
+    end
+    return packages, files
 end
 
 -- add values to environment variable
@@ -176,7 +188,7 @@ function _package_addenvs(envs, instance)
     end
 
     -- add run envs, e.g. PATH, LD_LIBRARY_PATH, DYLD_LIBRARY_PATH
-    local installdir = instance:installdir()
+    local installdir = instance:installdir({readonly = true})
     for name, values in pairs(instance:envs()) do
         _addenvs(envs, name, table.unpack(table.wrap(values)))
     end
@@ -244,43 +256,37 @@ end
 -- get package environments
 function _package_getenvs(opt)
     local envs = os.getenvs()
-    local boundenv = _get_boundenv(opt)
-    local has_envfile = false
-    local packages = nil
-    if boundenv and os.isfile(boundenv) then
-        has_envfile = true
-    else
-        packages = boundenv or option.get("program")
-    end
+    local packages, envfiles = _get_boundenvs(opt)
+    local has_envfiles = #envfiles > 0
+    local has_packages = #packages > 0
+    local in_project = os.isfile(os.projectfile()) and not option.get("bind")
     local oldir = os.curdir()
-    if (os.isfile(os.projectfile()) and not boundenv) or has_envfile then
-        if has_envfile then
-            _enter_project()
-            table.insert(project.rcfiles(), boundenv)
-        end
-        task.run("config", {}, {disable_dump = true})
-        _toolchain_addenvs(envs)
-        local requires, requires_extra = get_requires()
-        for _, instance in ipairs(package.load_packages(requires, {requires_extra = requires_extra})) do
-            _package_addenvs(envs, instance)
-        end
-        if not has_envfile then
-            _target_addenvs(envs)
-        end
-    elseif packages then
+    if not in_project then
         _enter_project()
+    end
+    if has_envfiles then
+        table.join2(project.rcfiles(), envfiles)
+    end
+    if has_packages then
         local envfile = os.tmpfile() .. ".lua"
-        packages = packages:split(',', {plain = true})
         local file = io.open(envfile, "w")
         for _, requirename in ipairs(packages) do
             file:print("add_requires(\"%s\")", requirename)
         end
         file:close()
         table.insert(project.rcfiles(), envfile)
+    end
+    if in_project or has_envfiles or has_packages then
         task.run("config", {}, {disable_dump = true})
+        if in_project or has_envfiles then
+            _toolchain_addenvs(envs)
+        end
         local requires, requires_extra = get_requires()
         for _, instance in ipairs(package.load_packages(requires, {requires_extra = requires_extra})) do
             _package_addenvs(envs, instance)
+        end
+        if in_project then
+            _target_addenvs(envs)
         end
     end
     local results = {}
@@ -337,13 +343,13 @@ end
 function _get_prompt(bnd)
     bnd = bnd or option.get("bind")
     local prompt
-    local boundenv = _get_boundenv({bind = bnd})
-    if boundenv then
-        if os.isfile(boundenv) then
-            prompt = path.basename(boundenv)
+    local packages, envfiles = _get_boundenvs({bind = bnd})
+    if #packages > 0 or #envfiles > 0 then
+        if #packages == 0 and #envfiles == 1 then
+            prompt = path.basename(envfiles[1])
         else
-            prompt = boundenv:sub(1, math.min(#boundenv, 16))
-            if boundenv ~= prompt then
+            prompt = bnd:sub(1, math.min(#bnd, 16))
+            if bnd ~= prompt then
                 prompt = prompt .. ".."
             end
         end
@@ -380,8 +386,14 @@ end
 -- run shell
 function _run_shell(envs)
     local shell = os.shell()
+    local args = table.wrap(option.get("arguments"))
     if shell == "pwsh" or shell == "powershell" then
-        os.execv("pwsh", option.get("arguments"), {envs = envs})
+        os.execv("pwsh", args, {envs = envs})
+    elseif shell == "nu" then
+        if #args ~= 0 then
+            table.insert(args, 1, "-c")
+        end
+        os.execv("nu", args, {envs = envs})
     elseif shell:endswith("sh") then
         local prompt = _get_prompt()
         local ps1 = os.getenv("PS1")
@@ -392,11 +404,11 @@ function _run_shell(envs)
         else
             prompt = prompt .. " > "
         end
-        os.execv(shell, option.get("arguments"), {envs = table.join({PS1 = prompt}, envs)})
+        os.execv(shell, args, {envs = table.join({PS1 = prompt}, envs)})
     elseif shell == "cmd" or is_host("windows") then
         local prompt = _get_prompt()
         prompt = prompt .. " $P$G"
-        local args = table.join({"/k", "set PROMPT=" .. prompt}, option.get("arguments"))
+        local args = table.join({"/k", "set PROMPT=" .. prompt}, args)
         os.execv("cmd", args, {envs = envs})
     else
         assert("shell not found!")

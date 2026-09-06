@@ -16,9 +16,9 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2020, TBOOX Open Source Group.
+-- Copyright (C) 2020, Xmake Open Source Community.
 --
--- @author      Lael N. Santos
+-- @author      ruki
 -- @file        events.lua
 --
 

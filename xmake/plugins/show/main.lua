@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        main.lua
@@ -32,14 +32,20 @@ function main()
     local listname = option.get("list")
     if listname then
         return _show_list(listname)
-    else
-        -- show the information of the given object
-        for _, filepath in ipairs(os.files(path.join(os.scriptdir(), "info", "*.lua"))) do
-            local name = path.basename(filepath)
-            if option.get(name) then
-                local show_info = assert(import("info." .. name, {try = true, anonymous = true}), "unknown option name(%s)", name)
-                return show_info(option.get(name))
-            end
+    end
+
+    local infoname = option.get("info")
+    if infoname then
+        local show_info = assert(import("info." .. infoname, {try = true, anonymous = true}), "unknown info name(%s)", infoname)
+        return show_info(option.get("target"))
+    end
+
+    -- fallback to legacy options format
+    for _, filepath in ipairs(os.files(path.join(os.scriptdir(), "info", "*.lua"))) do
+        local name = path.basename(filepath)
+        if option.get(name) then
+            local show_info = assert(import("info." .. name, {try = true, anonymous = true}), "unknown option name(%s)", name)
+            return show_info(option.get(name))
         end
     end
 

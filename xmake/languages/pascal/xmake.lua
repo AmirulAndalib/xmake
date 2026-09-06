@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -32,40 +32,74 @@ language("pascal")
 
     set_nameflags {
         object = {
-            "target.symbols"
+            "config.includedirs"
+        ,   "config.frameworkdirs"
+        ,   "config.frameworks"
+        ,   "target.symbols"
         ,   "target.warnings"
+        ,   "target.fpmodels"
         ,   "target.optimize:check"
         ,   "target.vectorexts:check"
+        ,   "target.languages"
+        ,   "target.includedirs"
+        ,   "target.defines"
+        ,   "target.undefines"
+        ,   "target.frameworkdirs"
+        ,   "target.frameworks"
+        ,   "target.exceptions"
+        ,   "target.encodings"
+        ,   "target.forceincludes"
+        ,   "toolchain.includedirs"
+        ,   "toolchain.defines"
+        ,   "toolchain.undefines"
+        ,   "toolchain.frameworkdirs"
+        ,   "toolchain.frameworks"
+        ,   "toolchain.exceptions"
+        ,   "toolchain.languages"
         }
     ,   binary = {
             "config.linkdirs"
+        ,   "config.frameworkdirs"
+        ,   "config.frameworks"
+        ,   "config.rpathdirs"
+        ,   "config.syslinks"
         ,   "target.linkdirs"
+        ,   "target.frameworkdirs"
         ,   "target.rpathdirs"
         ,   "target.strip"
         ,   "target.symbols"
+        ,   "target.optimize:check"
         ,   "toolchain.linkdirs"
         ,   "toolchain.rpathdirs"
+        ,   "toolchain.frameworkdirs"
         ,   "config.links"
         ,   "target.links"
-        ,   "target.frameworks"
-        ,   "target.frameworkdirs"
         ,   "toolchain.links"
-        ,   "config.syslinks"
+        ,   "target.frameworks"
+        ,   "toolchain.frameworks"
         ,   "target.syslinks"
         ,   "toolchain.syslinks"
         }
     ,   shared = {
             "config.linkdirs"
+        ,   "config.frameworkdirs"
+        ,   "config.frameworks"
+        ,   "config.rpathdirs"
+        ,   "config.syslinks"
         ,   "target.linkdirs"
+        ,   "target.frameworkdirs"
+        ,   "target.rpathdirs"
         ,   "target.strip"
         ,   "target.symbols"
+        ,   "target.optimize:check"
         ,   "toolchain.linkdirs"
+        ,   "toolchain.rpathdirs"
+        ,   "toolchain.frameworkdirs"
         ,   "config.links"
         ,   "target.links"
-        ,   "target.frameworks"
-        ,   "target.frameworkdirs"
         ,   "toolchain.links"
-        ,   "config.syslinks"
+        ,   "target.frameworks"
+        ,   "toolchain.frameworks"
         ,   "target.syslinks"
         ,   "toolchain.syslinks"
         }
@@ -74,17 +108,16 @@ language("pascal")
     set_menu {
                 config =
                 {
-                    {category = "Cross Complation Configuration/Compiler Configuration"          }
+                    {category = "Cross Compilation Configuration/Compiler Configuration"          }
                 ,   {nil, "pc",         "kv", nil,          "The Pascal Compiler"                }
 
-                ,   {category = "Cross Complation Configuration/Linker Configuration"            }
+                ,   {category = "Cross Compilation Configuration/Linker Configuration"            }
                 ,   {nil, "pcld",       "kv", nil,          "The Pascal Linker"                  }
                 ,   {nil, "pcsh",       "kv", nil,          "The Pascal Shared Library Linker"   }
 
-                ,   {category = "Cross Complation Configuration/Builtin Flags Configuration"     }
+                ,   {category = "Cross Compilation Configuration/Builtin Flags Configuration"     }
                 ,   {nil, "links",      "kv", nil,          "The Link Libraries"                 }
                 ,   {nil, "syslinks",   "kv", nil,          "The System Link Libraries"          }
                 ,   {nil, "linkdirs",   "kv", nil,          "The Link Search Directories"        }
                 }
             }
-

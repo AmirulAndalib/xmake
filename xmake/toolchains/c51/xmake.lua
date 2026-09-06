@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      DawnMagnet
 -- @file        xmake.lua
@@ -36,7 +36,6 @@ toolchain("c51")
         local c51 = find_c51()
         if c51 and c51.sdkdir and find_tool("c51") then
             toolchain:config_set("sdkdir", c51.sdkdir)
-            toolchain:configs_save()
             return true
         end
     end)

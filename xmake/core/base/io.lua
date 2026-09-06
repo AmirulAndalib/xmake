@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        io.lua
@@ -254,6 +254,10 @@ end
 
 -- this file is a tty?
 function _file:isatty()
+    local isatty_cached = self._ISATTY
+    if isatty_cached ~= nil then
+        return isatty_cached
+    end
 
     -- ensure opened
     local ok, errors = self:_ensure_opened()
@@ -266,6 +270,7 @@ function _file:isatty()
     if ok == nil and errors then
         errors = string.format("%s: %s", self, errors)
     end
+    self._ISATTY = ok
     return ok, errors
 end
 
@@ -471,41 +476,37 @@ function _filelock:__gc()
 end
 
 -- read all lines from file
+--
+-- @param filepath  the file path
+-- @param opt       the options, e.g. {encoding = "utf8", continuation = "\\"}
+-- @return          the lines iterator
+--
 function io.lines(filepath, opt)
-
-    -- close on finished
     opt = opt or {}
     if opt.close_on_finished == nil then
         opt.close_on_finished = true
     end
-
-    -- open file
     local file = io.open(filepath, "r", opt)
     if not file then
         return function() return nil end
     end
-
     return file:lines(opt)
 end
 
 -- read all data from file
+--
+-- @param filepath  the file path
+-- @param opt       the options, e.g. {encoding = "utf8"}
+-- @return          the file content string
+--
 function io.readfile(filepath, opt)
-
     opt = opt or {}
-
-    -- open file
     local file, errors = io.open(tostring(filepath), "r", opt)
     if not file then
         return nil, errors
     end
-
-    -- read all
     local data, err = file:read("*all", opt)
-
-    -- exit file
     file:close()
-
-    -- ok?
     return data, err
 end
 
@@ -534,24 +535,20 @@ function io.flush()
 end
 
 -- write data to file
+--
+-- @param filepath  the file path
+-- @param data      the data string
+-- @param opt       the options, e.g. {encoding = "utf8"}
+-- @return          true on success, or false and error info
+--
 function io.writefile(filepath, data, opt)
-
-    -- init option
     opt = opt or {}
-
-    -- open file
     local file, errors = io.open(tostring(filepath), "w", opt)
     if not file then
         return false, errors
     end
-
-    -- write all
     file:write(data)
-
-    -- exit file
     file:close()
-
-    -- ok?
     return true
 end
 
@@ -587,9 +584,6 @@ end
 --
 function io.open(filepath, mode, opt)
 
-    -- check
-    assert(filepath)
-
     -- init option and mode
     opt  = opt or {}
     mode = mode or "r"
@@ -605,12 +599,11 @@ function io.open(filepath, mode, opt)
 end
 
 -- open a filelock
+--
+-- @param filepath  the lock file path
+-- @return          the filelock object
+--
 function io.openlock(filepath)
-
-    -- check
-    assert(filepath)
-
-    -- open it
     filepath = tostring(filepath)
     local lock = io.filelock_open(filepath)
     if lock then
@@ -625,19 +618,66 @@ function io.close(file)
     return (file or io.stdout):close()
 end
 
--- save object the the given filepath
-function io.save(filepath, object, opt)
-    assert(filepath and object)
-
+-- convert file encoding
+--
+-- @param inputfile     the input file path
+-- @param outputfile    the output file path
+-- @param opt           the options
+--                      - from: the input encoding, e.g. utf8, utf8bom, utf16, utf16le, utf16lebom, utf16be, gb2312, gbk, iso8859, ucs2, ucs4, utf32 .. (default: utf8)
+--                      - to: the output encoding, e.g. utf8, utf8bom, utf16, utf16le, utf16lebom, utf16be, gb2312, gbk, iso8859, ucs2, ucs4, utf32 .. (default: utf8)
+function io.convert(inputfile, outputfile, opt)
     opt = opt or {}
-    filepath = tostring(filepath)
-    local file, err = io.open(filepath, "wb", opt)
-    if err then
-        return false, err
+    inputfile = tostring(inputfile)
+    outputfile = tostring(outputfile)
+    local from = opt.from or "utf8"
+    local to = opt.to or "utf8"
+
+    -- try using c implementation first
+    if io.file_convert and io.file_convert(inputfile, outputfile, from, to) then
+        return true
     end
 
-    local ok, errors = file:save(object, opt)
-    file:close()
+    -- fallback to lua implementation (slow but works)
+    local content, errors = io.readfile(inputfile, {encoding = from})
+    if not content then
+        return false, errors
+    end
+    return io.writefile(outputfile, content, {encoding = to})
+end
+
+-- save object to the given filepath
+--
+-- @param filepath  the file path
+-- @param object    the object to serialize (table, string, number, boolean)
+-- @param opt       the options, e.g. {orderkeys = true}
+-- @return          true on success, or false and error info
+--
+function io.save(filepath, object, opt)
+    opt = opt or {}
+    assert(filepath and object)
+    filepath = tostring(filepath)
+
+    -- we save it when file is only changed, we can ensure file modify time.
+    local oldstr
+    if opt.only_changed and os.isfile(filepath) then
+        oldstr = io.readfile(filepath, {encoding = "binary"})
+    end
+
+    local ok, errors, str
+    str, errors = string.serialize(object, opt)
+    if str then
+        local write = true
+        if opt.only_changed then
+            if oldstr == str then
+                write = false
+            end
+        end
+        if write then
+            ok, errors = io.writefile(filepath, str, {encoding = "binary"})
+        else
+            ok = true
+        end
+    end
     if not ok then
         return false, string.format("save %s failed, %s!", filepath, errors)
     end
@@ -645,6 +685,11 @@ function io.save(filepath, object, opt)
 end
 
 -- load object from the given file
+--
+-- @param filepath  the file path
+-- @param opt       the options, e.g. {encoding = "utf8"}
+-- @return          the deserialized object, or nil and error info
+--
 function io.load(filepath, opt)
     assert(filepath)
 
@@ -660,6 +705,13 @@ function io.load(filepath, opt)
 end
 
 -- gsub the given file and return replaced data
+--
+-- @param filepath  the file path
+-- @param pattern   the lua pattern string
+-- @param replace   the replacement string or function
+-- @param opt       the options, e.g. {encoding = "utf8"}
+-- @return          the replaced data string, the replacement count
+--
 function io.gsub(filepath, pattern, replace, opt)
 
     -- read all data from file
@@ -685,6 +737,13 @@ function io.gsub(filepath, pattern, replace, opt)
 end
 
 -- replace text of the given file and return new file data
+--
+-- @param filepath  the file path
+-- @param pattern   the plain text or lua pattern to search
+-- @param replace   the replacement string
+-- @param opt       the options, e.g. {plain = true, encoding = "utf8"}
+-- @return          the replaced data string, the replacement count
+--
 function io.replace(filepath, pattern, replace, opt)
     opt = opt or {}
     local data, errors = io.readfile(filepath, opt)
@@ -731,43 +790,31 @@ function io.insert(filepath, lineidx, text, opt)
 end
 
 -- cat the given file
+--
+-- @param filepath  the file path
+-- @param linecount the line count to read (optional, read all if nil)
+-- @param opt       the options, e.g. {encoding = "utf8"}
+-- @return          the file content string
+--
 function io.cat(filepath, linecount, opt)
-
-    -- init option
     opt = opt or {}
-
-    -- open file
     local file = io.open(filepath, "r", opt)
     if file then
-
-        -- show file
         local count = 1
         for line in file:lines(opt) do
-
-            -- show line
             io.write(line, "\n")
-
-            -- end?
             if linecount and count >= linecount then
                 break
             end
-
-            -- update the line count
             count = count + 1
         end
-
-        -- exit file
         file:close()
     end
 end
 
 -- tail the given file
 function io.tail(filepath, linecount, opt)
-
-    -- init option
     opt = opt or {}
-
-    -- all?
     if linecount < 0 then
         return io.cat(filepath, opt)
     end
@@ -775,43 +822,28 @@ function io.tail(filepath, linecount, opt)
     -- open file
     local file = io.open(filepath, "r", opt)
     if file then
-
-        -- read lines
         local lines = {}
         for line in file:lines(opt) do
             table.insert(lines, line)
         end
 
-        -- tail lines
         local tails = {}
         if #lines ~= 0 then
             local count = 1
             for index = #lines, 1, -1 do
-
-                -- show line
                 table.insert(tails, lines[index])
-
-                -- end?
                 if linecount and count >= linecount then
                     break
                 end
-
-                -- update the line count
                 count = count + 1
             end
         end
 
-        -- show tails
         if #tails ~= 0 then
             for index = #tails, 1, -1 do
-
-                -- show tail
                 io.print(tails[index])
-
             end
         end
-
-        -- exit file
         file:close()
     end
 end

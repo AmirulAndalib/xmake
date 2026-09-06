@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_iccenv.lua
@@ -53,7 +53,9 @@ function _load_iclvars(iclvars_bat, arch, opt)
     file:close()
 
     -- run geniclvars.bat
-    os.run(geniclvars_bat)
+    -- @note we use runv here so the bat path is not split on whitespace by os.argv,
+    -- which breaks detection when the temp file lives under a path with spaces.
+    os.runv(geniclvars_bat)
 
     -- load all envirnoment variables
     local variables = {}
@@ -116,6 +118,12 @@ function _find_intel_on_windows(opt)
             "$(env ICPP_COMPILER23)"
         }
         iclvars_bat = find_file("../../../setvars.bat", paths)
+        if not iclvars_bat then
+            paths = {
+                "$(env ICPP_COMPILER24)"
+            }
+            iclvars_bat = find_file("../../setvars.bat", paths)
+        end
     end
     if iclvars_bat then
 

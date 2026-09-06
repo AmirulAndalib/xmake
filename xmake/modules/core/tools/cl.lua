@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        cl.lua
@@ -25,9 +25,11 @@ import("core.base.hashset")
 import("core.project.project")
 import("core.project.policy")
 import("core.language.language")
+import("private.utils.toolchain", {alias = "toolchain_utils"})
 import("private.tools.vstool")
-import("private.tools.cl.parse_include")
+import("core.tools.cl.parse_include")
 import("private.cache.build_cache")
+import("utils.checker")
 import("private.service.distcc_build.client", {alias = "distcc_build_client"})
 import("utils.progress")
 
@@ -76,10 +78,16 @@ function init(self)
 
         -- language
     ,   ["-ansi"]                   = ""
-    ,   ["-std=c99"]                = "-TP" -- compile as c++ files because msvc only support c89
-    ,   ["-std=c11"]                = "-TP" -- compile as c++ files because msvc only support c89
-    ,   ["-std=gnu99"]              = "-TP" -- compile as c++ files because msvc only support c89
-    ,   ["-std=gnu11"]              = "-TP" -- compile as c++ files because msvc only support c89
+    ,   ["-std=c99"]                = "-TP" -- compile as c++ files because msvc doesn't support c99
+    ,   ["-std=c11"]                = "-std:c11"
+    ,   ["-std=c17"]                = "-std:c17"
+    ,   ["-std=c2x"]                = "-std:clatest"
+    ,   ["-std=c23"]                = "-std:clatest"
+    ,   ["-std=gnu99"]              = "-TP" -- compile as c++ files because msvc doesn't support c99
+    ,   ["-std=gnu11"]              = "-std:c11"
+    ,   ["-std=gnu17"]              = "-std:c17"
+    ,   ["-std=gnu2x"]              = "-std:clatest"
+    ,   ["-std=gnu23"]              = "-std:clatest"
     ,   ["-std=.*"]                 = ""
 
         -- others
@@ -87,8 +95,13 @@ function init(self)
     })
 end
 
+-- is syntax check enabled?
+function _is_syntax_check()
+    return checker.is_running("syntax")
+end
+
 -- make the symbol flags
-function nf_symbols(self, levels, target)
+function nf_symbols(self, levels, opt)
     local flags = nil
     local values = hashset.from(levels)
     if values:has("debug") then
@@ -103,6 +116,7 @@ function nf_symbols(self, levels, target)
 
         -- generate *.pdb file
         local symbolfile = nil
+        local target = opt.target
         if target and target.symbolfile and not values:has("embed") then
             symbolfile = target:symbolfile()
         end
@@ -159,7 +173,7 @@ function nf_warnings(self, levels)
     ,   everything = "-Wall"
     ,   error      = "-WX"
     }
-    for _, level in values:keys() do
+    for _, level in values:orderkeys() do
         local flag = maps[level]
         if flag then
             table.insert(flags, flag)
@@ -176,17 +190,23 @@ function nf_optimize(self, level)
     {
         none        = "-Od"
     ,   faster      = "-Ox"
-    ,   fastest     = "-O2 -fp:fast"
+    ,   fastest     = "-O2"
     ,   smallest    = "-O1 -GL" -- /GL and (/OPT:REF is on by default in linker), we need to enable /ltcg
-    ,   aggressive  = "-O2 -fp:fast"
+    ,   aggressive  = "-O2"
     }
     return maps[level]
 end
 
--- make vs runtime flag
-function nf_runtime(self, vs_runtime)
-    if vs_runtime then
-        return "-" .. vs_runtime
+-- make the runtime flag
+function nf_runtime(self, runtime)
+    if runtime then
+        local maps = {
+            MT = "-MT",
+            MD = "-MD",
+            MTd = "-MTd",
+            MDd = "-MDd"
+        }
+        return maps[runtime]
     end
 end
 
@@ -203,9 +223,22 @@ function nf_vectorext(self, extension)
     ,   fma        = "-arch:AVX2"
     ,   all        = {"-arch:SSE", "-arch:SSE2", "/d2archSSE42", "-arch:AVX", "-arch:AVX2", "-arch:AVX512"}
     }
-    local flag = maps[extension]
-    if flag and self:has_flags(flag, "cxflags") then
-        return flag
+    local flags = maps[extension]
+    if flags then
+        -- @see https://github.com/xmake-io/xmake/issues/5499
+        if type(flags) == "string" then
+            return flags
+        else
+            local result = {}
+            for _, flag in ipairs(flags) do
+                if self:has_flags(flag, "cxflags") then
+                    table.insert(result, flag)
+                end
+            end
+            if #result > 0 then
+                return table.unwrap(result)
+            end
+        end
     end
 end
 
@@ -220,17 +253,28 @@ function nf_language(self, stdname)
             -- stdc
             c99       = "-TP" -- compile as c++ files because older msvc only support c89
         ,   gnu99     = "-TP"
-        ,   c11       = {"-std:c11", "-TP"}
-        ,   gnu11     = {"-std:c11", "-TP"}
-        ,   c17       = {"-std:c17", "-TP"}
-        ,   gnu17     = {"-std:c17", "-TP"}
-        ,   clatest   = {"-std:c17", "-std:c11"}
-        ,   gnulatest = {"-std:c17", "-std:c11"}
+        ,   c11       = {"-std:c11", "-std:clatest", "-TP"}
+        ,   gnu11     = {"-std:c11", "-std:clatest", "-TP"}
+        ,   c17       = {"-std:c17", "-std:clatest", "-TP"}
+        ,   gnu17     = {"-std:c17", "-std:clatest", "-TP"}
+        ,   c2x       = {"-std:c23", "-std:clatest", "-TP"}
+        ,   gnu2x     = {"-std:c23", "-std:clatest", "-TP"}
+        ,   c23       = {"-std:c23", "-std:clatest", "-TP"}
+        ,   gnu23     = {"-std:c23", "-std:clatest", "-TP"}
+        ,   clatest   = {"-std:clatest", "-std:c23", "-std:c17", "-std:c11", "-TP"}
+        ,   gnulatest   = {"-std:clatest", "-std:c23", "-std:c17", "-std:c11", "-TP"}
         }
     end
 
     -- the stdc++ maps
     if _g.cxxmaps == nil then
+        -- clang-cl with c++23preview does not work for c++ modules
+        -- https://github.com/xmake-io/xmake/issues/7169
+        local cxx23 = {"-std:c++23", "-std:c++23preview", "-std:c++latest"}
+        if self:name() == "clang_cl" then
+            cxx23 = {"-std:c++23", "-std:c++latest"}
+        end
+        local cxx2b = cxx23
         _g.cxxmaps =
         {
             cxx11       = "-std:c++11"
@@ -245,10 +289,12 @@ function nf_language(self, stdname)
         ,   gnuxx20     = {"-std:c++20", "-std:c++latest"}
         ,   cxx2a       = {"-std:c++20", "-std:c++latest"}
         ,   gnuxx2a     = {"-std:c++20", "-std:c++latest"}
-        ,   cxx23       = {"-std:c++23", "-std:c++latest"}
-        ,   gnuxx23     = {"-std:c++23", "-std:c++latest"}
-        ,   cxx2b       = {"-std:c++23", "-std:c++latest"}
-        ,   gnuxx2b     = {"-std:c++23", "-std:c++latest"}
+        ,   cxx23       = cxx23
+        ,   gnuxx23     = cxx23
+        ,   cxx2b       = cxx2b
+        ,   gnuxx2b     = cxx2b
+        ,   cxx26       = {"-std:c++26", "-std:c++latest"}
+        ,   gnuxx26     = {"-std:c++26", "-std:c++latest"}
         ,   cxxlatest   = "-std:c++latest"
         ,   gnuxxlatest = "-std:c++latest"
         }
@@ -296,7 +342,8 @@ function nf_includedir(self, dir)
 end
 
 -- make the force include flag
-function nf_forceinclude(self, headerfile, target)
+function nf_forceinclude(self, headerfile, opt)
+    local target = opt.target
     local sourcekinds = target and target:extraconf("forceincludes", headerfile, "sourcekinds")
     if not sourcekinds or table.contains(table.wrap(sourcekinds), self:kind()) then
         return {"-FI", headerfile}
@@ -332,7 +379,7 @@ end
 function nf_exception(self, exp)
     local maps = {
         cxx = "/EHsc",
-        ["no-cxx"] = "/EHsc-"
+        ["no-cxx"] = "/EHs-c-"
     }
     return maps[exp]
 end
@@ -355,7 +402,8 @@ function nf_encoding(self, encoding)
     end
     local charsets = {
         ["utf-8"] = "utf-8",
-        utf8 = "utf-8"
+        utf8 = "utf-8",
+        gb2312 = "gb2312"
     }
     local flags = {}
     charset = charsets[charset:lower()]
@@ -377,24 +425,26 @@ function nf_encoding(self, encoding)
 end
 
 -- make the c precompiled header flag
-function nf_pcheader(self, pcheaderfile, target)
+function nf_pcheader(self, pcheaderfile, opt)
     if self:kind() == "cc" then
+        local target = opt.target
         local objectfiles = target:objectfiles()
         if objectfiles then
             table.insert(objectfiles, target:pcoutputfile("c") .. ".obj")
         end
-        return {"-Yu" .. path.filename(pcheaderfile), "-FI" .. path.filename(pcheaderfile), "-Fp" .. target:pcoutputfile("c")}
+        return {"-Yu" .. path.absolute(pcheaderfile), "-FI" .. path.absolute(pcheaderfile), "-Fp" .. target:pcoutputfile("c")}
     end
 end
 
 -- make the c++ precompiled header flag
-function nf_pcxxheader(self, pcheaderfile, target)
+function nf_pcxxheader(self, pcheaderfile, opt)
     if self:kind() == "cxx" then
+        local target = opt.target
         local objectfiles = target:objectfiles()
         if objectfiles then
             table.insert(objectfiles, target:pcoutputfile("cxx") .. ".obj")
         end
-        return {"-Yu" .. path.filename(pcheaderfile), "-FI" .. path.filename(pcheaderfile), "-Fp" .. target:pcoutputfile("cxx")}
+        return {"-Yu" .. path.absolute(pcheaderfile), "-FI" .. path.absolute(pcheaderfile), "-Fp" .. target:pcoutputfile("cxx")}
     end
 end
 
@@ -411,7 +461,7 @@ function add_sourceflags(self, sourcefile, fileconfig, target, targetkind)
     --   add_files("*.c", {sourcekind = "cxx"})
     --
     local sourcekind = fileconfig.sourcekind
-    if sourcekind and sourcekind ~= language.sourcekind_of(sourcefile) then
+    if sourcekind then
         local maps = {cc = "-TC", cxx = "-TP"}
         return maps[sourcekind]
     end
@@ -486,6 +536,7 @@ function _preprocess(program, argv, opt)
     local sourcefile = argv[#argv]
     local extension = path.extension(sourcefile)
     for _, flag in ipairs(argv) do
+        local flag = flag
         if flag:startswith("-Fo") or flag:startswith("/Fo") then
             objectfile = flag:sub(4)
             break
@@ -508,7 +559,7 @@ function _preprocess(program, argv, opt)
            flag:startswith("-external:") or flag:startswith("/external:") then
             skipped = 1
         -- @note we cannot ignore precompiled flags when compiling pch, @see https://github.com/xmake-io/xmake/issues/2885
-        elseif not extension:startswith(".h") and (
+        elseif not toolchain_utils.is_cxx_headerext(extension) and (
            flag:startswith("-Yu") or flag:startswith("/Yu") or
            flag:startswith("-FI") or flag:startswith("/FI") or
            flag:startswith("-Fp") or flag:startswith("/Fp")) then
@@ -618,16 +669,79 @@ end
 
 -- make the compile arguments list
 function compargv(self, sourcefile, objectfile, flags, opt)
+    opt = opt or {}
 
     -- precompiled header?
     local extension = path.extension(sourcefile)
-    if (extension:startswith(".h") or extension == ".inl") then
+    if toolchain_utils.is_cxx_headerext(extension) then
         return _compargv_pch(self, sourcefile, objectfile, flags)
     end
 
+    -- if syntax-only, add /Zs and skip -c and -Fo
+    if _is_syntax_check() then
+        table.insert(flags, "/Zs")
+        local argv = table.join(flags, sourcefile)
+        return self:program(), (opt and opt.rawargs) and argv or winos.cmdargv(argv)
+    end
+
+    -- suppress clang-cl warnings
+    -- clang-cl: warning: argument unused during compilation: '-c' [-Wunused-command-line-argument]
+    --
+    -- @see https://github.com/xmake-io/xmake/issues/7049
+    local argv = {}
+    if not (self:name() == "clang_cl" and objectfile:endswith(".pcm")) then
+        table.insert(argv, "-c")
+    end
+
     -- make the compile arguments list
-    local argv = table.join("-c", flags, "-Fo" .. objectfile, sourcefile)
+    table.join2(argv, flags, "-Fo" .. objectfile, sourcefile)
     return self:program(), (opt and opt.rawargs) and argv or winos.cmdargv(argv)
+end
+
+-- show warnings
+function _show_warnings(self, output, sourcefile)
+    local lines = {}
+    local has_warnings = false
+    local has_source_dependencies = _has_source_dependencies(self)
+    for _, line in ipairs(output:split("\n", {plain = true})) do
+        local line = line:rtrim()
+        if #line > 0 then
+            local skip = false
+
+            -- filter includes notes: "Note: including file: xxx.h"
+            if not has_source_dependencies and parse_include.has_include_note(line) then
+                skip = true
+            end
+
+            -- filter source filename echo
+            --
+            -- e.g.
+            -- main.cpp     <-- skip it
+            -- src\main.cpp(2): warning C5295: #warning xxx
+            --
+            if not skip then
+                -- we don't need use isfile() to check it, because it's too slow
+                if sourcefile:endswith(line) and not line:find(":", 1, true) then
+                    skip = true
+                end
+            end
+
+            if not skip then
+                table.insert(lines, line)
+                if line:find("warning", 1, true) then
+                    has_warnings = true
+                end
+            end
+        end
+    end
+
+    if has_warnings and #lines > 0 then
+        if not option.get("diagnosis") then
+            lines = table.slice(lines, 1, (#lines > 16 and 16 or #lines))
+        end
+        local warnings = table.concat(lines, "\r\n")
+        progress.show_output("${color.warning}%s", warnings)
+    end
 end
 
 -- compile the source file
@@ -693,8 +807,8 @@ function compile(self, sourcefile, objectfile, dependinfo, flags, opt)
                 else
                     -- filter includes notes: "Note: including file: xxx.h", @note maybe not english language
                     for _, line in ipairs(tostring(errors):split("\n", {plain = true})) do
-                        line = line:rtrim()
-                        if not parse_include(line) then
+                        local line = line:rtrim()
+                        if not parse_include.has_include_note(line) then
                             results = results .. line .. "\r\n"
                         end
                     end
@@ -708,31 +822,13 @@ function compile(self, sourcefile, objectfile, dependinfo, flags, opt)
         finally
         {
             function (ok, outdata, errdata)
-
-                -- show warnings?
-                if ok and policy.build_warnings() then
+                if ok and policy.build_warnings(opt) then
                     local output = outdata or ""
                     if #output:trim() == 0 then
                         output = errdata or ""
                     end
-                    if #output:trim() > 0 then
-                        local lines = {}
-                        for _, line in ipairs(output:split("\n", {plain = true})) do
-                            line = line:rtrim()
-                            if line:match("warning %a+[0-9]+%s*:") then
-                                table.insert(lines, line)
-                            end
-                        end
-                        if #lines > 0 then
-                            if not option.get("diagnosis") then
-                                lines = table.slice(lines, 1, (#lines > 16 and 16 or #lines))
-                            end
-                            local warnings = table.concat(lines, "\r\n")
-                            if progress.showing_without_scroll() then
-                                print("")
-                            end
-                            cprint("${color.warning}%s", warnings)
-                        end
+                    if #output > 0 then
+                        _show_warnings(self, output, sourcefile)
                     end
                 end
             end
@@ -742,10 +838,13 @@ function compile(self, sourcefile, objectfile, dependinfo, flags, opt)
     -- generate the dependent includes
     if dependinfo then
         if depfile and os.isfile(depfile) then
-            dependinfo.depfiles_cl_json = io.readfile(depfile)
+            dependinfo.depfiles_format = "cl_json"
+            dependinfo.depfiles = io.readfile(depfile)
             os.tryrm(depfile)
         elseif outdata then
-            dependinfo.depfiles_cl = outdata
+            dependinfo.depfiles_format = "cl"
+            dependinfo.depfiles = outdata
         end
     end
 end
+

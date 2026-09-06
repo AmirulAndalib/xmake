@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        patch_sources.lua
@@ -24,11 +24,12 @@ import("core.base.global")
 import("net.http")
 import("net.proxy")
 import("devel.git")
+import("utils.archive")
 
 -- check sha256
 function _check_sha256(patch_hash, patch_file)
     local ok = (patch_hash == hash.sha256(patch_file))
-    if not ok and is_host("windows") then
+    if not ok then
         -- `git pull` maybe will replace lf to crlf in the patch text automatically on windows.
         -- so we need to attempt to fix this sha256
         --
@@ -48,7 +49,10 @@ function _check_sha256(patch_hash, patch_file)
 end
 
 -- do patch
-function _patch(package, patch_url, patch_hash)
+function _patch(package, patchinfo)
+    local patch_url = patchinfo.url
+    local patch_hash = patchinfo.sha256
+    local patch_extra = patchinfo.extra or {}
 
     -- trace
     patch_url = proxy.mirror(patch_url) or patch_url
@@ -76,6 +80,7 @@ function _patch(package, patch_url, patch_hash)
         if patch_url:find(string.ipattern("https-://")) or patch_url:find(string.ipattern("ftps-://")) then
             http.download(patch_url, patch_file, {
                 insecure = global.get("insecure-ssl"),
+                insecure_fallback = true, -- retry without ssl verification on cert error, the file is verified by sha256 below
                 headers = package:policy("package.download.http_headers")})
         else
             -- copy the patch file
@@ -97,11 +102,56 @@ function _patch(package, patch_url, patch_hash)
         end
     end
 
-    -- apply the patch file
-    git.apply(patch_file)
+    -- is archive file? we need extract it first
+    local extension = archive.extension(patch_file)
+    if extension and #extension > 0 then
+        local patchdir = patch_file .. ".dir"
+        local patchdir_tmp = patchdir .. ".tmp"
+        os.tryrm(patchdir_tmp)
+        local errors
+        local ok = try {
+            function()
+                archive.extract(patch_file, patchdir_tmp)
+                return true
+            end,
+            catch {
+                function (errs)
+                    if errs then
+                        errors = tostring(errs)
+                    end
+                end
+            }
+        }
+        if ok then
+            os.tryrm(patchdir)
+            os.mv(patchdir_tmp, patchdir)
+        else
+            os.tryrm(patchdir_tmp)
+            os.tryrm(patchdir)
+            raise(errors or string.format("cannot extract %s", patch_file))
+        end
+
+        -- apply patch files
+        for _, file in ipairs(os.files(path.join(patchdir, "**"))) do
+            vprint("applying patch %s", file)
+            git.apply(file, {reverse = patch_extra.reverse})
+        end
+    else
+        -- apply single plain patch file
+        vprint("applying patch %s", patch_file)
+        git.apply(patch_file, {reverse = patch_extra.reverse})
+    end
 end
 
 -- patch the given package
+-- patch the package sources
+--
+-- @param package  the package instance
+--
+-- patch the package sources
+--
+-- @param package  the package instance
+--
 function main(package)
 
     -- we don't need to patch it if we use the precompiled artifacts to install package
@@ -117,6 +167,6 @@ function main(package)
 
     -- do all patches
     for _, patchinfo in ipairs(patches) do
-        _patch(package, patchinfo.url, patchinfo.sha256)
+        _patch(package, patchinfo)
     end
 end

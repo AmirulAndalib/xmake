@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_package.lua
@@ -133,7 +133,14 @@ function main(name, opt)
     local frameworkdirs
     local frameworks
     local librarydir = path.join(opt.installdir, "lib")
+    local librarydir_host = path.join(opt.installdir, "lib", "host")
     local libfiles = os.files(path.join(librarydir, "*.rlib"))
+
+    local frameworkdirs = {}
+    table.insert(frameworkdirs, librarydir)
+    if os.isdir(librarydir_host) then
+        table.insert(frameworkdirs, librarydir_host)
+    end
 
     -- @see https://github.com/xmake-io/xmake/issues/4228
     local libfiles_native
@@ -145,21 +152,35 @@ function main(name, opt)
     else
         libfiles_native = os.files(path.join(librarydir, "*.so"))
     end
-    for _, libraryfile in ipairs(table.join(libfiles, libfiles_native)) do
+    -- @see https://github.com/xmake-io/xmake/issues/5156
+    local libfiles_native_host
+    if is_host("macosx") then
+        libfiles_native_host = os.files(path.join(librarydir_host, "*.dylib"))
+    elseif is_host("windows") then
+        libfiles_native_host = os.files(path.join(librarydir_host, "*.lib|*.dll.lib"))
+        table.join2(libfiles_native_host, os.files(path.join(librarydir_host, "*.dll")))
+    else
+        libfiles_native_host = os.files(path.join(librarydir_host, "*.so"))
+    end
+    local libraries_set = {}
+    for _, libraryfile in ipairs(table.join(libfiles or {}, libfiles_native or {}, libfiles_native_host)) do
         local filename = path.filename(libraryfile)
         local libraryname = filename:split('-', {plain = true})[1]
-        if names:has(libraryname) then
-            frameworkdirs = frameworkdirs or {}
+        -- https://github.com/xmake-io/xmake/issues/5156#issuecomment-2143509207
+        if not libraryname:startswith("lib") then
+            libraryname = "lib" .. libraryname
+        end
+        if names:has(libraryname) and not libraries_set[libraryname] then
             frameworks = frameworks or {}
-            table.insert(frameworkdirs, librarydir)
             table.insert(frameworks, libraryfile)
+            libraries_set[libraryname] = true
         end
     end
     local result
     if frameworks and frameworkdirs then
         result = result or {}
         result.libfiles = libfiles
-        result.frameworkdirs = frameworkdirs and table.unique(frameworkdirs) or nil
+        result.frameworkdirs = frameworkdirs
         result.frameworks = frameworks
         result.version = opt.require_version
     end

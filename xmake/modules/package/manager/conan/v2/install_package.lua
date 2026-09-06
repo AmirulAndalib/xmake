@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        install_package.lua
@@ -25,8 +25,11 @@ import("core.project.config")
 import("core.tool.toolchain")
 import("core.platform.platform")
 import("lib.detect.find_tool")
+import("lib.detect.find_file")
+import("detect.sdks.find_emsdk")
 import("devel.git")
 import("net.fasturl")
+import("package.manager.conan.configurations")
 
 -- get build env
 function _conan_get_build_env(name, plat)
@@ -46,7 +49,7 @@ end
 
 -- get build directory
 function _conan_get_build_directory(name)
-    return path.absolute(path.join(config.buildir() or os.tmpdir(), ".conan", name))
+    return path.absolute(path.join(config.builddir() or os.tmpdir(), ".conan", name))
 end
 
 -- generate conanfile.txt
@@ -74,6 +77,7 @@ function _conan_generate_conanfile(name, configs, opt)
         if #options > 0 then
             conanfile:print("[options]")
             for _, item in ipairs(options) do
+                local item = item
                 if not item:find(":", 1, true) then
                     item = name .. "/*:" .. item
                 end
@@ -110,53 +114,22 @@ function _conan_install_xmake_generator(conan)
     end
 end
 
--- get arch
-function _conan_get_arch(arch)
-    local map = {x86_64          = "x86_64",
-                 x64             = "x86_64",
-                 i386            = "x86",
-                 x86             = "x86",
-                 armv7           = "armv7",
-                 ["armv7-a"]     = "armv7",  -- for android, deprecated
-                 ["armeabi"]     = "armv7",  -- for android, removed in ndk r17
-                 ["armeabi-v7a"] = "armv7",  -- for android
-                 armv7s          = "armv7s", -- for iphoneos
-                 arm64           = "armv8",  -- for iphoneos
-                 ["arm64-v8a"]   = "armv8",  -- for android
-                 mips            = "mips",
-                 mips64          = "mips64"}
-    return assert(map[arch], "unknown arch(%s)!", arch)
-end
-
--- get os
-function _conan_get_os(plat)
-    local map = {macosx   = "Macos",
-                 windows  = "Windows",
-                 mingw    = "Windows",
-                 linux    = "Linux",
-                 cross    = "Linux",
-                 iphoneos = "iOS",
-                 android  = "Android"}
-    return assert(map[plat], "unknown os(%s)!", plat)
-end
-
--- get build type
-function _conan_get_build_type(mode)
-    if mode == "debug" then
-        return "Debug"
-    else
-        return "Release"
-    end
-end
-
 -- get compiler version
-function _conan_get_compiler_version(name, program)
+--
+-- https://github.com/conan-io/conan/blob/353c63b16c31c90d370305b5cbb5dc175cf8a443/conan/tools/microsoft/visual.py#L13
+-- https://github.com/xmake-io/xmake/issues/5338
+function _conan_get_compiler_version(name, opt)
+    opt = opt or {}
     local version
-    local result = find_tool(name, {program = program, version = true})
+    local result = find_tool(name, {program = opt.program, version = true, envs = opt.envs})
     if result and result.version then
         local v = semver.try_parse(result.version)
         if v then
-            version = v:major()
+            if name == "cl" then
+                version = tostring(v:major()) .. tostring(v:minor()):sub(1, 1)
+            else
+                version = tostring(v:major())
+            end
         end
     end
     return version
@@ -167,25 +140,23 @@ function _conan_generate_compiler_profile(profile, configs, opt)
     local conf
     local plat = opt.plat
     local arch = opt.arch
+    local runtimes = configs.runtimes
     if plat == "windows" then
-        -- https://github.com/conan-io/conan/blob/353c63b16c31c90d370305b5cbb5dc175cf8a443/conan/tools/microsoft/visual.py#L13
-        local vsvers = {["2022"] = "193",
-                        ["2019"] = "192",
-                        ["2017"] = "191",
-                        ["2015"] = "190",
-                        ["2013"] = "180",
-                        ["2012"] = "170"}
-        local vs = assert(config.get("vs"), "vs not found!")
+        local msvc = toolchain.load("msvc", {plat = plat, arch = arch})
+        assert(msvc:check(), "vs not found!")
+        local vs = assert(msvc:config("vs"), "vs not found!")
         profile:print("compiler=msvc")
-        profile:print("compiler.version=" .. assert(vsvers[vs], "unknown msvc version!"))
+        local version = _conan_get_compiler_version("cl", {envs = msvc:runenvs()})
+        if version then
+            profile:print("compiler.version=" .. version)
+        end
         -- @see https://github.com/conan-io/conan/issues/12387
         if tonumber(vs) >= 2015 then
             profile:print("compiler.cppstd=14")
         end
-        local vs_runtime = configs.vs_runtime
-        if vs_runtime then
-            profile:print("compiler.runtime=" .. (vs_runtime:startswith("MD") and "dynamic" or "static"))
-            profile:print("compiler.runtime_type=" .. (vs_runtime:endswith("d") and "Debug" or "Release"))
+        if runtimes then
+            profile:print("compiler.runtime=" .. (runtimes:startswith("MD") and "dynamic" or "static"))
+            profile:print("compiler.runtime_type=" .. (runtimes:endswith("d") and "Debug" or "Release"))
         end
     elseif plat == "iphoneos" then
         local target_minver = nil
@@ -212,29 +183,44 @@ function _conan_generate_compiler_profile(profile, configs, opt)
         if ndk_sdkver then
             profile:print("os.api_level=" .. ndk_sdkver)
         end
-        local ndk_cxxstl = config.get("ndk_cxxstl")
-        if ndk_cxxstl then
-            profile:print("compiler.libcxx=" .. ndk_cxxstl)
+        if runtimes then
+            profile:print("compiler.libcxx=" .. runtimes)
         end
         local program, toolname = ndk:tool("cc")
-        local version = _conan_get_compiler_version(toolname, program)
+        local version = _conan_get_compiler_version(toolname, {program = program})
         profile:print("compiler=" .. toolname)
         if version then
             profile:print("compiler.version=" .. version)
         end
         conf = {}
         conf["tools.android:ndk_path"] = ndk:config("ndk")
+    elseif plat == "wasm" then
+        local emsdk = find_emsdk()
+        assert(emsdk and emsdk.emscripten, "emscripten not found!")
+        local emscripten_cmakefile = find_file("Emscripten.cmake", path.join(emsdk.emscripten, "cmake/Modules/Platform"))
+        assert(emscripten_cmakefile, "Emscripten.cmake not found!")
+
+        profile:print("compiler=gcc")
+        profile:print("compiler.cppstd=gnu17")
+        profile:print("compiler.libcxx=libstdc++11")
+        profile:print("compiler.version=12")
+
+        conf = {}
+        conf["tools.build:compiler_executables"] = "{'c':'emcc', 'cpp':'em++', 'ar':'emar', 'ranlib':'emranlib'}"
+        conf["tools.cmake.cmaketoolchain:user_toolchain"] = "['" ..emscripten_cmakefile .. "']"
     else
         local program, toolname = platform.tool("cc", plat, arch)
         if toolname == "gcc" or toolname == "clang" then
             profile:print("compiler=" .. toolname)
             profile:print("compiler.cppstd=gnu17")
-            if toolname == "clang" then
-                profile:print("compiler.libcxx=libc++")
-            else
-                profile:print("compiler.libcxx=libstdc++11")
+            local libcxx = "libstdc++11"
+            if runtimes and table.contains(table.wrap(runtimes), "c++_static", "c++_shared") then
+                libcxx = "libc++"
+            elseif not runtimes and toolname == "clang" then
+                libcxx = "libc++"
             end
-            local version = _conan_get_compiler_version(toolname, program)
+            profile:print("compiler.libcxx=" .. libcxx)
+            local version = _conan_get_compiler_version(toolname, {program = program})
             if version then
                 profile:print("compiler.version=" .. version)
             end
@@ -254,9 +240,9 @@ end
 function _conan_generate_build_profile(configs, opt)
     local profile = io.open("profile_build.txt", "w")
     profile:print("[settings]")
-    profile:print("arch=%s", _conan_get_arch(os.arch()))
-    profile:print("build_type=%s", _conan_get_build_type(opt.mode))
-    profile:print("os=%s", _conan_get_os(os.host()))
+    profile:print("arch=%s", configurations.arch(os.arch()))
+    profile:print("build_type=%s", configurations.build_type(opt.mode))
+    profile:print("os=%s", configurations.plat(os.host()))
     _conan_generate_compiler_profile(profile, configs, {plat = os.host(), arch = os.arch()})
     profile:close()
 end
@@ -265,9 +251,9 @@ end
 function _conan_generate_host_profile(configs, opt)
     local profile = io.open("profile_host.txt", "w")
     profile:print("[settings]")
-    profile:print("arch=%s", _conan_get_arch(opt.arch))
-    profile:print("build_type=%s", _conan_get_build_type(opt.mode))
-    profile:print("os=%s", _conan_get_os(opt.plat))
+    profile:print("arch=%s", configurations.arch(opt.arch))
+    profile:print("build_type=%s", configurations.build_type(opt.mode))
+    profile:print("os=%s", configurations.plat(opt.plat))
     _conan_generate_compiler_profile(profile, configs, opt)
     profile:close()
 end
@@ -280,16 +266,16 @@ function main(conan, name, opt)
     local configs = opt.configs or {}
 
     -- get build directory
-    local buildir = _conan_get_build_directory(name)
+    local builddir = _conan_get_build_directory(name)
 
     -- clean the build directory
-    os.tryrm(buildir)
-    if not os.isdir(buildir) then
-        os.mkdir(buildir)
+    os.tryrm(builddir)
+    if not os.isdir(builddir) then
+        os.mkdir(builddir)
     end
 
     -- enter build directory
-    local oldir = os.cd(buildir)
+    local oldir = os.cd(builddir)
 
     -- install xmake generator
     _conan_install_xmake_generator(conan)
@@ -314,10 +300,28 @@ function main(conan, name, opt)
         end
     end
 
-    -- set custom settings
-    for _, setting in ipairs(configs.settings) do
+    -- set custom host settings
+    for _, setting in ipairs(configs.settings or configs.settings_host) do
         table.insert(argv, "-s")
         table.insert(argv, setting)
+    end
+
+    -- set custom build settings
+    for _, setting in ipairs(configs.settings_build) do
+        table.insert(argv, "-s:b")
+        table.insert(argv, setting)
+    end
+
+    -- set custom host configurations
+    for _, conf in ipairs(configs.conf or configs.conf_host) do
+        table.insert(argv, "-c")
+        table.insert(argv, conf)
+    end
+
+    -- set custom build configurations
+    for _, conf in ipairs(configs.conf_build) do
+        table.insert(argv, "-c:b")
+        table.insert(argv, conf)
     end
 
     -- set remote
@@ -332,3 +336,4 @@ function main(conan, name, opt)
     -- leave build directory
     os.cd(oldir)
 end
+

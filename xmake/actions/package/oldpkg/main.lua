@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        main.lua
@@ -24,12 +24,13 @@ import("core.base.task")
 import("core.project.rule")
 import("core.project.config")
 import("core.project.project")
+import("private.action.utils", {alias = "action_utils"})
 
 -- package library
 function _package_library(target)
 
     -- the output directory
-    local outputdir = option.get("outputdir") or config.buildir()
+    local outputdir = option.get("outputdir") or config.builddir()
 
     -- the target name
     local targetname = target:name()
@@ -47,12 +48,9 @@ function _package_library(target)
 
     -- copy *.lib for shared/windows (*.dll) target
     -- @see https://github.com/xmake-io/xmake/issues/787
-    if target:is_shared() and target:is_plat("windows", "mingw") then
-        local targetfile = target:targetfile()
-        local targetfile_lib = path.join(path.directory(targetfile), path.basename(targetfile) .. ".lib")
-        if os.isfile(targetfile_lib) then
-            os.vcp(targetfile_lib, format("%s/%s.pkg/$(plat)/$(arch)/lib/$(mode)/", outputdir, targetname))
-        end
+    local target_implib = target:artifactfile("implib")
+    if target_implib and os.isfile(target_implib) then
+        os.vcp(target_implib, format("%s/%s.pkg/$(plat)/$(arch)/lib/$(mode)/", outputdir, targetname))
     end
 
     -- copy headers
@@ -185,24 +183,19 @@ function main()
     -- lock the whole project
     project.lock()
 
-    -- get the target name
-    local targetname = option.get("target")
+    -- get the target names
+    local targetnames = option.get("targets")
 
     -- build it first
-    task.run("build", {target = targetname, all = option.get("all")})
+    task.run("build", {targets = targetnames, all = option.get("all")})
 
-    -- package the given target?
-    if targetname then
-        local target = project.target(targetname)
-        _package_targets(target:orderdeps())
-        _package_target(target)
-    else
-        -- package default or all targets
-        for _, target in ipairs(project.ordertargets()) do
-            if target:is_default() or option.get("all") then
-                _package_target(target)
-            end
+    -- package the given targets, also package the deps of the explicitly given targets
+    local explicit = targetnames and #targetnames > 0
+    for _, target in ipairs(action_utils.get_targets(targetnames, {all = option.get("all")})) do
+        if explicit then
+            _package_targets(target:orderdeps())
         end
+        _package_target(target)
     end
 
     -- unlock the whole project

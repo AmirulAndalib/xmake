@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -39,10 +39,13 @@ language("nim")
         ,   "target.optimize:check"
         ,   "target.vectorexts:check"
         ,   "target.includedirs"
+        ,   "target.sysincludedirs"
         ,   "toolchain.includedirs"
         }
     ,   binary = {
             "config.linkdirs"
+        ,   "target.includedirs"
+        ,   "target.sysincludedirs"
         ,   "target.linkdirs"
         ,   "target.rpathdirs"
         ,   "target.strip"
@@ -52,9 +55,14 @@ language("nim")
         ,   "config.links"
         ,   "target.links"
         ,   "toolchain.links"
+        ,   "config.syslinks"
+        ,   "target.syslinks"
+        ,   "toolchain.syslinks"
         }
     ,   shared = {
             "config.linkdirs"
+        ,   "target.includedirs"
+        ,   "target.sysincludedirs"
         ,   "target.linkdirs"
         ,   "target.strip"
         ,   "target.symbols"
@@ -62,25 +70,30 @@ language("nim")
         ,   "config.links"
         ,   "target.links"
         ,   "toolchain.links"
+        ,   "config.syslinks"
+        ,   "target.syslinks"
+        ,   "toolchain.syslinks"
         }
     ,   static = {
             "target.strip"
         ,   "target.symbols"
+        ,   "target.includedirs"
+        ,   "target.sysincludedirs"
         }
     }
 
     set_menu {
                 config =
                 {
-                    {category = "Cross Complation Configuration/Compiler Configuration"      }
+                    {category = "Cross Compilation Configuration/Compiler Configuration"      }
                 ,   {nil, "nc",         "kv", nil,         "The Nim Compiler"                }
 
-                ,   {category = "Cross Complation Configuration/Linker Configuration"        }
+                ,   {category = "Cross Compilation Configuration/Linker Configuration"        }
                 ,   {nil, "ncld",      "kv", nil,          "The Nim Linker"                  }
                 ,   {nil, "ncar",      "kv", nil,          "The Nim Static Library Archiver" }
                 ,   {nil, "ncsh",      "kv", nil,          "The Nim Shared Library Linker"   }
 
-                ,   {category = "Cross Complation Configuration/Builtin Flags Configuration" }
+                ,   {category = "Cross Compilation Configuration/Builtin Flags Configuration" }
                 ,   {nil, "linkdirs",   "kv", nil,         "The Link Search Directories"     }
                 }
             }

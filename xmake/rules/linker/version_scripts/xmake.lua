@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -37,6 +37,10 @@ rule("linker.version_scripts")
         end
         -- @note apple's linker does not support it
         if target:is_plat("macosx", "iphoneos", "watchos", "appletvos") then
+            return
+        end
+        -- @note Solaris linker does not support --version-script
+        if target:is_plat("solaris") then
             return
         end
         if target:has_tool("ld", "gcc", "gxx", "clang", "clangxx") or

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -32,3 +32,6 @@ includes("@builtin/check/check_features.lua")
 includes("@builtin/check/check_links.lua")
 includes("@builtin/check/check_macros.lua")
 includes("@builtin/check/check_syslinks.lua")
+includes("@builtin/check/check_sizeof.lua")
+includes("@builtin/check/check_alignof.lua")
+includes("@builtin/check/check_bigendian.lua")

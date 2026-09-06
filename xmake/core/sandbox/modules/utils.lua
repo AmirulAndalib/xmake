@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        utils.lua
@@ -26,6 +26,7 @@ local colors     = require("base/colors")
 local option     = require("base/option")
 local log        = require("base/log")
 local deprecated = require("base/deprecated")
+local binutils   = require("base/binutils")
 local try        = require("sandbox/modules/try")
 local catch      = require("sandbox/modules/catch")
 local vformat    = require("sandbox/modules/vformat")
@@ -39,7 +40,6 @@ sandbox_utils.confirm = utils.confirm
 sandbox_utils.error   = utils.error
 sandbox_utils.warning = utils.warning
 sandbox_utils.trycall = utils.trycall
-sandbox_utils.ifelse  = utils.ifelse
 
 -- print each arguments
 function sandbox_utils._print(...)
@@ -60,25 +60,20 @@ end
 -- print multi-variables with raw lua action
 --
 function sandbox_utils.print(format, ...)
-
-    -- print format string
     if type(format) == "string" and format:find("%", 1, true) then
         local args = {...}
-        try
-        {
+        try {
             function ()
                 local message = vformat(format, table.unpack(args))
                 utils._print(message)
                 log:printv(message)
             end,
-            catch
-            {
+            catch {
                 function (errors)
                     sandbox_utils._print(format, table.unpack(args))
                 end
             }
         }
-
     else
         sandbox_utils._print(format, ...)
     end
@@ -152,6 +147,12 @@ function sandbox_utils.assert(value, format, ...)
         end
     end
     return value
+end
+
+-- generate c/c++ code from the binary file (deprecated, use binutils.bin2c instead)
+function sandbox_utils.bin2c(binaryfile, outputfile, opt)
+    deprecated.add("binutils.bin2c", "utils.bin2c")
+    return binutils.bin2c(binaryfile, outputfile, opt)
 end
 
 -- return module

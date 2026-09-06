@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        packageskey.lua
@@ -40,6 +40,10 @@ import("private.action.require.impl.utils.get_requires")
 --
 function main(requires_raw)
 
+    -- suppress all logs
+    option.save()
+    option.set("quiet", true, {force = true})
+
     -- get requires and extra config
     local requires_extra = nil
     local requires, requires_extra = get_requires(requires_raw)
@@ -54,7 +58,9 @@ function main(requires_raw)
     end
     table.sort(keys)
     keys = table.concat(keys, ",")
-    print(hash.uuid4(keys):gsub('-', ''):lower())
+
+    option.restore()
+    print(hash.strhash128(keys))
 end
 
 

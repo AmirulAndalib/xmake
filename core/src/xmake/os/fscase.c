@@ -12,7 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Copyright (C) 2015-present, TBOOX Open Source Group.
+ * Copyright (C) 2015-present, Xmake Open Source Community.
  *
  * @author      ruki
  * @file        fscase.c
@@ -22,8 +22,8 @@
 /* //////////////////////////////////////////////////////////////////////////////////////
  * trace
  */
-#define TB_TRACE_MODULE_NAME                "fscase"
-#define TB_TRACE_MODULE_DEBUG               (0)
+#define TB_TRACE_MODULE_NAME "fscase"
+#define TB_TRACE_MODULE_DEBUG (0)
 
 /* //////////////////////////////////////////////////////////////////////////////////////
  * includes
@@ -33,13 +33,11 @@
 /* //////////////////////////////////////////////////////////////////////////////////////
  * implementation
  */
-tb_int_t xm_os_fscase(lua_State* lua)
-{
-    // check
+tb_int_t xm_os_fscase(lua_State *lua) {
     tb_assert_and_check_return_val(lua, 0);
 
 #if ((TB_VERSION_MAJOR * 100) + (TB_VERSION_MINOR * 10) + TB_VERSION_ALTER) >= 174
-    tb_char_t const* path = luaL_checkstring(lua, 1);
+    tb_char_t const *path = luaL_checkstring(lua, 1);
     tb_check_return_val(path, 0);
 
     lua_pushinteger(lua, (tb_int_t)tb_file_fscase(path));

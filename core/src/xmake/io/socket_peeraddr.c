@@ -12,7 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Copyright (C) 2015-present, TBOOX Open Source Group.
+ * Copyright (C) 2015-present, Xmake Open Source Community.
  *
  * @author      ruki
  * @sock        socket_peeraddr.c
@@ -22,8 +22,8 @@
 /* //////////////////////////////////////////////////////////////////////////////////////
  * trace
  */
-#define TB_TRACE_MODULE_NAME    "socket_peeraddr"
-#define TB_TRACE_MODULE_DEBUG   (0)
+#define TB_TRACE_MODULE_NAME "socket_peeraddr"
+#define TB_TRACE_MODULE_DEBUG (0)
 
 /* //////////////////////////////////////////////////////////////////////////////////////
  * includes
@@ -35,7 +35,7 @@
  */
 
 // socket to fd
-#define xm_io_sock2fd(sock)            (lua_Number)tb_sock2fd(sock)
+#define xm_io_sock2fd(sock) (lua_Number) tb_sock2fd(sock)
 
 /* //////////////////////////////////////////////////////////////////////////////////////
  * implementation
@@ -43,14 +43,13 @@
 
 /* io.socket_peeraddr(sock)
  */
-tb_int_t xm_io_socket_peeraddr(lua_State* lua)
-{
-    // check
+tb_int_t xm_io_socket_peeraddr(lua_State *lua) {
     tb_assert_and_check_return_val(lua, 0);
 
     // is pointer?
-    if (!xm_lua_ispointer(lua, 1))
+    if (!xm_lua_ispointer(lua, 1)) {
         xm_io_return_error(lua, "get peer address for invalid sock!");
+    }
 
     // get socket
     tb_socket_ref_t sock = (tb_socket_ref_t)xm_lua_topointer(lua, 1);
@@ -59,9 +58,11 @@ tb_int_t xm_io_socket_peeraddr(lua_State* lua)
     // get peer address
     tb_ipaddr_t addr;
     tb_char_t data[256];
-    tb_char_t const* cstr = tb_null;
-    if (tb_socket_peer(sock, &addr) && (cstr = tb_ipaddr_cstr(&addr, data, sizeof(data))))
+    tb_char_t const *cstr = tb_null;
+    if (tb_socket_peer(sock, &addr) && (cstr = tb_ipaddr_cstr(&addr, data, sizeof(data)))) {
         lua_pushstring(lua, cstr);
-    else lua_pushnil(lua);
+    } else {
+        lua_pushnil(lua);
+    }
     return 1;
 }

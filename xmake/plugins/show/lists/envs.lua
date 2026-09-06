@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        envs.lua
@@ -20,6 +20,8 @@
 
 -- imports
 import("core.base.text")
+import("core.base.json")
+import("core.base.option")
 import("core.base.global")
 import("core.project.config")
 import("core.project.project")
@@ -38,7 +40,27 @@ function main()
                     XMAKE_TMPDIR         = {"Set the temporary directory.", os.tmpdir()},
                     XMAKE_PROFILE        = {"Start profiler, e.g. perf:call, perf:tag, trace, stuck.", os.getenv("XMAKE_PROFILE")},
                     XMAKE_PKG_CACHEDIR   = {"Set the cache directory of packages.", os.getenv("XMAKE_PKG_CACHEDIR")},
-                    XMAKE_PKG_INSTALLDIR = {"Set the install directory of packages.", os.getenv("XMAKE_PKG_INSTALLDIR")}}
+                    XMAKE_PKG_INSTALLDIR = {"Set the install directory of packages.", os.getenv("XMAKE_PKG_INSTALLDIR")},
+                    XMAKE_MAIN_REPO      = {"Set the official package master repository url.", os.getenv("XMAKE_MAIN_REPO")},
+                    XMAKE_BINARY_REPO    = {"Set the official package pre-compiled repository url.", os.getenv("XMAKE_BINARY_REPO")},
+                    XMAKE_THEME          = {"Set theme.", os.getenv("XMAKE_THEME") or global.get("theme")},
+                    XMAKE_STATS          = {"Enable or disable user statistics.", os.getenv("XMAKE_STATS")}}
+    
+    if option.get("json") then
+        local list = {}
+        local names = {}
+        for name in pairs(envs) do
+            table.insert(names, name)
+        end
+        table.sort(names)
+        for _, name in ipairs(names) do
+            local env = envs[name]
+            table.insert(list, {name = name, description = env[1], value = env[2]})
+        end
+        print(json.encode(list))
+        return 
+    end
+
     local width = 24
     for name, env in pairs(envs) do
         cprint("${color.dump.string}%s${clear}%s%s", name, (" "):rep(width - #name), env[1])

@@ -1,7 +1,8 @@
 function main(t)
-
-    -- freebsd ci is slower
-    if is_host("bsd") then
+    if is_host("bsd", "solaris", "haiku") or is_subhost("msys") then
+        return
+    end
+    if is_host("linux") and linuxos.name() == "alpine" then
         return
     end
 

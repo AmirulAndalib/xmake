@@ -12,11 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Copyright (C) 2022-present, TBOOX Open Source Group.
+# Copyright (C) 2022-present, Xmake Open Source Community.
 #
 # @author      ruki
 # @homepage    profile-unix.sh
 #
+
+# register PATH
+[[ "$PATH" =~ (^|:)"$XMAKE_ROOTDIR"(:|$) ]] || export PATH="$XMAKE_ROOTDIR:$PATH"
 
 # register completions
 if   [[ -n "$ZSH_VERSION" ]]; then

@@ -30,7 +30,8 @@ target "lua"
     add_files "lua/lobject.c"
     add_files "lua/lopcodes.c"
     add_files "lua/loslib.c"
-    add_files "lua/lparser.c"
+    # allow reassignment of for-loop control variables (lua 5.4 compatible)
+    add_files "lua/lparser.c" "{replace = {RDKCONST);, VDKREG);}}"
     add_files "lua/lstate.c"
     add_files "lua/lstring.c"
     add_files "lua/lstrlib.c"
@@ -44,8 +45,10 @@ target "lua"
 
     # add definitions
     add_defines "LUA_COMPAT_5_1" "LUA_COMPAT_5_2" "LUA_COMPAT_5_3" "{public}"
-    if is_plat "mingw"; then
-        add_defines "LUA_USE_WINDOWS"
+
+    if is_plat "mingw"; then true
+        # it has been defined in luaconf.h
+        #add_defines "LUA_USE_WINDOWS"
     elif is_plat "macosx"; then
         add_defines "LUA_USE_MACOSX"
     else

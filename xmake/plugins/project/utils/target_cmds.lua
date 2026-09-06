@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        target_cmds.lua
@@ -24,82 +24,74 @@ import("core.project.config")
 import("core.base.hashset")
 import("core.project.rule")
 import("private.utils.batchcmds")
-import("private.utils.rule_groups")
+import("private.action.build.target", {alias = "target_buildutils"})
 
--- this sourcebatch is built?
-function _sourcebatch_is_built(sourcebatch)
-    -- we can only use rulename to filter them because sourcekind may be bound to multiple rules
-    local rulename = sourcebatch.rulename
-    if rulename == "c.build" or rulename == "c++.build"
-        or rulename == "asm.build" or rulename == "cuda.build"
-        or rulename == "objc.build" or rulename == "objc++.build"
-        or rulename == "win.sdk.resource" then
-        return true
-    end
+-- prepare targets
+function prepare_targets(targets)
+    local targets_root = targets or target_buildutils.get_root_targets()
+    target_buildutils.run_targetjobs(targets_root, {job_kind = "prepare", for_generator = true, jobs = os.default_njob()})
 end
 
--- get target buildcmd commands
-function get_target_buildcmd(target, cmds, suffix)
-    for _, ruleinst in ipairs(target:orderules()) do
-        local scriptname = "buildcmd" .. (suffix and ("_" .. suffix) or "")
-        local script = ruleinst:script(scriptname)
-        if script then
-            local batchcmds_ = batchcmds.new({target = target})
-            script(target, batchcmds_, {})
-            if not batchcmds_:empty() then
-                table.join2(cmds, batchcmds_:cmds())
-            end
+-- get target buildcmds
+function get_target_buildcmds(target, opt)
+    opt = opt or {}
+    local progress_wrapper = {}
+    progress_wrapper.current = function ()
+        return count
+    end
+    progress_wrapper.total = function ()
+        return total
+    end
+    progress_wrapper.percent = function ()
+        if total and total > 0 then
+            return math.floor((count * 100) / total)
+        else
+            return 0
         end
     end
-end
-
--- get target buildcmd_files commands
-function get_target_buildcmd_files(target, cmds, sourcebatch, suffix)
-
-    -- get rule
-    local rulename = assert(sourcebatch.rulename, "unknown rule for sourcebatch!")
-    local ruleinst = assert(target:rule(rulename) or project.rule(rulename) or rule.rule(rulename), "unknown rule: %s", rulename)
-
-    -- generate commands for xx_buildcmd_files
-    local scriptname = "buildcmd_files" .. (suffix and ("_" .. suffix) or "")
-    local script = ruleinst:script(scriptname)
-    if script then
-        local batchcmds_ = batchcmds.new({target = target})
-        script(target, batchcmds_, sourcebatch, {})
-        if not batchcmds_:empty() then
-            table.join2(cmds, batchcmds_:cmds())
+    debug.setmetatable(progress_wrapper, {
+        __tostring = function ()
+            -- we do not output any progress info for the project generators
+            return ""
         end
-    end
-
-    -- generate commands for xx_buildcmd_file
-    if not script then
-        scriptname = "buildcmd_file" .. (suffix and ("_" .. suffix) or "")
-        script = ruleinst:script(scriptname)
-        if script then
-            local sourcekind = sourcebatch.sourcekind
-            for _, sourcefile in ipairs(sourcebatch.sourcefiles) do
-                local batchcmds_ = batchcmds.new({target = target})
-                script(target, batchcmds_, sourcefile, {})
-                if not batchcmds_:empty() then
-                    table.join2(cmds, batchcmds_:cmds())
+    })
+    local buildcmds = batchcmds.new({target = target})
+    local jobgraph = target_buildutils.get_targetjobs({target}, {
+        job_kind = "build",
+        for_generator = true,
+        buildcmds = buildcmds,
+        with_stages = hashset.from(opt.stages or {}),
+        ignored_rules = hashset.from(opt.ignored_rules or {})})
+    if jobgraph and not jobgraph:empty() then
+        local total = jobgraph:size()
+        local index = 0
+        local jobqueue = jobgraph:build()
+        while true do
+            local job = jobqueue:getfree()
+            if job then
+                if job.run then
+                    job.run(index, total, {progress = progress_wrapper})
                 end
+                jobqueue:remove(job)
+                index = index + 1
+            else
+                break
             end
         end
     end
-end
-
--- get target buildcmd commands of source group
-function get_target_buildcmd_sourcegroups(target, cmds, sourcegroups, suffix)
-    for idx, group in irpairs(sourcegroups) do
-        for _, item in pairs(group) do
-            -- buildcmd scripts are always in rule, so we need to ignore target item (item.target).
-            local sourcebatch = item.sourcebatch
-            if item.rule then
-                if not _sourcebatch_is_built(sourcebatch) then
-                    get_target_buildcmd_files(target, cmds, sourcebatch, suffix)
-                end
-            end
+    -- translate batchcmds:lua to batchcmds:runv, we need to generate executable commmand
+    for _, cmd in ipairs(buildcmds:cmds()) do
+        local kind = cmd.kind
+        if cmd.script and (kind == "lua" or kind == "vlua") then
+            cmd.kind = (kind == "vlua") and "vrunv" or "runv"
+            cmd.program = os.programfile()
+            cmd.argv = table.join("lua", cmd.script, cmd.argv)
+            cmd.script = nil
+        elseif cmd.func and kind == "call" then
+            local name = cmd.opt and cmd.opt.name or "unknown"
+            wprint("%s: batchcmds:call() is not supported by the project generator and will be ignored!", name)
         end
     end
+    return buildcmds:cmds()
 end
 

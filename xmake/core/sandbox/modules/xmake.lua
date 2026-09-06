@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -25,12 +25,15 @@ local xmake   = require("base/xmake")
 local sandbox_xmake = sandbox_xmake or {}
 
 -- inherit some builtin interfaces
-sandbox_xmake.version     = xmake.version
-sandbox_xmake.branch      = xmake.branch
-sandbox_xmake.programdir  = xmake.programdir
-sandbox_xmake.programfile = xmake.programfile
-sandbox_xmake.luajit      = xmake.luajit
-sandbox_xmake.argv        = xmake.argv
+sandbox_xmake.arch           = xmake.arch
+sandbox_xmake.version        = xmake.version
+sandbox_xmake.branch         = xmake.branch
+sandbox_xmake.programdir     = xmake.programdir
+sandbox_xmake.programfile    = xmake.programfile
+sandbox_xmake.luajit         = xmake.luajit
+sandbox_xmake.is_embed       = xmake.is_embed
+sandbox_xmake.in_main_thread = xmake.in_main_thread
+sandbox_xmake.argv           = xmake.argv
 
 -- return module
 return sandbox_xmake

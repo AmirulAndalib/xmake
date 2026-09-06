@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -20,7 +20,7 @@
 
 language("asm")
     add_rules("asm")
-    set_sourcekinds {as = {".s", ".asm"}}
+    set_sourcekinds {as = {".s", ".S", ".asm"}}
     set_sourceflags {as = "asflags"}
     set_targetkinds {binary = "ld", static = "ar", shared = "sh"}
     set_targetflags {binary = "ldflags", static = "arflags", shared = "shflags"}
@@ -32,6 +32,7 @@ language("asm")
     set_nameflags {
         object = {
             "config.includedirs"
+        ,   "target.runtimes"
         ,   "target.symbols"
         ,   "target.warnings"
         ,   "target.optimize:check"
@@ -40,7 +41,6 @@ language("asm")
         ,   "target.includedirs"
         ,   "target.defines"
         ,   "target.undefines"
-        ,   "target.runtimes"
         ,   "toolchain.includedirs"
         ,   "toolchain.defines"
         ,   "toolchain.undefines"
@@ -48,12 +48,12 @@ language("asm")
         ,   "toolchain.sysincludedirs"
         }
     ,   binary = {
-            "config.linkdirs"
+            "target.runtimes"
+        ,   "config.linkdirs"
         ,   "target.linkdirs"
         ,   "target.rpathdirs"
         ,   "target.strip"
         ,   "target.symbols"
-        ,   "target.runtimes"
         ,   "toolchain.linkdirs"
         ,   "toolchain.rpathdirs"
         ,   "config.links"
@@ -64,11 +64,11 @@ language("asm")
         ,   "toolchain.syslinks"
         }
     ,   shared = {
-            "config.linkdirs"
+            "target.runtimes"
+        ,   "config.linkdirs"
         ,   "target.linkdirs"
         ,   "target.strip"
         ,   "target.symbols"
-        ,   "target.runtimes"
         ,   "toolchain.linkdirs"
         ,   "config.links"
         ,   "target.links"
@@ -86,23 +86,23 @@ language("asm")
     set_menu {
                 config =
                 {
-                    {category = "Cross Complation Configuration/Compiler Configuration"       }
+                    {category = "Cross Compilation Configuration/Compiler Configuration"       }
                 ,   {nil, "as",         "kv", nil,          "The Assembler"                   }
 
-                ,   {category = "Cross Complation Configuration/Linker Configuration"         }
+                ,   {category = "Cross Compilation Configuration/Linker Configuration"         }
                 ,   {nil, "ar",         "kv", nil,          "The Static Library Linker"       }
                 ,   {nil, "ld",         "kv", nil,          "The Linker"                      }
                 ,   {nil, "sh",         "kv", nil,          "The Shared Library Linker"       }
 
-                ,   {category = "Cross Complation Configuration/Compiler Flags Configuration" }
+                ,   {category = "Cross Compilation Configuration/Compiler Flags Configuration" }
                 ,   {nil, "asflags",    "kv", nil,          "The Assembler Flags"             }
 
-                ,   {category = "Cross Complation Configuration/Linker Flags Configuration"   }
+                ,   {category = "Cross Compilation Configuration/Linker Flags Configuration"   }
                 ,   {nil, "ldflags",    "kv", nil,          "The Binary Linker Flags"         }
                 ,   {nil, "arflags",    "kv", nil,          "The Static Library Linker Flags" }
                 ,   {nil, "shflags",    "kv", nil,          "The Shared Library Linker Flags" }
 
-                ,   {category = "Cross Complation Configuration/Builin Flags Configuration"   }
+                ,   {category = "Cross Compilation Configuration/Builtin Flags Configuration"   }
                 ,   {nil, "links",      "kv", nil,          "The Link Libraries"              }
                 ,   {nil, "syslinks",   "kv", nil,          "The System Link Libraries"       }
                 ,   {nil, "linkdirs",   "kv", nil,          "The Link Search Directories"     }

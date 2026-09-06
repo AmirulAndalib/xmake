@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        os.lua
@@ -102,21 +102,21 @@ function sandbox_os.cp(srcpath, dstpath, opt)
 end
 
 -- move file or directory
-function sandbox_os.mv(srcpath, dstpath)
+function sandbox_os.mv(srcpath, dstpath, opt)
     assert(srcpath and dstpath)
     srcpath = tostring(srcpath)
     dstpath = tostring(dstpath)
-    local ok, errors = os.mv(vformat(srcpath), vformat(dstpath))
+    local ok, errors = os.mv(vformat(srcpath), vformat(dstpath), opt)
     if not ok then
         os.raise(errors)
     end
 end
 
 -- remove files or directories
-function sandbox_os.rm(filepath)
+function sandbox_os.rm(filepath, opt)
     assert(filepath)
     filepath = tostring(filepath)
-    local ok, errors = os.rm(vformat(filepath))
+    local ok, errors = os.rm(vformat(filepath), opt)
     if not ok then
         os.raise(errors)
     end
@@ -152,21 +152,21 @@ function sandbox_os.vmv(srcpath, dstpath, opt)
 end
 
 -- remove file or directory with the verbose info
-function sandbox_os.vrm(filepath)
+function sandbox_os.vrm(filepath, opt)
     assert(filepath)
     if option.get("verbose") then
         utils.cprint("${dim}> remove %s", filepath)
     end
-    return sandbox_os.rm(filepath)
+    return sandbox_os.rm(filepath, opt)
 end
 
 -- link file or directory with the verbose info
-function sandbox_os.vln(srcpath, dstpath)
+function sandbox_os.vln(srcpath, dstpath, opt)
     assert(srcpath and dstpath)
     if option.get("verbose") then
         utils.cprint("${dim}> link %s to %s", srcpath, dstpath)
     end
-    return sandbox_os.ln(srcpath, dstpath)
+    return sandbox_os.ln(srcpath, dstpath, opt)
 end
 
 -- try to copy file or directory
@@ -176,15 +176,15 @@ function sandbox_os.trycp(srcpath, dstpath, opt)
 end
 
 -- try to move file or directory
-function sandbox_os.trymv(srcpath, dstpath)
+function sandbox_os.trymv(srcpath, dstpath, opt)
     assert(srcpath and dstpath)
-    return os.mv(vformat(srcpath), vformat(dstpath))
+    return os.mv(vformat(srcpath), vformat(dstpath), opt)
 end
 
 -- try to remove files or directories
-function sandbox_os.tryrm(filepath)
+function sandbox_os.tryrm(filepath, opt)
     assert(filepath)
-    return os.rm(vformat(filepath))
+    return os.rm(vformat(filepath), opt)
 end
 
 -- change to directory
@@ -225,9 +225,9 @@ function sandbox_os.mkdir(dir)
 end
 
 -- remove directories
-function sandbox_os.rmdir(dir)
+function sandbox_os.rmdir(dir, opt)
     assert(dir)
-    local ok, errors = os.rmdir(vformat(dir))
+    local ok, errors = os.rmdir(vformat(dir), opt)
     if not ok then
         os.raise(errors)
     end
@@ -285,7 +285,7 @@ end
 -- quietly run command with arguments list and echo verbose info if [-v|--verbose] option is enabled
 function sandbox_os.vrunv(program, argv, opt)
     if option.get("verbose") then
-        print(vformat(program) .. " " .. sandbox_os.args(argv))
+        print(vformat(program) .. " " .. sandbox_os.args(argv or {}))
     end
     if not (opt and opt.dryrun) then
         (option.get("verbose") and sandbox_os.execv or sandbox_os.runv)(program, argv, opt)
@@ -330,9 +330,9 @@ function sandbox_os.exec(cmd, ...)
     local ok, errors = os.exec(cmd)
     if ok ~= 0 then
         if ok ~= nil then
-            errors = string.format("exec(%s) failed(%d)", cmd, ok)
+            errors = string.format("exec(%s) failed(%d), %s", cmd, ok, errors or "unknown reason")
         else
-            errors = string.format("cannot exec(%s), %s", cmd, errors and errors or "unknown reason")
+            errors = string.format("cannot exec(%s), %s", cmd, errors or "unknown reason")
         end
         os.raise(errors)
     end
@@ -371,9 +371,9 @@ function sandbox_os.execv(program, argv, opt)
 
         -- get errors
         if ok ~= nil then
-            errors = string.format("execv(%s) failed(%d)", cmd, ok)
+            errors = string.format("execv(%s) failed(%d), %s", cmd, ok, errors or "unknown reason")
         else
-            errors = string.format("cannot execv(%s), %s", cmd, errors and errors or "unknown reason")
+            errors = string.format("cannot execv(%s), %s", cmd, errors or "unknown reason")
         end
         os.raise(errors)
     end
@@ -411,23 +411,23 @@ function sandbox_os.vexecv(program, argv, opt)
 end
 
 -- match files or directories
-function sandbox_os.match(pattern, mode, callback)
-    return os.match(vformat(tostring(pattern)), mode, callback)
+function sandbox_os.match(pattern, mode, opt)
+    return os.match(vformat(tostring(pattern)), mode, opt)
 end
 
 -- match directories
-function sandbox_os.dirs(pattern, callback)
-    return (sandbox_os.match(pattern, 'd', callback))
+function sandbox_os.dirs(pattern, opt)
+    return os.dirs(vformat(tostring(pattern)), opt)
 end
 
 -- match files
-function sandbox_os.files(pattern, callback)
-    return (sandbox_os.match(pattern, 'f', callback))
+function sandbox_os.files(pattern, opt)
+    return os.files(vformat(tostring(pattern)), opt)
 end
 
 -- match files and directories
-function sandbox_os.filedirs(pattern, callback)
-    return (sandbox_os.match(pattern, 'a', callback))
+function sandbox_os.filedirs(pattern, opt)
+    return os.filedirs(vformat(tostring(pattern)), opt)
 end
 
 -- is directory?

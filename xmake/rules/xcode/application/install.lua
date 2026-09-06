@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        install.lua
@@ -32,7 +32,7 @@ function _install_for_ios(target)
     -- get *.ipa file
     local ipafile = path.join(path.directory(appdir), path.basename(appdir) .. ".ipa")
     if not os.isfile(ipafile) or os.mtime(target:targetfile()) > os.mtime(ipafile) then
-        task.run("package", {target = target:name()})
+        task.run("package", {targets = {target:name()}})
     end
     assert(os.isfile(ipafile), "please run `xmake package` first!")
 

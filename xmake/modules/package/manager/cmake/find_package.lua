@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_package.lua
@@ -20,8 +20,24 @@
 
 -- imports
 import("core.base.option")
+import("core.base.hashset")
 import("core.project.target")
 import("lib.detect.find_tool")
+
+-- exclude cmake internal definitions https://github.com/xmake-io/xmake/issues/5217
+function _should_exclude(define)
+    local name = define:split("=")[1]
+    return table.contains({"CMAKE_INTDIR", "_DEBUG", "NDEBUG"}, name)
+end
+
+-- map xmake mode to cmake mode
+function _cmake_mode(mode)
+    if mode == "debug" then return "Debug"
+    elseif mode == "releasedbg" then return "RelWithDebInfo"
+    elseif mode == "minsizerel" then return "MinSizeRel"
+    else return "Release"
+    end
+end
 
 -- find package
 function _find_package(cmake, name, opt)
@@ -67,6 +83,14 @@ function _find_package(cmake, name, opt)
             cmakefile:print("list(APPEND CMAKE_MODULE_PATH \"%s\")", (moduledir:gsub("\\", "/")))
         end
     end
+    -- https://github.com/xmake-io/xmake/issues/6296
+    local prefixdirs = configs.prefixdirs or opt.prefixdirs
+    if prefixdirs then
+        for _, prefixdir in ipairs(prefixdirs) do
+            cmakefile:print("list(APPEND CMAKE_PREFIX_PATH \"%s\")", (prefixdir:gsub("\\", "/")))
+        end
+    end
+
     -- e.g. set(Boost_USE_STATIC_LIB ON)
     local presets = configs.presets or opt.presets
     if presets then
@@ -80,8 +104,7 @@ function _find_package(cmake, name, opt)
     end
     local testname = "test_" .. name
     cmakefile:print("find_package(%s REQUIRED %s)", requirestr, componentstr)
-    cmakefile:print("if(%s_FOUND)", name)
-    cmakefile:print("   add_executable(%s test.cpp)", testname)
+    cmakefile:print("add_executable(%s test.cpp)", testname)
     -- setup include directories
     local includedirs = ""
     if configs.include_directories then
@@ -90,9 +113,9 @@ function _find_package(cmake, name, opt)
         includedirs = ("${%s_INCLUDE_DIR} ${%s_INCLUDE_DIRS}"):format(name, name)
         includedirs = includedirs .. (" ${%s_INCLUDE_DIR} ${%s_INCLUDE_DIRS}"):format(name:upper(), name:upper())
     end
-    cmakefile:print("   target_include_directories(%s PRIVATE %s)", testname, includedirs)
+    cmakefile:print("target_include_directories(%s PRIVATE %s)", testname, includedirs)
     -- reserved for backword compatibility
-    cmakefile:print("   target_include_directories(%s PRIVATE ${%s_CXX_INCLUDE_DIRS})",
+    cmakefile:print("target_include_directories(%s PRIVATE ${%s_CXX_INCLUDE_DIRS})",
         testname, name)
     -- setup link library/target
     local linklibs = ""
@@ -102,23 +125,28 @@ function _find_package(cmake, name, opt)
         linklibs = ("${%s_LIBRARY} ${%s_LIBRARIES} ${%s_LIBS}"):format(name, name, name)
         linklibs = linklibs .. (" ${%s_LIBRARY} ${%s_LIBRARIES} ${%s_LIBS}"):format(name:upper(), name:upper(), name:upper())
     end
-    cmakefile:print("   target_link_libraries(%s PRIVATE %s)", testname, linklibs)
-    cmakefile:print("endif(%s_FOUND)", name)
+    cmakefile:print("target_link_libraries(%s PRIVATE %s)", testname, linklibs)
     cmakefile:close()
     if option.get("diagnosis") then
         local cmakedata = io.readfile(filepath)
-        cprint("finding it from the generated CMakeLists.txt:\n${dim}%s", cmakedata)
+        cprint("finding it from the generated CMakeLists.txt:")
+        io.write(cmakedata .. "\n")
     end
 
     -- run cmake
-    local envs = configs.envs or opt.envs
-    if opt.mode == "debug" then
-        envs = envs or {}
-        envs.CMAKE_BUILD_TYPE = envs.CMAKE_BUILD_TYPE or "Debug"
+    local envs = configs.envs or opt.envs or {}
+    envs.CMAKE_BUILD_TYPE = envs.CMAKE_BUILD_TYPE or _cmake_mode(opt.mode or "release")
+    -- If the generated CMakeLists.txt fails to find the REQUIRED package, CMake will exit
+    -- with code 1, os.vrunv will raise an error and the try{} block will return nil.
+    local ok = try {function()
+        os.vrunv(cmake.program, {workdir}, {curdir = workdir, envs = envs})
+        return true
+    end}
+    if not ok then
+        return
     end
-    try {function() return os.vrunv(cmake.program, {workdir}, {curdir = workdir, envs = envs}) end}
 
-    -- pares defines and includedirs for macosx/linux
+    -- parse defines and includedirs for macosx/linux
     local links
     local linkdirs
     local libfiles
@@ -130,7 +158,8 @@ function _find_package(cmake, name, opt)
         local flagsdata = io.readfile(flagsfile)
         if flagsdata then
             if option.get("diagnosis") then
-                cprint("finding includes from %s\n${dim}%s", flagsfile, flagsdata)
+                cprint("finding includes from %s", flagsfile)
+                io.write(flagsdata .. "\n")
             end
             for _, line in ipairs(flagsdata:split("\n", {plain = true})) do
                 if line:find("CXX_INCLUDES =", 1, true) then
@@ -149,12 +178,12 @@ function _find_package(cmake, name, opt)
                         end
                     end
                 elseif line:find("CXX_DEFINES =", 1, true) then
+                    defines = defines or {}
                     local flags = os.argv(line:split("=", {plain = true})[2]:trim())
                     for _, flag in ipairs(flags) do
                         if flag:startswith("-D") and #flag > 2 then
                             local define = flag:sub(3)
-                            if define then
-                                defines = defines or {}
+                            if define and not _should_exclude(define) then
                                 table.insert(defines, define)
                             end
                         end
@@ -170,9 +199,11 @@ function _find_package(cmake, name, opt)
         local linkdata = io.readfile(linkfile)
         if linkdata then
             if option.get("diagnosis") then
-                cprint("finding links from %s\n${dim}%s", linkfile, linkdata)
+                cprint("finding links from %s", linkfile)
+                io.write(linkdata .. "\n")
             end
             for _, line in ipairs(os.argv(linkdata)) do
+                local line = line
                 local is_ldflags = false
                 local is_library = false
                 for _, suffix in ipairs({".so", ".dylib", ".dylib", ".tbd", ".lib"}) do
@@ -224,6 +255,9 @@ function _find_package(cmake, name, opt)
     local vcprojfile = path.join(workdir, testname .. ".vcxproj")
     if os.isfile(vcprojfile) then
         local vcprojdata = io.readfile(vcprojfile)
+        local vs_mode = envs.CMAKE_BUILD_TYPE or _cmake_mode(opt.mode or "release")
+        vcprojdata = vcprojdata:match("<ItemDefinitionGroup Condition=\"'$%(Configuration%)|$%(Platform%)'=='" .. vs_mode .. "|.->(.-)</ItemDefinitionGroup>")
+
         if vcprojdata then
             for _, line in ipairs(vcprojdata:split("\n", {plain = true})) do
                 local values = line:match("<AdditionalIncludeDirectories>(.+);%%%(AdditionalIncludeDirectories%)</AdditionalIncludeDirectories>")
@@ -259,7 +293,12 @@ function _find_package(cmake, name, opt)
                 values = line:match("<PreprocessorDefinitions>%%%(PreprocessorDefinitions%);(.+)</PreprocessorDefinitions>")
                 if values then
                     defines = defines or {}
-                    table.join2(defines, path.splitenv(values))
+                    values = path.splitenv(values)
+                    for _, value in ipairs(values) do
+                        if not _should_exclude(value) then
+                            table.insert(defines, value)
+                        end
+                    end
                 end
             end
         end
@@ -269,7 +308,7 @@ function _find_package(cmake, name, opt)
     os.tryrm(workdir)
 
     -- get results
-    if links or includedirs then
+    if configs.allow_empty_package or links or includedirs then
         local results = {}
         results.links       = table.reverse_unique(links)
         results.ldflags     = table.reverse_unique(ldflags)

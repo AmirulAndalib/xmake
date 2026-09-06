@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        gnu2mslib.lua
@@ -104,7 +104,7 @@ function main(mslib, gnulib_or_defpath, opt)
     assert(defpath and os.isfile(defpath), "gnu2mslib(): convert failed, cannot get .def file!")
 
     -- generate mslib from gnulib
-    os.vrunv(libtool.program, {"/def:" .. defpath, "/name:" .. path.filename(dllname), "/out:" .. mslib})
+    os.vrunv(libtool.program, {"/machine:" .. opt.arch, "/def:" .. defpath, "/name:" .. path.filename(dllname), "/out:" .. mslib}, {envs = msvc:runenvs()})
 
     -- remove temporary .def file
     if not gnulib_or_defpath:endswith(".def") then

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        target.lua
@@ -24,6 +24,22 @@ import("core.base.hashset")
 import("core.tool.compiler")
 import("core.project.depend")
 import("utils.progress")
+
+-- get dependent target files
+function _get_target_depfiles(target)
+    local depfiles = {}
+    for _, dep in ipairs(target:orderdeps()) do
+        if dep:is_static() or dep:is_shared() then
+            table.insert(depfiles, dep:targetfile())
+        end
+    end
+    local linkdepfiles = target:data("linkdepfiles")
+    if linkdepfiles then
+        table.join2(depfiles, linkdepfiles)
+    end
+    table.sort(depfiles)
+    return depfiles
+end
 
 -- build the source files
 function build_sourcefiles(target, sourcebatch, opt)
@@ -49,7 +65,8 @@ function build_sourcefiles(target, sourcebatch, opt)
 
     -- need build this object?
     local depvalues = {compinst:program(), compflags}
-    if not depend.is_changed(dependinfo, {lastmtime = os.mtime(targetfile), values = depvalues}) then
+    local depfiles = table.join(table.clone(sourcefiles), _get_target_depfiles(target))
+    if not depend.is_changed(dependinfo, {lastmtime = os.mtime(targetfile), values = depvalues, files = depfiles}) then
         return
     end
 
@@ -68,7 +85,7 @@ function build_sourcefiles(target, sourcebatch, opt)
 
     -- update files and values to the dependent file
     dependinfo.values = depvalues
-    table.join2(dependinfo.files, sourcefiles)
+    table.join2(dependinfo.files, depfiles)
     depend.save(dependinfo, dependfile)
 end
 

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        main.lua
@@ -25,12 +25,13 @@ import("core.project.rule")
 import("core.project.config")
 import("core.project.project")
 import("core.base.bit")
+import("private.action.utils", {alias = "action_utils"})
 
 -- get library deps
 function _get_librarydeps(target)
     local librarydeps = {}
     for _, depname in ipairs(target:get("deps")) do
-        local dep = project.target(depname)
+        local dep = project.target(depname, {namespace = target:namespace()})
         if not ((target:is_binary() or target:is_shared()) and dep:is_static()) then
             table.insert(librarydeps, dep:name():lower())
         end
@@ -54,6 +55,8 @@ function _package_remote(target)
             file:print("    set_kind(\"binary\")")
         elseif target:is_headeronly() then
             file:print("    set_kind(\"library\", {headeronly = true})")
+        elseif target:is_moduleonly() then
+            file:print("    set_kind(\"library\", {moduleonly = true})")
         end
         local homepage = option.get("homepage")
         if homepage then
@@ -122,6 +125,7 @@ function _package_target(target)
         ,   static     = _package_remote
         ,   shared     = _package_remote
         ,   headeronly = _package_remote
+        ,   moduleonly = _package_remote
         }
         local kind = target:kind()
         local script = scripts[kind]
@@ -147,19 +151,10 @@ function main()
     -- load config
     config.load()
 
-    -- package the given target?
-    local targetname = option.get("target")
-    if targetname then
-        local target = project.target(targetname)
-        _package_targets(target:orderdeps())
+    -- package the given targets
+    local targetnames = option.get("targets")
+    for _, target in ipairs(action_utils.get_targets(targetnames, {all = option.get("all")})) do
         _package_target(target)
-    else
-        -- package default or all targets
-        for _, target in ipairs(project.ordertargets()) do
-            if target:is_default() or option.get("all") then
-                _package_target(target)
-            end
-        end
     end
 
     -- unlock the whole project

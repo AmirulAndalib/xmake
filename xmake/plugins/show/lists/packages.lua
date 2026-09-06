@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        packages.lua
@@ -20,8 +20,7 @@
 
 -- imports
 import("core.project.config")
-import("require.list", {rootdir = path.join(os.programdir(), "actions"), alias = "show_packages"})
-import(".showlist")
+import("private.action.require.list", { alias = "show_packages" })
 
 -- show all packages
 function main()

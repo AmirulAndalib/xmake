@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        list.lua
@@ -26,6 +26,18 @@ function lists()
     local values = {}
     for _, filepath in ipairs(os.files(path.join(os.scriptdir(), "lists", "*.lua"))) do
         table.insert(values, path.basename(filepath))
+    end
+    return values
+end
+
+-- get all info values
+function infos()
+    local values = {}
+    for _, filepath in ipairs(os.files(path.join(os.scriptdir(), "info", "*.lua"))) do
+        local name = path.basename(filepath)
+        if name ~= "basic" and name ~= "target" then
+            table.insert(values, name)
+        end
     end
     return values
 end

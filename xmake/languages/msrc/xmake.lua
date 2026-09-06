@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -20,7 +20,7 @@
 
 language("msrc")
     add_rules("win.sdk.resource")
-    set_sourcekinds {mrc = ".rc"}
+    set_sourcekinds {mrc = {".rc", ".rc2"}}
     set_sourceflags {mrc = "mrcflags"}
     set_langkinds   {msrc = "mrc"}
     set_mixingkinds("mrc")
@@ -44,13 +44,13 @@ language("msrc")
     set_menu {
                 config =
                 {
-                    {category = "Cross Complation Configuration/Compiler Configuration"       }
+                    {category = "Cross Compilation Configuration/Compiler Configuration"       }
                 ,   {nil, "mrc",        "kv", nil,          "The Microsoft Resource Compiler" }
 
-                ,   {category = "Cross Complation Configuration/Compiler Flags Configuration" }
+                ,   {category = "Cross Compilation Configuration/Compiler Flags Configuration" }
                 ,   {nil, "mrcflags",   "kv", nil,          "The Microsoft Resource Flags"    }
 
-                ,   {category = "Cross Complation Configuration/Builti Flags Configuration"   }
+                ,   {category = "Cross Compilation Configuration/Builti Flags Configuration"   }
                 ,   {nil, "includedirs","kv", nil,          "The Include Search Directories"  }
                 }
             }

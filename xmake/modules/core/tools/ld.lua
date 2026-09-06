@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        ld.lua
@@ -38,7 +38,7 @@ function init(self)
 end
 
 -- make the strip flag
-function nf_strip(self, level, target)
+function nf_strip(self, level)
     local maps = {
         debug = "-S"
     ,   all   = "-s"

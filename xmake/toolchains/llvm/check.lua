@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        check.lua
@@ -21,11 +21,43 @@
 -- imports
 import("core.project.config")
 import("lib.detect.find_path")
+import("lib.detect.find_tool")
 import("detect.sdks.find_xcode")
 import("detect.sdks.find_cross_toolchain")
+import("private.utils.toolchain", {alias = "toolchain_utils"})
+
+-- print Xcode SDK summary (single line)
+function _show_checkinfo(toolchain, xcode_sdkdir)
+    if xcode_sdkdir then
+        local xcode_sdkver = toolchain:config("xcode_sdkver")
+        local extras = {}
+        if xcode_sdkver then
+            table.insert(extras, "sdk: " .. xcode_sdkver)
+        end
+        local target_triple = toolchain_utils.get_xcode_target_triple(toolchain)
+        if target_triple then
+            table.insert(extras, target_triple)
+        end
+        local extra = ""
+        if #extras > 0 then
+            extra = " (" .. table.concat(extras, ", ") .. ")"
+        end
+        cprint("checking for Xcode SDK ... ${color.success}%s%s", xcode_sdkdir, extra)
+    else
+        cprint("checking for Xcode SDK ... ${color.nothing}${text.nothing}")
+    end
+end
 
 -- find xcode on macos
 function _find_xcode(toolchain)
+
+    -- get apple device
+    local appledev = toolchain:config("appledev") or config.get("appledev")
+    if appledev and appledev == "simulator" then
+        appledev = "simulator"
+    elseif not toolchain:is_plat("macosx") and toolchain:is_arch("i386", "x86_64") then
+        appledev = "simulator"
+    end
 
     -- find xcode
     local xcode_sdkver = toolchain:config("xcode_sdkver") or config.get("xcode_sdkver")
@@ -35,7 +67,9 @@ function _find_xcode(toolchain)
                                                    plat = toolchain:plat(),
                                                    arch = toolchain:arch()})
     if not xcode then
-        cprint("checking for Xcode directory ... ${color.nothing}${text.nothing}")
+        if toolchain:is_global() then
+            _show_checkinfo(toolchain, nil)
+        end
         return
     end
 
@@ -43,12 +77,18 @@ function _find_xcode(toolchain)
     xcode_sdkver = xcode.sdkver
     if toolchain:is_global() then
         config.set("xcode", xcode.sdkdir, {force = true, readonly = true})
-        cprint("checking for Xcode directory ... ${color.success}%s", xcode.sdkdir)
+    end
+    local target_minver = toolchain:config("target_minver") or config.get("target_minver")
+    if xcode_sdkver and not target_minver then
+        target_minver = xcode.target_minver
     end
     toolchain:config_set("xcode", xcode.sdkdir)
     toolchain:config_set("xcode_sdkver", xcode_sdkver)
-    toolchain:configs_save()
-    cprint("checking for SDK version of Xcode for %s (%s) ... ${color.success}%s", toolchain:plat(), toolchain:arch(), xcode_sdkver)
+    toolchain:config_set("target_minver", target_minver)
+    toolchain:config_set("appledev", appledev)
+    if toolchain:is_global() then
+        _show_checkinfo(toolchain, xcode.sdkdir)
+    end
 end
 
 -- check the cross toolchain
@@ -57,21 +97,26 @@ function main(toolchain)
     -- get sdk directory
     local sdkdir = toolchain:sdkdir()
     local bindir = toolchain:bindir()
+    local cross  = toolchain:cross()
     if not sdkdir and not bindir then
         bindir = try {function () return os.iorunv("llvm-config", {"--bindir"}) end}
         if bindir then
             sdkdir = path.directory(bindir)
-            print("1", sdkdir)
         elseif is_host("linux") and os.isfile("/usr/bin/llvm-ar") then
             sdkdir = "/usr"
         elseif is_host("macosx") then
-            local bindir
             if os.arch() == "arm64" then
                 bindir = find_path("llvm-ar", "/opt/homebrew/opt/llvm/bin")
             else
                 bindir = find_path("llvm-ar", "/usr/local/Cellar/llvm/*/bin")
             end
             if bindir then
+                sdkdir = path.directory(bindir)
+            end
+        elseif is_host("windows") then
+            local llvm_ar = find_tool("llvm-ar", {force = true, envs = {PATH = os.getenv("PATH")}})
+            if llvm_ar and llvm_ar.program and path.is_absolute(llvm_ar.program) then
+                bindir = path.directory(llvm_ar.program)
                 sdkdir = path.directory(bindir)
             end
         end
@@ -92,12 +137,19 @@ function main(toolchain)
         end
     end
     if cross_toolchain then
-        toolchain:config_set("cross", cross_toolchain.cross)
+        toolchain:config_set("cross", cross)
         toolchain:config_set("bindir", cross_toolchain.bindir)
         toolchain:config_set("sdkdir", cross_toolchain.sdkdir)
-        toolchain:configs_save()
+        local clang = path.join(cross_toolchain.bindir, is_host("windows") and "clang.exe" or "clang")
+        toolchain_utils.check_llvm_info(toolchain, os.isfile(clang) and clang or nil)
     else
-        raise("llvm toolchain not found!")
+        wprint("llvm toolchain not found!")
+        return false
+    end
+
+    if toolchain:is_plat("cross") and (not toolchain:cross() or toolchain:cross():match("^%s*$")) then
+        wprint("Missing cross target. Use `--cross=name` to specify.")
+        return false
     end
 
     -- attempt to find xcode to pass `-isysroot` on macos

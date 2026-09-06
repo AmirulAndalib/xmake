@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        sandbox.lua
@@ -79,59 +79,15 @@ function sandbox._traceback(errors)
         else
             results = results .. string.format("    [%s:%d]:\n", info.short_src, info.currentline)
         end
-
-        -- next
         level = level + 1
     end
-
-    -- ok?
     return results
 end
 
 -- register api for builtin
 function sandbox._api_register_builtin(self, name, func)
-
-    -- check
     assert(self and self._PUBLIC and func)
-
-    -- register it
     self._PUBLIC[name] = func
-end
-
--- get builtin modules
-function sandbox._builtin_modules()
-    local builtin_modules = sandbox._BUILTIN_MODULES
-    if builtin_modules == nil then
-        builtin_modules = {}
-        local builtin_module_files = os.match(path.join(os.programdir(), "core/sandbox/modules/*.lua"))
-        if builtin_module_files then
-            for _, builtin_module_file in ipairs(builtin_module_files) do
-
-                -- the module name
-                local module_name = path.basename(builtin_module_file)
-                assert(module_name)
-
-                -- load script
-                local script, errors = loadfile(builtin_module_file)
-                if script then
-
-                    -- load module
-                    local ok, results = utils.trycall(script)
-                    if not ok then
-                        os.raise(results)
-                    end
-
-                    -- save module
-                    builtin_modules[module_name] = results
-                else
-                    -- error
-                    os.raise(errors)
-                end
-            end
-        end
-        sandbox._BUILTIN_MODULES = builtin_modules
-    end
-    return builtin_modules
 end
 
 -- new a sandbox instance
@@ -145,55 +101,17 @@ function sandbox._new()
 
     -- register the builtin modules
     instance:_api_register_builtin("_g", {})
-    for module_name, module in pairs(sandbox._builtin_modules()) do
+    for module_name, module in pairs(sandbox.builtin_modules()) do
         instance:_api_register_builtin(module_name, module)
     end
 
-    -- bind instance to the public script envirnoment
-    instance:bind(instance._PUBLIC)
-
-    -- ok?
+    -- bind the public script envirnoment
+    instance:_bindenv(instance._PUBLIC)
     return instance
 end
 
--- new a sandbox instance with the given script
-function sandbox.new(script, filter, rootdir)
-
-    -- check
-    assert(script)
-
-    -- new instance
-    local self = sandbox._new()
-
-    -- check
-    assert(self and self._PUBLIC and self._PRIVATE)
-
-    -- save filter
-    self._PRIVATE._FILTER = filter
-
-    -- save root directory
-    self._PRIVATE._ROOTDIR = rootdir
-
-    -- invalid script?
-    if type(script) ~= "function" then
-        return nil, "invalid script!"
-    end
-
-    -- bind public scope
-    setfenv(script, self._PUBLIC)
-
-    -- save script
-    self._PRIVATE._SCRIPT = script
-    return self
-end
-
--- load script in the sandbox
-function sandbox.load(script, ...)
-    return utils.trycall(script, sandbox._traceback, ...)
-end
-
--- bind self instance to the given script or envirnoment
-function sandbox:bind(script_or_env)
+-- bind the given script or envirnoment and the self instance
+function sandbox:_bindenv(script_or_env)
 
     -- get envirnoment
     local env = script_or_env
@@ -202,20 +120,18 @@ function sandbox:bind(script_or_env)
     end
 
     -- bind instance to the script envirnoment
-    setmetatable(env, {     __index = function (tbl, key)
-                                if type(key) == "string" and key == "_SANDBOX" and rawget(tbl, "_SANDBOX_READABLE") then
-                                    return self
-                                end
-                                return rawget(tbl, key)
+    setmetatable(env, { __index = function (tbl, key)
+                            if type(key) == "string" and key == "_SANDBOX" and rawget(tbl, "_SANDBOX_READABLE") then
+                                return self
                             end
-                        ,   __newindex = function (tbl, key, val)
-                                if type(key) == "string" and (key == "_SANDBOX" or key == "_SANDBOX_READABLE") then
-                                    return
-                                end
-                                rawset(tbl, key, val)
-                            end})
-
-    -- ok
+                            return rawget(tbl, key)
+                        end,
+                        __newindex = function (tbl, key, val)
+                            if type(key) == "string" and (key == "_SANDBOX" or key == "_SANDBOX_READABLE") then
+                                return
+                            end
+                            rawset(tbl, key, val)
+                        end})
     return script_or_env
 end
 
@@ -229,23 +145,17 @@ function sandbox:fork(script, rootdir)
 
     -- init a new sandbox instance
     local instance = sandbox._new()
-
-    -- check
     assert(instance and instance._PUBLIC and instance._PRIVATE)
 
-    -- inherit the filter
     instance._PRIVATE._FILTER = self:filter()
-
-    -- inherit the root directory
     instance._PRIVATE._ROOTDIR = rootdir or self:rootdir()
+    instance._PRIVATE._NAMESPACE = self:namespace()
 
     -- bind public scope
     if script then
         setfenv(script, instance._PUBLIC)
         instance._PRIVATE._SCRIPT = script
     end
-
-    -- ok?
     return instance
 end
 
@@ -263,7 +173,7 @@ function sandbox:module()
     table.copy2(scope_backup, scope_public)
 
     -- load module with sandbox
-    local ok, errors = sandbox.load(self:script())
+    local ok, errors = sandbox.call(self:script())
     if not ok then
         return nil, errors
     end
@@ -295,6 +205,47 @@ end
 function sandbox:rootdir()
     assert(self and self._PRIVATE)
     return self._PRIVATE._ROOTDIR
+end
+
+-- get current namespace
+function sandbox:namespace()
+    assert(self and self._PRIVATE)
+    return self._PRIVATE._NAMESPACE
+end
+
+-- register api for builtin
+function sandbox:api_register_builtin(name, func)
+    sandbox._api_register_builtin(self, name, func)
+end
+
+-- new a sandbox instance with the given script
+function sandbox.new(script, opt)
+    opt = opt or {}
+
+    -- new instance
+    local self = sandbox._new()
+    assert(self and self._PUBLIC and self._PRIVATE)
+
+    self._PRIVATE._FILTER = opt.filter
+    self._PRIVATE._ROOTDIR = opt.rootdir
+    self._PRIVATE._NAMESPACE = opt.namespace
+
+    -- invalid script?
+    if type(script) ~= "function" then
+        return nil, "invalid script!"
+    end
+
+    -- bind public scope
+    setfenv(script, self._PUBLIC)
+
+    -- save script
+    self._PRIVATE._SCRIPT = script
+    return self
+end
+
+-- call script in the sandbox
+function sandbox.call(script, ...)
+    return utils.trycall(script, sandbox._traceback, ...)
 end
 
 -- get current instance in the sandbox modules
@@ -348,6 +299,34 @@ function sandbox.instance(script)
         level = level + 1
     end
     return instance
+end
+
+-- get builtin modules
+function sandbox.builtin_modules()
+    local builtin_modules = sandbox._BUILTIN_MODULES
+    if builtin_modules == nil then
+        builtin_modules = {}
+        local builtin_module_files = os.files(path.join(os.programdir(), "core/sandbox/modules/*.lua"))
+        if builtin_module_files then
+            for _, builtin_module_file in ipairs(builtin_module_files) do
+                local module_name = path.basename(builtin_module_file)
+                assert(module_name)
+
+                local script, errors = loadfile(builtin_module_file)
+                if script then
+                    local ok, results = utils.trycall(script)
+                    if not ok then
+                        os.raise(results)
+                    end
+                    builtin_modules[module_name] = results
+                else
+                    os.raise(errors)
+                end
+            end
+        end
+        sandbox._BUILTIN_MODULES = builtin_modules
+    end
+    return builtin_modules
 end
 
 -- return module

@@ -16,15 +16,17 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      EnoroF, ruki
 -- @file        vs201x_vcxproj_filters.lua
 --
 
 -- imports
+import("core.base.hashset")
 import("core.tool.compiler")
 import("vsfile")
+import("vsutils")
 
 -- make header
 function _make_header(filtersfile, vsinfo)
@@ -77,6 +79,7 @@ function _make_filter(filepath, target, vcxprojdir)
             local rootdir = extraconf.rootdir
             assert(rootdir, "please set root directory, e.g. add_filegroups(%s, {rootdir = 'xxx'})", filegroup)
             for _, rootdir in ipairs(table.wrap(rootdir)) do
+                local rootdir = rootdir
                 if not path.is_absolute(rootdir) then
                     rootdir = path.absolute(rootdir, scriptdir)
                 end
@@ -84,7 +87,7 @@ function _make_filter(filepath, target, vcxprojdir)
                 local files = extraconf.files or "**"
                 local mode = extraconf.mode
                 for _, filepattern in ipairs(files) do
-                    filepattern = path.pattern(path.absolute(path.join(rootdir, filepattern)))
+                    local filepattern = path.pattern(path.absolute(path.join(rootdir, filepattern)))
                     if filepath:match(filepattern) then
                         if mode == "plain" then
                             filter = path.normalize(filegroup)
@@ -96,9 +99,6 @@ function _make_filter(filepath, target, vcxprojdir)
                             else
                                 filter = path.normalize(path.directory(fileitem))
                             end
-                        end
-                        if filter and filter == '.' then
-                            filter = nil
                         end
                         goto found_filter
                     end
@@ -118,9 +118,9 @@ function _make_filter(filepath, target, vcxprojdir)
         if filter then
             filter = _strip_dotdirs(filter)
         end
-        if filter and filter == '.' then
-            filter = nil
-        end
+    end
+    if filter and filter == '.' then
+        filter = nil
     end
     return filter
 end
@@ -149,14 +149,20 @@ end
 -- make sources
 function _make_sources(filtersfile, vsinfo, target, vcxprojdir)
 
+    -- the source files that are not natively built by VS, list them as <None> for display only
+    local otherfiles = hashset.from(vsutils.otherfiles(target))
+    -- the files displayed as include files (e.g. also added by add_extrafiles), skip them to avoid duplicate
+    local includefiles = hashset.from(table.join(target.headerfiles or {}, target.extrafiles or {}))
+
     -- and sources
     filtersfile:enter("<ItemGroup>")
         for _, sourcefile in ipairs(target.sourcefiles) do
             local filter = _make_filter(sourcefile, target, vcxprojdir)
-            if filter then
+            if filter and not includefiles:has(sourcefile) then
                 local nodename
                 local ext = path.extension(sourcefile)
-                if ext == "asm" then nodename = "CustomBuild"
+                if otherfiles:has(sourcefile) then nodename = "None"
+                elseif ext == "asm" then nodename = "CustomBuild"
                 elseif ext == "cu" then nodename = "CudaCompile"
                 else nodename = "ClCompile"
                 end

@@ -12,7 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Copyright (C) 2015-present, TBOOX Open Source Group.
+ * Copyright (C) 2015-present, Xmake Open Source Community.
  *
  * @author      ruki
  * @file        prefix.h
@@ -31,14 +31,11 @@
  */
 
 // return libc error
-#define xm_libc_return_error(lua, error)          \
-    do                                            \
-    {                                             \
-        lua_pushnil(lua);                         \
-        lua_pushliteral(lua, error);              \
-        return 2;                                 \
+#define xm_libc_return_error(lua, error)                                                                               \
+    do {                                                                                                               \
+        lua_pushnil(lua);                                                                                              \
+        lua_pushliteral(lua, error);                                                                                   \
+        return 2;                                                                                                      \
     } while (0)
 
 #endif
-
-

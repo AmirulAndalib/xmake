@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        option.lua
@@ -30,8 +30,6 @@ local text      = require("base/text")
 
 -- translate the menu
 function option._translate(menu)
-
-    -- translate the menus if exists function
     local submenus_all = {}
     for k, submenu in pairs(menu) do
         if type(submenu) == "function" then
@@ -49,54 +47,41 @@ function option._translate(menu)
     end
     table.copy2(menu, submenus_all)
 
-    -- save menu
     option._MENU = menu
-
-    -- ok
     return true
 end
 
+-- show menu in narrow mode?
 function option._modenarrow()
-    -- show menu in narrow mode?
     local width = os.getwinsize().width
     return width > 0 and width < 60
 end
 
 -- get the top context
 function option._context()
-
-    -- the contexts
     local contexts = option._CONTEXTS
     if contexts then
         return contexts[#contexts]
     end
 end
 
--- save context
+-- save option context (push a new context onto the stack)
+--
+-- @param taskname   the task name (optional)
+-- @return          the new context
+--
 function option.save(taskname)
-
-    -- init contexts
     option._CONTEXTS = option._CONTEXTS or {}
-
-    -- new a context
     local context = {options = {}, defaults = {}, taskname = taskname}
-
-    -- init defaults
     if taskname then
         context.defaults = option.defaults(taskname) or context.defaults
     end
-
-    -- push this new context to the top stack
     table.insert(option._CONTEXTS, context)
-
-    -- ok
     return context
 end
 
--- restore context
+-- restore option context (pop the current context from the stack)
 function option.restore()
-
-    -- pop it
     if option._CONTEXTS then
         table.remove(option._CONTEXTS)
     end
@@ -112,10 +97,6 @@ end
 
 -- init the option
 function option.init(menu)
-
-    -- check
-    assert(menu)
-
     -- translate menu
     local ok, errors = option._translate(menu)
     if not ok then
@@ -162,15 +143,17 @@ function option.init(menu)
 
     -- init the default value
     option.populate_defaults(options, context.defaults)
-
-    -- ok
     return true
 end
 
--- parse arguments with the given options
+-- parse arguments with the given options definition
+--
+-- @param argv      the arguments array or string
+-- @param options   the options definition table
+-- @param opt       the description and usage strings
+-- @return          the parsed options table
+--
 function option.parse(argv, options, opt)
-
-    -- check
     assert(argv and options)
     opt = opt or { populate_defaults = true }
 
@@ -289,15 +272,11 @@ function option.parse(argv, options, opt)
     if opt.populate_defaults then
         option.populate_defaults(options, results)
     end
-
-    -- ok
     return results
 end
 
 -- fill defined with option's default value, in place
 function option.populate_defaults(options, defined)
-
-    -- check
     assert(options and defined)
 
     -- populate the default value
@@ -337,41 +316,32 @@ end
 
 
 -- get the current task name
+--
+-- @return      the task name string
+--
 function option.taskname()
     return option._context().taskname
 end
 
 -- get the task menu
 function option.taskmenu(task)
-
-    -- check
     assert(option._MENU)
 
-    -- the current task
     task = task or option.taskname() or "main"
-
-    -- get the task menu
     local taskmenu = option._MENU[task]
     if type(taskmenu) == "function" then
-
-        -- load this task menu
         taskmenu = taskmenu()
-
-        -- save this task menu
         option._MENU[task] = taskmenu
     end
-
-    -- get it
     return taskmenu
 end
 
 -- get the given option value for the current task
+--
+-- @param name  the option name, e.g. "verbose", "diagnosis", "target"
+-- @return      the option value
+--
 function option.get(name)
-
-    -- check
-    assert(name)
-
-    -- the options
     local options = option.options()
     if options then
         local value = options[name]
@@ -383,11 +353,11 @@ function option.get(name)
 end
 
 -- set the given option for the current task
+--
+-- @param name  the option name
+-- @param value the option value
+--
 function option.set(name, value)
-
-    -- check
-    assert(name)
-
     -- cannot be the first context for menu
     assert(#option._CONTEXTS > 1)
 
@@ -399,7 +369,11 @@ function option.set(name, value)
     options[name] = value
 end
 
--- get the boolean value
+-- convert value to boolean (handles "y", "yes", "true", etc.)
+--
+-- @param value the value to convert
+-- @return      true, false, or nil
+--
 function option.boolean(value)
     if type(value) == "string" then
         local v = value:lower()
@@ -410,22 +384,22 @@ function option.boolean(value)
     return value
 end
 
--- get the given default option value for the current task
+-- get the default option value for the current task
+--
+-- @param name  the option name
+-- @return      the default value
+--
 function option.default(name)
     assert(name)
 
-    -- the defaults
     local defaults = option.defaults()
     assert(defaults)
 
-    -- get it
     return defaults[name]
 end
 
 -- get the current options
 function option.options()
-
-    -- get it
     local context = option._context()
     if context then
         return context.options
@@ -494,7 +468,7 @@ function option.show_logo(logo, opt)
     /_/\_\_|_|  |_|\__ \|_|\_\____|
 
                          by ruki, xmake.io
-    ]]
+]]
 
     -- make rainbow for logo
     opt = opt or {}
@@ -519,9 +493,9 @@ function option.show_logo(logo, opt)
 
     -- define footer
     local footer = [[
-    ${point_right}  ${bright}Manual${clear}: ${underline}https://xmake.io/#/getting_started${clear}
-    ${pray}  ${bright}Donate${clear}: ${underline}https://xmake.io/#/sponsor${clear}
-    ]]
+    ${point_right}  ${bright}Manual${clear}: ${underline}https://xmake.io/guide/quick-start${clear}
+    ${pray}  ${bright}Donate${clear}: ${underline}https://xmake.io/about/sponsor${clear}
+]]
 
     -- show footer
     io.print(colors.translate(footer))
@@ -781,6 +755,7 @@ function option.show_options(options, taskname)
             -- transform description
             local desp_strs = table.new(#description, 0)
             for _, v in ipairs(description) do
+                local v = v
                 if type(v) == "function" then
                     v = v()
                 end

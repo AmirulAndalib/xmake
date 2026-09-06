@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        download.lua
@@ -50,6 +50,82 @@ function _get_user_agent()
         _g._USER_AGENT = string.format("Xmake/%s (%s;%s)", xmake.version(), systems[os.subhost()] or os.subhost(), os_user_agent)
     end
     return _g._USER_AGENT
+end
+
+-- download url using aria2
+function _aria2_download(tool, url, outputfile, opt)
+
+    -- ensure output directory
+    local outputdir = path.directory(outputfile)
+    if not os.isdir(outputdir) then
+        os.mkdir(outputdir)
+    end
+
+    -- set basic arguments
+    local argv = {"--no-conf=true"}
+    if option.get("verbose") then
+        table.insert(argv, "--console-log-level=notice")
+    else
+        table.insert(argv, "--console-log-level=error")
+    end
+
+    -- user-agent
+    local user_agent = _get_user_agent()
+    if user_agent then
+        if tool.version then
+            user_agent = user_agent .. " aria2/" .. tool.version
+        end
+        table.insert(argv, "--user-agent=" .. user_agent)
+    end
+
+    -- use proxy?
+    local proxy_conf = proxy.config(url)
+    if proxy_conf then
+        table.insert(argv, "--all-proxy=" .. proxy_conf)
+    end
+
+    -- ignore to check ssl certificates
+    if opt.insecure then
+        table.insert(argv, "--check-certificate=false")
+    end
+
+    -- add custom headers
+    if opt.headers then
+        for _, header in ipairs(opt.headers) do
+            table.insert(argv, "--header=" .. header)
+        end
+    end
+
+    -- continue to download?
+    if opt.continue then
+        table.insert(argv, "--continue=true")
+    end
+
+    -- set connect timeout
+    if opt.timeout then
+        table.insert(argv, "--connect-timeout=" .. tostring(opt.timeout))
+    end
+
+    -- set read timeout (inactivity timeout in aria2)
+    if opt.read_timeout then
+        table.insert(argv, "--timeout=" .. tostring(opt.read_timeout))
+    end
+
+    -- enable parallel download (multi-threaded)
+    table.insert(argv, "--split=8")
+    table.insert(argv, "--max-connection-per-server=8")
+    table.insert(argv, "--min-split-size=1M")
+    table.insert(argv, "--allow-overwrite=true")
+
+    -- set output directory and filename
+    table.insert(argv, "--dir=" .. outputdir)
+    table.insert(argv, "--out=" .. path.filename(outputfile))
+
+    -- set url
+    table.insert(argv, url)
+
+    -- download it
+    os.vrunv(tool.program, argv)
 end
 
 -- download url using curl
@@ -97,6 +173,20 @@ function _curl_download(tool, url, outputfile, opt)
     if opt.continue then
         table.insert(argv, "-C")
         table.insert(argv, "-")
+    end
+
+    -- set timeout
+    if opt.timeout then
+        table.insert(argv, "--max-time")
+        table.insert(argv, tostring(opt.timeout))
+    end
+
+    -- set read timeout
+    if opt.read_timeout then
+        table.insert(argv, "--speed-limit")
+        table.insert(argv, "0")
+        table.insert(argv, "--speed-time")
+        table.insert(argv, tostring(opt.read_timeout))
     end
 
     -- set url
@@ -170,6 +260,16 @@ function _wget_download(tool, url, outputfile, opt)
         table.insert(argv, "-c")
     end
 
+    -- set timeout
+    if opt.timeout then
+        table.insert(argv, "--timeout=" .. tostring(opt.timeout))
+    end
+
+    -- set read timeout
+    if opt.read_timeout then
+        table.insert(argv, "--read-timeout=" .. tostring(opt.read_timeout))
+    end
+
     -- set outputfile
     table.insert(argv, "-O")
     table.insert(argv, outputfile)
@@ -178,21 +278,36 @@ function _wget_download(tool, url, outputfile, opt)
     os.vrunv(tool.program, argv)
 end
 
--- download url
---
--- @param url           the input url
--- @param outputfile    the output file
--- @param opt           the option, {continue = true}
---
---
-function main(url, outputfile, opt)
+-- download url using powershell
+-- e.g.
+-- powershell -ExecutionPolicy Bypass -File "D:\scripts\download.ps1" "url" "outputfile"
+function _powershell_download(tool, url, outputfile, opt)
 
-    -- init output file
-    opt = opt or {}
-    outputfile = outputfile or path.filename(url):gsub("%?.+$", "")
+    -- get the script file
+    local scriptfile = path.join(os.programdir(), "scripts", "download.ps1")
 
-    -- attempt to download url using curl first
-    local tool = find_tool("curl", {version = true})
+    -- ensure output directory
+    local outputdir = path.directory(outputfile)
+    if not os.isdir(outputdir) then
+        os.mkdir(outputdir)
+    end
+
+    -- download it
+    local argv = {"-ExecutionPolicy", "Bypass", "-File", scriptfile, url, outputfile}
+    os.vrunv(tool.program, argv)
+end
+
+-- download url with the first available tool (aria2/curl/wget/powershell)
+function _download(url, outputfile, opt)
+
+    -- attempt to download url using aria2 first (multi-threaded, fastest)
+    local tool = find_tool("aria2", {version = true})
+    if tool then
+        return _aria2_download(tool, url, outputfile, opt)
+    end
+
+    -- attempt to download url using curl
+    tool = find_tool("curl", {version = true})
     if tool then
         return _curl_download(tool, url, outputfile, opt)
     end
@@ -202,4 +317,73 @@ function main(url, outputfile, opt)
     if tool then
         return _wget_download(tool, url, outputfile, opt)
     end
+
+    -- download url using powershell
+    if is_host("windows") then
+        tool = find_tool("pwsh") or find_tool("powershell")
+        if tool then
+            return _powershell_download(tool, url, outputfile, opt)
+        end
+    end
+
+    assert(tool, "aria2, curl or wget not found!")
+end
+
+-- is it a ssl/tls certificate verification error?
+function _is_ssl_cert_error(errors)
+    errors = (errors or ""):lower()
+    return errors:find("ssl", 1, true)
+        or errors:find("tls", 1, true)
+        or errors:find("certificate", 1, true)
+        or errors:find("handshake", 1, true)
+end
+
+-- download url, and retry once with ssl verification disabled on a certificate error
+function _download_fallback(url, outputfile, opt)
+    local errors
+    local ok = try
+    {
+        function ()
+            _download(url, outputfile, opt)
+            return true
+        end,
+        catch
+        {
+            function (errs)
+                errors = tostring(errs)
+            end
+        }
+    }
+    if not ok then
+        if _is_ssl_cert_error(errors) then
+            wprint("download failed due to ssl certificate verification, retrying with ssl verification disabled ..")
+            return _download(url, outputfile, table.join(opt, {insecure = true}))
+        end
+        raise(errors)
+    end
+end
+
+-- download url
+--
+-- @param url           the input url
+-- @param outputfile    the output file
+-- @param opt           the option, e.g. {continue = true, insecure = false, insecure_fallback = false}
+--
+-- @note if opt.insecure_fallback is enabled and the download fails due to a ssl certificate
+--       error, it will retry once with ssl verification disabled. this is only safe when the
+--       caller verifies the downloaded file afterwards (e.g. by its sha256 checksum).
+--
+function main(url, outputfile, opt)
+
+    -- init output file
+    opt = opt or {}
+    outputfile = outputfile or path.filename(url):gsub("%?.+$", "")
+
+    -- download it directly if we do not need the insecure fallback
+    if opt.insecure or not opt.insecure_fallback then
+        return _download(url, outputfile, opt)
+    end
+
+    -- download it with the insecure fallback
+    return _download_fallback(url, outputfile, opt)
 end

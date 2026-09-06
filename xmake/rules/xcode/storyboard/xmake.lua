@@ -12,13 +12,12 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
 --
 
--- define rule
 rule("xcode.storyboard")
 
     -- support add_files("*.storyboard")
@@ -56,6 +55,7 @@ rule("xcode.storyboard")
 
         -- clear Base.lproj first
         os.tryrm(base_lproj)
+        os.mkdir(base_lproj)
 
         -- do compile
         local target_minver = nil

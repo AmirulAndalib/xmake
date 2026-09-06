@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        process.lua
@@ -51,6 +51,9 @@ function _subprocess.new(program, proc)
 end
 
 -- get the process name
+--
+-- @return      the process name string
+--
 function _subprocess:name()
     if not self._NAME then
         self._NAME = path.filename(self:program())
@@ -58,7 +61,10 @@ function _subprocess:name()
     return self._NAME
 end
 
--- get the process program
+-- get the process program path
+--
+-- @return      the program path string
+--
 function _subprocess:program()
     return self._PROGRAM
 end
@@ -101,7 +107,10 @@ function _subprocess:wait(timeout)
     return result, status_or_errors
 end
 
--- kill subprocess
+-- kill the subprocess
+--
+-- @return      true on success
+--
 function _subprocess:kill()
 
     -- ensure opened
@@ -115,7 +124,10 @@ function _subprocess:kill()
     return true
 end
 
--- close subprocess
+-- close the subprocess and release resources
+--
+-- @return      true on success
+--
 function _subprocess:close()
 
     -- ensure opened
@@ -270,6 +282,63 @@ function process.openv(program, argv, opt)
         return nil, string.format("openv process(%s, %s) failed!", program, os.args(argv))
     end
 end
+
+-- get missing dlls
+function process._get_missing_dlls(program)
+    local missing = {}
+    if not os.isexec(program) then
+        return missing
+    end
+
+    -- get paths
+    local pathenv = os.getenv("PATH") or ""
+    local paths = path.splitenv(pathenv)
+    table.insert(paths, 1, path.directory(program))
+
+    -- find missing dlls
+    local sandbox_module = require("sandbox/modules/import/core/sandbox/module")
+    local get_depend_libraries = sandbox_module.import("utils.binary.deplibs", {anonymous = true})
+    local imports = get_depend_libraries(program, {recursive = true}) or {}
+    for i, dll in ipairs(imports) do
+        imports[i] = path.filename(dll)
+    end
+    for _, dll in ipairs(imports) do
+        local found = false
+        for _, p in ipairs(paths) do
+            if os.isfile(path.join(p, dll)) then
+                found = true
+                break
+            end
+        end
+        if not found then
+            table.insert(missing, dll)
+        end
+    end
+    return missing
+end
+
+-- get process exit error message
+--
+-- @param program    the program path
+-- @param exitcode   the exit code
+-- @return          the error message string, or nil
+--
+function process.get_exit_errors(program, exitcode)
+    local errors
+    if os.is_host("windows") then
+        -- DLL is missing, 0xC0000135
+        if exitcode == -1073741515 then
+            local missing_dlls = process._get_missing_dlls(program)
+            if #missing_dlls > 0 then
+                errors = string.format("system error 0xC0000135 (STATUS_DLL_NOT_FOUND).\nThe application failed to start because the following DLLs were not found:\n  - %s\nPlease check your PATH environment variable or copy the missing DLLs to the executable directory.", table.concat(missing_dlls, "\n  - "))
+            else
+                errors = string.format("system error 0xC0000135 (STATUS_DLL_NOT_FOUND).\nThe application failed to start because a dependent DLL was not found.\nPlease check your PATH environment variable or copy the missing DLL to the executable directory.")
+            end
+        end
+    end
+    return errors
+end
+
 
 -- return module: process
 return process

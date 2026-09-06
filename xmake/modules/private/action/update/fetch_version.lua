@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      OpportunityLiu, ruki
 -- @file        fetch_version.lua
@@ -32,6 +32,7 @@ local official_sources =
     "https://github.com/xmake-io/xmake.git",
     "git@github.com:xmake-io/xmake.git",
     "https://gitlab.com/tboox/xmake.git",
+    "https://gitcode.com/xmake-io/xmake.git",
     "https://gitee.com/tboox/xmake.git"
 }
 

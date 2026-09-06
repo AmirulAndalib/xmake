@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        plugin.lua
@@ -23,14 +23,21 @@ task("plugin")
     on_run("main")
     set_menu {
         usage = "xmake plugin [options]",
-        description = "Manage plugins of xmake.",
+        description = "Manage plugins of xmake. (deprecated, please use `xmake addon` instead)",
         options = {
-            {'i', "install", "k",  nil,      "Install plugins."             },
-            {'u', "update",  "k",  nil,      "Update plugins."              },
-            {'c', "clear",   "k",  nil,      "Clear all installed plugins." },
-            {nil, "plugins", "v",  nil,      "The plugins path or url.",
-                                             "e.g.",
-                                             "    $ xmake plugin --install https://github.com/xmake-io/xmake-plugins",
-                                             "    $ xmake plugin --update"}
+            {'i', "install", "k", nil, "Install plugins."},
+            {'r', "remove",  "k", nil, "Remove the given installed plugin."},
+            {'l', "list",    "k", nil, "List all installed plugins."},
+            {'c', "clear",   "k", nil, "Clear all installed plugins."},
+            {nil, "plugins", "vs", nil, "The plugin paths, urls or names.",
+                                       "e.g.",
+                                       "    $ xmake plugin --install https://github.com/myrepo/hello-world",
+                                       "    $ xmake plugin --install github:myrepo/hello-world",
+                                       "    $ xmake plugin --install github:myrepo/hello-world#dev",
+                                       "    $ xmake plugin --install /tmp/my-plugin",
+                                       "    $ xmake plugin --install xmake-repo@hello-world",
+                                       "    $ xmake plugin --install hello-world",
+                                       "    $ xmake plugin --remove hello-world",
+                                       "    $ xmake plugin --list"}
         }
     }

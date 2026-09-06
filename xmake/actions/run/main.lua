@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        main.lua
@@ -29,6 +29,55 @@ import("devel.debugger")
 import("async.runjobs")
 import("private.action.run.runenvs")
 import("private.service.remote_build.action", {alias = "remote_build_action"})
+import("private.detect.check_targetnames")
+import("lib.detect.find_tool")
+import("private.action.utils", {alias = "action_utils"})
+
+function _run_wasi_target(targetfile, args, opt)
+    opt = opt or {}
+    local rundir = opt.rundir
+    local addenvs = opt.addenvs
+    local setenvs = opt.setenvs
+    local wasmtime = find_tool("wasmtime")
+    if wasmtime then
+        local runargs = {targetfile}
+        if args and #args > 0 then
+            table.join2(runargs, args)
+        end
+        os.execv(wasmtime.program, runargs, {
+            curdir = rundir, detach = option.get("detach"), addenvs = addenvs, setenvs = setenvs})
+    else
+        raise("wasmtime not found, which is required for running wasi target!")
+    end
+end
+
+function _run_wasm_target_in_browser(targetfile, opt)
+    opt = opt or {}
+    local rundir = opt.rundir
+    local addenvs = opt.addenvs
+    local setenvs = opt.setenvs
+    -- prefer the .html file over .js for browser targets
+    -- @see https://github.com/xmake-io/xmake/issues/7340
+    local htmlfile = targetfile:gsub("%.js$", ".html")
+    if htmlfile ~= targetfile and os.isfile(htmlfile) then
+        targetfile = htmlfile
+    end
+    local emrun = find_tool("emrun")
+    if emrun then
+        os.execv(emrun.program, {"--serve_root", path.directory(targetfile), targetfile}, {
+            curdir = rundir, detach = option.get("detach"), addenvs = addenvs, setenvs = setenvs})
+    else
+        local python = find_tool("python3")
+        if not python then
+            raise("emrun or python not found, which is required for running wasm target in browser!")
+        end
+        local url = "http://localhost:8000/" .. path.unix(path.relative(targetfile, rundir))
+        print("please open the url in browser")
+        cprint("${color.success}%s${clear}", url)
+        os.execv(python.program, {"-m", "http.server", "--bind", "127.0.0.1", "8000"}, {
+            curdir = rundir, detach = option.get("detach"), addenvs = addenvs, setenvs = setenvs})
+    end
+end
 
 -- run target
 function _do_run_target(target)
@@ -50,12 +99,40 @@ function _do_run_target(target)
     -- get run arguments
     local args = table.wrap(option.get("arguments") or target:get("runargs"))
 
+    -- run wasm target
+    if target:is_plat("wasm") then
+        if target:has_tool("cc", "emcc") then
+            _run_wasm_target_in_browser(targetfile, {rundir = rundir, addenvs = addenvs, setenvs = setenvs})
+        else
+            _run_wasi_target(targetfile, args, {rundir = rundir, addenvs = addenvs, setenvs = setenvs})
+        end
+        return
+    end
+
+    -- run windows target on non-windows host via wine
+    if not is_host("windows") and target:is_plat("windows") then
+        local wine = assert(find_tool("wine"), "wine not found!")
+        table.insert(args, 1, targetfile)
+        targetfile = wine.program
+    end
+
+    -- enable GUI error dialogs (Windows only)
+    -- @see https://github.com/xmake-io/xmake/issues/7176
+    local old_errormode
+    if target:policy("run.windows_error_dialog") and winos.set_error_mode then
+        old_errormode = winos.set_error_mode(0)
+    end
+
     -- debugging?
     if option.get("debug") then
         debugger.run(targetfile, args, {curdir = rundir, addenvs = addenvs, setenvs = setenvs})
     else
-        local envs = runenvs.join(addenvs, setenvs)
-        os.execv(targetfile, args, {curdir = rundir, detach = option.get("detach"), envs = envs})
+        os.execv(targetfile, args, {curdir = rundir, detach = option.get("detach"), addenvs = addenvs, setenvs = setenvs})
+    end
+
+    -- restore error mode
+    if old_errormode then
+        winos.set_error_mode(old_errormode)
     end
 end
 
@@ -87,20 +164,6 @@ function _add_target_pkgenvs(target, targets_added)
     for _, dep in ipairs(target:orderdeps()) do
         _add_target_pkgenvs(dep, targets_added)
     end
-end
-
--- find target names matching a specific name
-function _find_matching_target_names(targetname)
-    targetname = targetname:lower()
-    local matching_targetnames = {}
-    for _, target in ipairs(project.ordertargets()) do
-        if target:name():lower():find(targetname, 1, true) then
-            table.insert(matching_targetnames, target:name())
-        end
-    end
-
-    table.sort(matching_targetnames)
-    return matching_targetnames
 end
 
 -- run the given target
@@ -151,27 +214,29 @@ function _run(target)
     os.setenvs(oldenvs)
 end
 
+-- check if the target is runnable
+function _is_runnable(target)
+    if target:is_binary() or target:script("run") then
+        return true
+    end
+    for _, r in ipairs(target:orderules()) do
+        if r:script("run") then
+            return true
+        end
+    end
+end
+
 -- check targets
 function _check_targets(targetname, group_pattern)
 
     -- get targets
     local targets = {}
     if targetname then
-        local target = project.target(targetname)
-        if not target then
-            -- check if the name is part of other target to help
-            local possible_targetnames = _find_matching_target_names(targetname)
-            local errors = targetname .. " is not a valid target name for this project"
-            if #possible_targetnames > 0 then
-                errors = errors .. "\nlist of valid target names close to your input:\n - " .. table.concat(possible_targetnames, '\n - ')
-            end
-            raise(errors)
-        end
-
+        local target = assert(check_targetnames(targetname))
         table.insert(targets, target)
     else
         for _, target in ipairs(project.ordertargets()) do
-            if target:is_binary() or target:script("run") then
+            if _is_runnable(target) then
                 local group = target:get("group")
                 if (target:is_default() and not group_pattern) or option.get("all") or (group_pattern and group and group:match(group_pattern)) then
                     table.insert(targets, target)
@@ -213,20 +278,14 @@ function main()
         -- we need clear the previous config and reload it
         -- to avoid trigger recheck configs
         config.clear()
-        task.run("build")
+        task.run("build", {target = option.get("target"), all = option.get("all")}, {disable_dump = true})
+    else
+        -- it will call on_config, we need to avoid repeat call it when autobuild is enabled.
+        project.load_targets()
     end
-
-    -- load targets
-    project.load_targets()
 
     -- check targets first
-    local targetname
-    local group_pattern = option.get("group")
-    if group_pattern then
-        group_pattern = "^" .. path.pattern(group_pattern) .. "$"
-    else
-        targetname = option.get("target")
-    end
+    local targetname, group_pattern = action_utils.get_target_and_group()
     _check_targets(targetname, group_pattern)
 
     -- enter project directory
@@ -238,7 +297,7 @@ function main()
     else
         local targets = {}
         for _, target in ipairs(project.ordertargets()) do
-            if target:is_binary() or target:script("run") then
+            if _is_runnable(target) then
                 local group = target:get("group")
                 if (target:is_default() and not group_pattern) or option.get("all") or (group_pattern and group and group:match(group_pattern)) then
                     table.insert(targets, target)
@@ -259,4 +318,3 @@ function main()
     -- leave project directory
     os.cd(oldir)
 end
-

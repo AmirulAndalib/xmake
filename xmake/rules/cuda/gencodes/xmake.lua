@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -43,8 +43,10 @@ rule("cuda.gencodes")
 
         -- sm_20 and compute_20 is supported until CUDA 8
         -- sm_30 and compute_30 is supported until CUDA 10
-        local known_v_archs = hashset.of(20, 30, 32, 35, 37, 50, 52, 53, 60, 61, 62, 70, 72, 75, 80, 86, 87, 89, 90)
-        local known_r_archs = hashset.of(20, 30, 32, 35, 37, 50, 52, 53, 60, 61, 62, 70, 72, 75, 80, 86, 87, 89, 90)
+        -- sm_37 and compute_37 is supported until CUDA 11
+        -- sm_72 and compute_72 is supported until CUDA 12
+        local known_v_archs = hashset.of(20, 30, 32, 35, 37, 50, 52, 53, 60, 61, 62, 70, 72, 75, 80, 86, 87, 89, 90, 100, 103, 110, 120, 121)
+        local known_r_archs = hashset.of(20, 30, 32, 35, 37, 50, 52, 53, 60, 61, 62, 70, 72, 75, 80, 86, 87, 89, 90, 100, 103, 110, 120, 121)
 
         local function nf_cugencode(archs)
             if type(archs) ~= "string" then
@@ -69,13 +71,31 @@ rule("cuda.gencodes")
             local v_arch = nil
             local r_archs = {}
 
+            -- full legal value list could be found in nvcc docs
+            -- https://docs.nvidia.com/cuda/cuda-compiler-driver-nvcc/index.html#gpu-name-gpuname-arch
+            -- examples: sm_75, compute_75, sm_90a, compute_100, sm_100f, compute_100a, etc.
+            -- For robustness, xmake support a unoffical format: sm75, compute75, etc. New version still support it.
+            -- examples: sm75, compute75, sm90a, compute100, sm100f, compute100a, etc.
             local function parse_arch(value, prefix, know_list)
                 if not value:startswith(prefix) then
                     return nil
                 end
-                local arch = tonumber(value:sub(#prefix + 1)) or tonumber(value:sub(#prefix + 2))
+                local arch_str = value:sub(#prefix + 1)
+                if arch_str:startswith("_") then
+                    arch_str = arch_str:sub(2)
+                end
+
+                -- a legal arch_str should be like: 75, 90a, 100f, etc.
+                local arch_ver, suffix = arch_str:match("^(%d+)([af]?)$")
+                local arch = tonumber(arch_ver)
                 if arch == nil then
                     raise("unknown architecture: " .. value)
+                end
+                if suffix == 'a' and arch < 90 then
+                    raise("unknown architecture: " .. prefix .. "_" .. arch .. suffix)
+                end
+                if suffix == 'f' and arch < 100 then
+                    raise("unknown architecture: " .. prefix .. "_" .. arch .. suffix)
                 end
                 if not know_list:has(arch) then
                     if arch <= table.maxn(know_list:data()) then
@@ -83,6 +103,9 @@ rule("cuda.gencodes")
                     else
                         utils.warning("unknown architecture: " .. prefix .. "_" .. arch)
                     end
+                end
+                if suffix and #suffix > 0 then
+                    return arch .. suffix
                 end
                 return arch
             end
@@ -120,7 +143,18 @@ rule("cuda.gencodes")
             if v_arch then
                 table.insert(r_archs, v_arch)
             else
-                v_arch = math.min(table.unpack(r_archs))
+                v_arch = r_archs[1]
+                local v_arch_ver = type(v_arch) == "string" and tonumber(v_arch:match("^(%d+)")) or v_arch
+                for i = 2, #r_archs do
+                    local r_arch = r_archs[i]
+                    local r_arch_ver = type(r_arch) == "string" and tonumber(r_arch:match("^(%d+)")) or r_arch
+                    if r_arch_ver < v_arch_ver then
+                        v_arch = r_arch
+                        v_arch_ver = r_arch_ver
+                    elseif r_arch_ver == v_arch_ver and type(r_arch) == "number" and type(v_arch) == "string" then
+                        v_arch = r_arch
+                    end
+                end
             end
             r_archs = table.unique(r_archs)
 

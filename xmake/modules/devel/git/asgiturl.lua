@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      OpportunityLiu
 -- @file        asgiturl.lua
@@ -40,7 +40,7 @@ function main(url)
 
     -- check
     url = url:trim()
-    assert(#url > 0)
+    assert(#url > 0, "provided URL is empty!")
 
     -- safe because all custom_protocol supports https
     local lower = url:lower()

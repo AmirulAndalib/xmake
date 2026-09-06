@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        irpairs.lua
@@ -40,14 +40,22 @@ local table = require("base/table")
 -- end
 --
 -- @endcode
+--
+-- Implemented as a stateful closure so the loop body can safely
+-- reassign the first loop variable under lua 5.4+ (paired with the
+-- RDKCONST->VDKREG compile-time patch in core/src/lua/xmake.lua).
 function sandbox_irpairs(t, filter, ...)
 
     -- has filter?
     local has_filter = type(filter) == "function"
 
-    -- init iterator
+    -- stateful closure: keep the index in an upvalue so the loop body
+    -- can safely reassign the first loop variable (lua 5.4+ merges the
+    -- for-in control slot with the first user variable).
     local args = table.pack(...)
-    local iter = function (t, i)
+    t = table.wrap(t)
+    local i = table.getn(t) + 1
+    return function ()
         i = i - 1
         local v = t[i]
         if v ~= nil then
@@ -57,10 +65,6 @@ function sandbox_irpairs(t, filter, ...)
             return i, v
         end
     end
-
-    -- return iterator and initialized state
-    t = table.wrap(t)
-    return iter, t, table.getn(t) + 1
 end
 
 -- load module

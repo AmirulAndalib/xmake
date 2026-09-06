@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        run.lua
@@ -22,25 +22,14 @@
 import("core.base.json")
 import("core.base.option")
 import("core.project.config")
-import("detect.tools.find_cudagdb")
-import("detect.tools.find_cudamemcheck")
-import("detect.tools.find_gdb")
-import("detect.tools.find_lldb")
-import("detect.tools.find_windbg")
-import("detect.tools.find_x64dbg")
-import("detect.tools.find_ollydbg")
-import("detect.tools.find_devenv")
-import("detect.tools.find_vsjitdebugger")
-import("detect.tools.find_renderdoc")
 import("lib.detect.find_tool")
+import("private.utils.executable_path")
 import("private.action.run.runenvs")
 
 -- run gdb
 function _run_gdb(program, argv, opt)
-
-    -- find gdb
     opt = opt or {}
-    local gdb = find_gdb({program = config.get("debugger")})
+    local gdb = find_tool("gdb", {program = config.get("debugger")})
     if not gdb then
         return false
     end
@@ -50,20 +39,15 @@ function _run_gdb(program, argv, opt)
     table.insert(argv, 1, program)
     table.insert(argv, 1, "--args")
 
-    -- handle envs
-    opt.envs = runenvs.join(opt.addenvs, opt.setenvs)
-
     -- run it
-    os.execv(gdb, argv, table.join(opt, {exclusive = true}))
+    os.execv(gdb.program, argv, table.join(opt, {exclusive = true}))
     return true
 end
 
 -- run cuda-gdb
 function _run_cudagdb(program, argv, opt)
-
-    -- find cudagdb
     opt = opt or {}
-    local gdb = find_cudagdb({program = config.get("debugger")})
+    local gdb = find_tool("cudagdb", {program = config.get("debugger")})
     if not gdb then
         return false
     end
@@ -73,49 +57,33 @@ function _run_cudagdb(program, argv, opt)
     table.insert(argv, 1, program)
     table.insert(argv, 1, "--args")
 
-    -- handle envs
-    opt.envs = runenvs.join(opt.addenvs, opt.setenvs)
-
     -- run it
-    os.execv(gdb, argv, table.join(opt, {exclusive = true}))
+    os.execv(gdb.program, argv, table.join(opt, {exclusive = true}))
     return true
 end
 
 -- run lldb
 function _run_lldb(program, argv, opt)
-
-    -- find lldb
     opt = opt or {}
-    local lldb = find_lldb({program = config.get("debugger")})
+    local lldb = find_tool("lldb", {program = config.get("debugger")})
     if not lldb then
         return false
     end
-
-    -- attempt to split name, e.g. xcrun -sdk macosx lldb
-    local names = lldb:split("%s")
 
     -- patch arguments
     argv = argv or {}
     table.insert(argv, 1, "--")
     table.insert(argv, 1, program)
     table.insert(argv, 1, "-f")
-    for i = #names, 2, -1 do
-        table.insert(argv, 1, names[i])
-    end
-
-    -- handle envs
-    opt.envs = runenvs.join(opt.addenvs, opt.setenvs)
 
     -- run it
-    os.execv(names[1], argv, table.join(opt, {exclusive = true}))
+    os.execv(executable_path(lldb.program), argv, table.join(opt, {exclusive = true}))
     return true
 end
 
 -- run windbg
 function _run_windbg(program, argv, opt)
-
-    -- find windbg
-    local windbg = find_windbg({program = config.get("debugger")})
+    local windbg = find_tool("windbg", {program = config.get("debugger")})
     if not windbg then
         return false
     end
@@ -124,20 +92,15 @@ function _run_windbg(program, argv, opt)
     argv = argv or {}
     table.insert(argv, 1, program)
 
-    -- handle envs
-    opt.envs = runenvs.join(opt.addenvs, opt.setenvs)
-
     -- run it
     opt.detach = true
-    os.execv(windbg, argv, opt)
+    os.execv(windbg.program, argv, opt)
     return true
 end
 
 -- run cuda-memcheck
 function _run_cudamemcheck(program, argv, opt)
-
-    -- find cudamemcheck
-    local cudamemcheck = find_cudamemcheck({program = config.get("debugger")})
+    local cudamemcheck = find_tool("cudamemcheck", {program = config.get("debugger")})
     if not cudamemcheck then
         return false
     end
@@ -146,19 +109,14 @@ function _run_cudamemcheck(program, argv, opt)
     argv = argv or {}
     table.insert(argv, 1, program)
 
-    -- handle envs
-    opt.envs = runenvs.join(opt.addenvs, opt.setenvs)
-
     -- run it
-    os.execv(cudamemcheck, argv, opt)
+    os.execv(cudamemcheck.program, argv, opt)
     return true
 end
 
 -- run x64dbg
 function _run_x64dbg(program, argv, opt)
-
-    -- find x64dbg
-    local x64dbg = find_x64dbg({program = config.get("debugger")})
+    local x64dbg = find_tool("x64dbg", {program = config.get("debugger")})
     if not x64dbg then
         return false
     end
@@ -167,20 +125,15 @@ function _run_x64dbg(program, argv, opt)
     argv = argv or {}
     table.insert(argv, 1, program)
 
-    -- handle envs
-    opt.envs = runenvs.join(opt.addenvs, opt.setenvs)
-
     -- run it
     opt.detach = true
-    os.execv(x64dbg, argv, opt)
+    os.execv(x64dbg.program, argv, opt)
     return true
 end
 
 -- run ollydbg
 function _run_ollydbg(program, argv, opt)
-
-    -- find ollydbg
-    local ollydbg = find_ollydbg({program = config.get("debugger")})
+    local ollydbg = find_tool("ollydbg", {program = config.get("debugger")})
     if not ollydbg then
         return false
     end
@@ -189,20 +142,15 @@ function _run_ollydbg(program, argv, opt)
     argv = argv or {}
     table.insert(argv, 1, program)
 
-    -- handle envs
-    opt.envs = runenvs.join(opt.addenvs, opt.setenvs)
-
     -- run it
     opt.detach = true
-    os.execv(ollydbg, argv, opt)
+    os.execv(ollydbg.program, argv, opt)
     return true
 end
 
 -- run vsjitdebugger
 function _run_vsjitdebugger(program, argv, opt)
-
-    -- find vsjitdebugger
-    local vsjitdebugger = find_vsjitdebugger({program = config.get("debugger")})
+    local vsjitdebugger = find_tool("vsjitdebugger", {program = config.get("debugger")})
     if not vsjitdebugger then
         return false
     end
@@ -211,20 +159,15 @@ function _run_vsjitdebugger(program, argv, opt)
     argv = argv or {}
     table.insert(argv, 1, program)
 
-    -- handle envs
-    opt.envs = runenvs.join(opt.addenvs, opt.setenvs)
-
     -- run it
     opt.detach = true
-    os.execv(vsjitdebugger, argv, opt)
+    os.execv(vsjitdebugger.program, argv, opt)
     return true
 end
 
 -- run devenv
 function _run_devenv(program, argv, opt)
-
-    -- find devenv
-    local devenv = find_devenv({program = config.get("debugger")})
+    local devenv = find_tool("devenv", {program = config.get("debugger")})
     if not devenv then
         return false
     end
@@ -234,20 +177,15 @@ function _run_devenv(program, argv, opt)
     table.insert(argv, 1, "/DebugExe")
     table.insert(argv, 2, program)
 
-    -- handle envs
-    opt.envs = runenvs.join(opt.addenvs, opt.setenvs)
-
     -- run it
     opt.detach = true
-    os.execv(devenv, argv, opt)
+    os.execv(devenv.program, argv, opt)
     return true
 end
 
 -- run renderdoc
 function _run_renderdoc(program, argv, opt)
-
-    -- find renderdoc
-    local renderdoc = find_renderdoc({program = config.get("debugger")})
+    local renderdoc = find_tool("renderdoc", {program = config.get("debugger")})
     if not renderdoc then
         return false
     end
@@ -311,15 +249,14 @@ function _run_renderdoc(program, argv, opt)
     opt.detach = true
     opt.addenvs = nil
     opt.setenvs = nil
-    os.execv(renderdoc, { capturefile }, opt)
+    os.execv(renderdoc.program, { capturefile }, opt)
     return true
 end
 
 -- run gede
 function _run_gede(program, argv, opt)
-
-    -- find gede
     opt = opt or {}
+
     -- 'gede --version' return with non-zero code
     local gede = find_tool("gede", {program = config.get("debugger"), norun = true})
     if not gede then
@@ -332,9 +269,6 @@ function _run_gede(program, argv, opt)
     table.insert(argv, 1, "--args")
     table.insert(argv, 1, "--no-show-config")
 
-    -- handle envs
-    opt.envs = runenvs.join(opt.addenvs, opt.setenvs)
-
     -- run it
     os.execv(gede.program, argv, table.join(opt, {exclusive = true}))
     return true
@@ -342,8 +276,6 @@ end
 
 -- run seergdb
 function _run_seergdb(program, argv, opt)
-
-    -- find seergdb
     opt = opt or {}
     local seergdb = find_tool("seergdb", {program = config.get("debugger")})
     if not seergdb then
@@ -355,11 +287,43 @@ function _run_seergdb(program, argv, opt)
     table.insert(argv, 1, program)
     table.insert(argv, 1, "--start")
 
-    -- handle envs
-    opt.envs = runenvs.join(opt.addenvs, opt.setenvs)
-
     -- run it
     os.execv(seergdb.program, argv, table.join(opt, {exclusive = true}))
+    return true
+end
+
+-- run rad debugger
+function _run_raddbg(program, argv, opt)
+    opt = opt or {}
+    local raddbg = find_tool("raddbg", {program = config.get("debugger")})
+    if not raddbg then
+        return false
+    end
+
+    -- patch arguments
+    argv = argv or {}
+    table.insert(argv, 1, program)
+
+    -- run it
+    opt.detach = true
+    os.execv(raddbg.program, argv, opt)
+    return true
+end
+
+-- run nnd
+function _run_nnd(program, argv, opt)
+    opt = opt or {}
+    local nnd = find_tool("nnd", {program = config.get("debugger")})
+    if not nnd then
+        return false
+    end
+
+    -- patch arguments
+    argv = argv or {}
+    table.insert(argv, 1, program)
+
+    -- run it
+    os.execv(nnd.program, argv, table.join(opt, {exclusive = true}))
     return true
 end
 
@@ -392,12 +356,16 @@ function main(program, argv, opt)
     }
 
     -- for windows target or on windows?
-    if (config.plat() or os.host()) == "windows" then
+    local plat = config.plat() or os.host()
+    if plat == "windows" then
         table.insert(debuggers, 1, {"windbg",           _run_windbg})
         table.insert(debuggers, 1, {"ollydbg",          _run_ollydbg})
         table.insert(debuggers, 1, {"x64dbg",           _run_x64dbg})
         table.insert(debuggers, 1, {"vsjitdebugger",    _run_vsjitdebugger})
         table.insert(debuggers, 1, {"devenv",           _run_devenv})
+        table.insert(debuggers, 1, {"raddbg",           _run_raddbg})
+    elseif plat == "linux" then
+        table.insert(debuggers, {"nnd", _run_nnd})
     end
 
     -- get debugger from configuration

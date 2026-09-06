@@ -12,7 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Copyright (C) 2015-present, TBOOX Open Source Group.
+ * Copyright (C) 2015-present, Xmake Open Source Community.
  *
  * @author      ruki
  * @file        poller_support.c
@@ -22,8 +22,8 @@
 /* //////////////////////////////////////////////////////////////////////////////////////
  * trace
  */
-#define TB_TRACE_MODULE_NAME    "poller_support"
-#define TB_TRACE_MODULE_DEBUG   (0)
+#define TB_TRACE_MODULE_NAME "poller_support"
+#define TB_TRACE_MODULE_DEBUG (0)
 
 /* //////////////////////////////////////////////////////////////////////////////////////
  * includes
@@ -36,16 +36,13 @@
  */
 
 // io.poller_support(events)
-tb_int_t xm_io_poller_support(lua_State* lua)
-{
-    // check
+tb_int_t xm_io_poller_support(lua_State *lua) {
     tb_assert_and_check_return_val(lua, 0);
 
     // get events
     tb_size_t events = (tb_size_t)luaL_checknumber(lua, 1);
 
     // support events for poller
-    lua_pushboolean(lua, tb_poller_support(xm_io_poller(), events));
+    lua_pushboolean(lua, tb_poller_support(xm_io_poller(lua), events));
     return 1;
 }
-

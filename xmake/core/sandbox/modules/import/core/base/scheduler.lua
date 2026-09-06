@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        scheduler.lua
@@ -20,6 +20,7 @@
 
 -- define module
 local sandbox_core_base_scheduler = sandbox_core_base_scheduler or {}
+local sandbox_core_base_scheduler_semaphore = sandbox_core_base_scheduler_semaphore or {}
 
 -- load modules
 local poller    = require("base/poller")
@@ -30,6 +31,41 @@ local raise     = require("sandbox/modules/raise")
 sandbox_core_base_scheduler.OT_SOCK = poller.OT_SOCK
 sandbox_core_base_scheduler.OT_PIPE = poller.OT_PIPE
 sandbox_core_base_scheduler.OT_PROC = poller.OT_PROC
+
+-- wrap semaphore
+function _semaphore_wrap(semaphore)
+
+    -- hook semaphore interfaces
+    local hooked = {}
+    for name, func in pairs(sandbox_core_base_scheduler_semaphore) do
+        if not name:startswith("_") and type(func) == "function" then
+            hooked["_" .. name] = semaphore["_" .. name] or semaphore[name]
+            hooked[name] = func
+        end
+    end
+    for name, func in pairs(hooked) do
+        semaphore[name] = func
+    end
+    return semaphore
+end
+
+-- post semaphore
+function sandbox_core_base_scheduler_semaphore.post(semaphore, value)
+    local result, errors = semaphore:_post(value)
+    if result < 0 and errors then
+        raise(errors)
+    end
+    return result
+end
+
+-- wait semaphore
+function sandbox_core_base_scheduler_semaphore.wait(semaphore, timeout)
+    local ok, errors = semaphore:_wait(timeout)
+    if ok < 0 and errors then
+        raise(errors)
+    end
+    return ok
+end
 
 -- start a new coroutine task
 function sandbox_core_base_scheduler.co_start(cotask, ...)
@@ -60,7 +96,11 @@ end
 
 -- resume the given coroutine
 function sandbox_core_base_scheduler.co_resume(co, ...)
-    return scheduler:resume(co:thread(), ...)
+    local ok, errors = scheduler:co_resume(co, ...)
+    if not ok then
+        raise(errors)
+    end
+    return ok, errors
 end
 
 -- suspend the current coroutine
@@ -79,6 +119,22 @@ end
 -- sleep some times (ms)
 function sandbox_core_base_scheduler.co_sleep(ms)
     local ok, errors = scheduler:co_sleep(ms)
+    if not ok then
+        raise(errors)
+    end
+end
+
+-- lock the current coroutine
+function sandbox_core_base_scheduler.co_lock(lockname)
+    local ok, errors = scheduler:co_lock(lockname)
+    if not ok then
+        raise(errors)
+    end
+end
+
+-- unlock the current coroutine
+function sandbox_core_base_scheduler.co_unlock(lockname)
+    local ok, errors = scheduler:co_unlock(lockname)
     if not ok then
         raise(errors)
     end
@@ -118,6 +174,12 @@ end
 -- get the all coroutine task count
 function sandbox_core_base_scheduler.co_count()
     return scheduler:co_count()
+end
+
+-- new a coroutine semaphore
+function sandbox_core_base_scheduler.co_semaphore(name, value)
+    local semaphore = scheduler:co_semaphore(name, value)
+    return _semaphore_wrap(semaphore)
 end
 
 -- return module

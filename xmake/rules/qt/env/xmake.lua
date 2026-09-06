@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -33,7 +33,12 @@ rule("qt.env")
 
         local qmlimportpath = target:values("qt.env.qmlimportpath") or {}
         if target:is_plat("windows") or (target:is_plat("mingw") and is_host("windows")) then
-            target:add("runenvs", "PATH", qt.bindir)
+            if qt.bindir_host then
+                target:add("runenvs", "PATH", qt.bindir_host)
+            end
+            if qt.bindir then
+                target:add("runenvs", "PATH", qt.bindir)
+            end
             table.insert(qmlimportpath, qt.qmldir)
             -- add targetdir in QML2_IMPORT_PATH in case of the user have qml plugins
             table.insert(qmlimportpath, target:targetdir())

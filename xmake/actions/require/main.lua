@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        main.lua
@@ -27,6 +27,7 @@ import("core.platform.platform")
 import("private.action.require.list")
 import("private.action.require.scan")
 import("private.action.require.info")
+import("private.action.require.depgraph")
 import("private.action.require.fetch")
 import("private.action.require.clean")
 import("private.action.require.search")
@@ -34,6 +35,8 @@ import("private.action.require.export")
 import("private.action.require.import", {alias = "import_packages"})
 import("private.action.require.install")
 import("private.action.require.uninstall")
+import("private.action.require.download")
+import("private.action.require.check")
 import("private.service.remote_build.action", {alias = "remote_build_action"})
 
 --
@@ -109,10 +112,25 @@ function main()
 
         info(option.get("requires"))
 
-    -- fetch the library info of the given package
+    -- show the given package depgraph
+    elseif option.get("depgraph") then
+
+        depgraph(option.get("requires"))
+
+    -- fetch the library info of the given packages
     elseif option.get("fetch") then
 
         fetch(option.get("requires"))
+
+    -- download the given package source archive files
+    elseif option.get("download") then
+
+        download(option.get("requires"))
+
+    -- check the given packages
+    elseif option.get("check") then
+
+        check(option.get("requires"))
 
     -- list all package dependencies in project
     elseif option.get("list") then

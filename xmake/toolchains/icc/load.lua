@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        load.lua
@@ -21,9 +21,10 @@
 -- imports
 import("core.base.option")
 import("core.project.config")
+import("private.utils.toolchain", {alias = "toolchain_utils"})
 
 -- add the given icl environment
-function _add_iclenv(toolchain, name)
+function _add_iclenv(toolchain, name, curenvs)
 
     -- get iclvarsall
     local iclvarsall = toolchain:config("varsall")
@@ -36,9 +37,17 @@ function _add_iclenv(toolchain, name)
     local iclenv = iclvarsall[arch] or {}
 
     -- get the paths for the icl environment
-    local env = iclenv[name]
-    if env then
-        toolchain:add("runenvs", name:upper(), path.splitenv(env))
+    local new = iclenv[name]
+    if new then
+        -- fix case naming conflict for cmake/msbuild between the new msvc envs and current environment, if we are running xmake in vs prompt.
+        -- @see https://github.com/xmake-io/xmake/issues/4751
+        for k, c in pairs(curenvs) do
+            if name:lower() == k:lower() and name ~= k then
+                name = k
+                break
+            end
+        end
+        toolchain:add("runenvs", name, table.unpack(path.splitenv(new)))
     end
 end
 
@@ -68,11 +77,15 @@ function _load_intel_on_windows(toolchain)
         toolchain:set("toolset", "as", "icc")
     end
 
+    -- add vs environments
+    toolchain_utils.add_vsenvs(toolchain)
+
     -- add icl environments
-    _add_iclenv(toolchain, "PATH")
-    _add_iclenv(toolchain, "LIB")
-    _add_iclenv(toolchain, "INCLUDE")
-    _add_iclenv(toolchain, "LIBPATH")
+    local expect_vars = {"PATH", "LIB", "INCLUDE", "LIBPATH"}
+    local curenvs = os.getenvs()
+    for _, name in ipairs(expect_vars) do
+        _add_iclenv(toolchain, name, curenvs)
+    end
 end
 
 -- load intel on linux

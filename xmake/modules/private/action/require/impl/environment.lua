@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        environment.lua
@@ -31,11 +31,6 @@ import("private.action.require.impl.install_packages")
 -- If these tools not exist, we will install it first.
 --
 function enter()
-
-    -- unzip or 7zip is necessary
-    if not find_tool("unzip") and not find_tool("7z") then
-        raise("failed to find unzip or 7zip! please install one of them first")
-    end
 
     -- enter the environments of git
     _g._OLDENVS = packagenv.enter("git")

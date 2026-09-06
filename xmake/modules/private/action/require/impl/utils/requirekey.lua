@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        requirekey.lua
@@ -20,6 +20,7 @@
 
 -- imports
 import("core.base.hashset")
+import("core.package.package", {alias = "core_package"})
 
 -- get require key from requireinfo
 function main(requireinfo, opt)
@@ -43,9 +44,18 @@ function main(requireinfo, opt)
     if requireinfo.label then
         key = key .. "/" .. requireinfo.label
     end
+    if requireinfo.host then
+        if is_subhost(core_package.targetplat()) and os.subarch() == core_package.targetarch() then
+            -- we need to pass plat/arch to avoid repeat installation
+            -- @see https://github.com/xmake-io/xmake/issues/1579
+        else
+            key = key .. "/host"
+        end
+    end
     if requireinfo.system then
         key = key .. "/system"
     end
+    -- @see https://github.com/xmake-io/xmake/issues/4934
     if requireinfo.private then
         key = key .. "/private"
     end
@@ -56,6 +66,10 @@ function main(requireinfo, opt)
     if configs then
         local configs_order = {}
         for k, v in pairs(configs) do
+            local v = v
+            if type(v) == "table" then
+                v = string.serialize(v, {strip = true, indent = false, orderkeys = true})
+            end
             table.insert(configs_order, k .. "=" .. tostring(v))
         end
         table.sort(configs_order)
@@ -65,7 +79,7 @@ function main(requireinfo, opt)
         if key == "" then
             key = "_" -- we need to generate a fixed hash value
         end
-        return hash.uuid(key):split("-", {plain = true})[1]:lower()
+        return hash.strhash32(key)
     else
         return key
     end

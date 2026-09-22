@@ -94,6 +94,13 @@ function test_lastof(t)
     t:are_equal(("/home/file.txt"):lastof('/', true), 6)
     t:are_equal(("/home/file.txt"):lastof('/home', true), 1)
     t:are_equal(("/home/file.txt"):lastof('[/\\]home'), 1)
+
+    -- long string
+    local longstr = ("a"):rep(1000) .. "b"
+    t:are_equal(longstr:lastof("b"), 1001)
+    t:are_equal(longstr:lastof("a"), 1000)
+    t:are_equal(longstr:lastof("b", true), 1001)
+    t:are_equal(longstr:lastof("a", true), 1000)
 end
 
 function test_replace(t)
@@ -105,4 +112,13 @@ function test_replace(t)
     t:are_equal(("123xyz$456xyz$789xyz$"):replace("xyz$", "000"), "123xyz$456xyz$789xyz$")
     t:are_equal(("123$xyz456xyz789xyz"):replace("123$", "000", {plain = true}), "000xyz456xyz789xyz")
     t:are_equal(("123xyz$456xyz$789xyz$"):replace("xyz$", "000", {plain = true}), "123000456000789000")
+end
+
+function test_case(t)
+    t:are_equal(("Hello"):lower(), "hello")
+    t:are_equal(("Hello"):upper(), "HELLO")
+    t:are_equal(("Звезда Хэнсин"):lower(), "звезда хэнсин")
+    t:are_equal(("Звезда Хэнсин"):upper(), "ЗВЕЗДА ХЭНСИН")
+    t:are_equal(("Test 源文件🎆 Message"):lower(), "test 源文件🎆 message")
+    t:are_equal(("Test 源文件🎆 Message"):upper(), "TEST 源文件🎆 MESSAGE")
 end

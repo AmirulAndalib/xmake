@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        winos.lua
@@ -31,7 +31,12 @@ winos._oem_cp          = winos._oem_cp  or winos.oem_cp
 winos._registry_query  = winos._registry_query or winos.registry_query
 winos._registry_keys   = winos._registry_keys or winos.registry_keys
 winos._registry_values = winos._registry_values or winos.registry_values
+winos._processes       = winos._processes or winos.processes
 
+-- get the ANSI code page
+--
+-- @return      the code page number
+--
 function winos.ansi_cp()
     if not winos._ANSI_CP then
          winos._ANSI_CP = winos._ansi_cp()
@@ -39,6 +44,10 @@ function winos.ansi_cp()
     return winos._ANSI_CP
 end
 
+-- get the OEM code page
+--
+-- @return      the code page number
+--
 function winos.oem_cp()
     if not winos._OEM_CP then
          winos._OEM_CP = winos._oem_cp()
@@ -46,12 +55,13 @@ function winos.oem_cp()
     return winos._OEM_CP
 end
 
+if not winos.processes then
+    winos.processes = winos._processes
+end
+
 -- get windows version from name
 function winos._version_from_name(name)
-
-    -- make defined values
-    winos._VERSIONS = winos._VERSIONS or
-    {
+    winos._VERSIONS = winos._VERSIONS or {
         nt4      = "4.0"
     ,   win2k    = "5.0"
     ,   winxp    = "5.1"
@@ -65,6 +75,7 @@ function winos._version_from_name(name)
     ,   winblue  = "6.3"
     ,   win81    = "6.3"
     ,   win10    = "10.0"
+    ,   win11    = "10.0.22000"
     }
     return winos._VERSIONS[name]
 end
@@ -111,7 +122,10 @@ function winos._version_le(self, version)
     end
 end
 
--- get system version
+-- get windows system version
+--
+-- @return      the version object, e.g. winos.version():major(), winos.version():eq("win10")
+--
 function winos.version()
     local winver = winos._VERSION
     if winver == nil then
@@ -153,13 +167,18 @@ function winos.version()
 end
 
 -- get command arguments on windows to solve 8192 character command line length limit
+--
+-- @param argv  the arguments list
+-- @param opt   the options, e.g. {program = "cl.exe", wrapflag = "@"}
+-- @return      the program, the new arguments list (may use @file)
+--
 function winos.cmdargv(argv, opt)
 
     -- too long arguments?
     local limit = 4096
     local argn = 0
     for _, arg in ipairs(argv) do
-        arg = tostring(arg)
+        local arg = tostring(arg)
         argn = argn + #arg
         if argn > limit then
             break
@@ -168,7 +187,7 @@ function winos.cmdargv(argv, opt)
     if argn > limit then
         opt = opt or {}
         local argsfile = os.tmpfile(opt.tmpkey or os.args(argv)) .. ".args.txt"
-        local f = io.open(argsfile, 'w', {encoding = "ansi"})
+        local f = io.open(argsfile, 'w', {encoding = os.is_host("windows") and "ansi"})
         if f then
             -- we need to split args file to solve `fatal error LNK1170: line in command file contains 131071 or more characters`
             -- @see https://github.com/xmake-io/xmake/issues/812
@@ -188,7 +207,11 @@ function winos.cmdargv(argv, opt)
                 -- -Dxxx
                 -- foo.obj
                 --
-                if idx + 1 <= #argv and arg:find("^[-/]") and not arg1:find("^[-/]") then
+
+                -- if host is not Windows, paths may start with '/', which conflicts with '/<argname>'
+                -- note that checking if the next argument ends with '.json' will only work for /sourceDependencies
+                -- other arguments will remain broken, perhaps we should discuss a better solution
+                if idx + 1 <= #argv and arg:find("^[-/]") and (os.is_host("windows") and (not arg1:find("^[-/]")) or (arg1:endswith(".json"))) then
                     f:write(os.args(arg, {escape = opt.escape}) .. " ")
                     f:write(os.args(arg1, {escape = opt.escape}) .. "\n")
                     idx = idx + 2

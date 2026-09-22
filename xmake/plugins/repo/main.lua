@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        main.lua
@@ -52,7 +52,7 @@ function _add(name, url, branch, is_global)
     -- clone repository
     if not os.isdir(url) then
         local remoteurl = proxy.mirror(url) or url
-        git.clone(remoteurl, {verbose = option.get("verbose"), branch = branch, outputdir = repodir})
+        git.clone(remoteurl, {verbose = option.get("verbose"), branch = branch, outputdir = repodir, autocrlf = false})
     end
 
     -- add url
@@ -82,10 +82,7 @@ function _remove(name, is_global)
 
     -- clear quick search cache
     _clear_quick_search_cache(is_global)
-
-    -- trace
     cprint("${bright}remove %s repository(%s): ok!", (is_global and "global" or "local"), name)
-
 end
 
 -- update repositories
@@ -95,7 +92,12 @@ function _update()
     environment.enter()
 
     -- trace
-    printf("updating repositories .. ")
+    local name = option.get("name")
+    if name then
+        cprintf("updating repository ${bright}%s${clear} .. ", name)
+    else
+        printf("updating repositories .. ")
+    end
     if option.get("verbose") then
         print("")
     end
@@ -104,7 +106,15 @@ function _update()
     local task = function ()
 
         -- get all repositories (local first)
-        local repos = table.join(repository.repositories(false), repository.repositories(true))
+        local repos = table.join(repository.repositories({global = false}), repository.repositories({global = true}))
+        if name then
+            for _, repo in ipairs(repos) do
+                if repo:name() == name then
+                    repos = {repo}
+                    break
+                end
+            end
+        end
 
         -- pull all repositories
         local pulled = {}
@@ -114,14 +124,22 @@ function _update()
                 if os.isdir(repodir) then
                     -- only update the local repository with the remote url
                     if not os.isdir(repo:url()) then
+                        -- check and update remote URL if it differs from repo:url()
+                        local current_url = git.remote.get_url({repodir = repodir})
+                        local expected_url = repo:url()
+                        if current_url ~= expected_url then
+                            vprint("updating remote URL for repository(%s): %s -> %s", repo:name(), current_url or "<none>", expected_url)
+                            git.remote.set_url(expected_url, {repodir = repodir})
+                        end
                         vprint("pulling repository(%s): %s to %s ..", repo:name(), repo:url(), repodir)
-                        git.pull({verbose = option.get("verbose"), branch = repo:branch(), repodir = repodir})
+                        git.reset({verbose = option.get("verbose"), repodir = repodir, hard = true})
+                        git.pull({verbose = option.get("verbose"), branch = repo:branch(), repodir = repodir, force = true})
                         io.save(path.join(repodir, "updated"), {})
                     end
                 else
                     vprint("cloning repository(%s): %s to %s ..", repo:name(), repo:url(), repodir)
                     local remoteurl = proxy.mirror(repo:url()) or repo:url()
-                    git.clone(remoteurl, {verbose = option.get("verbose"), branch = repo:branch(), outputdir = repodir})
+                    git.clone(remoteurl, {verbose = option.get("verbose"), branch = repo:branch(), outputdir = repodir, autocrlf = false})
                     io.save(path.join(repodir, "updated"), {})
                 end
                 pulled[repodir] = true
@@ -136,13 +154,11 @@ function _update()
     if option.get("verbose") then
         task()
     else
-        runjobs("update repo", task, {progress = true, isolate = true})
+        runjobs("update repo", task, {waiting_indicator = true, isolate = true})
     end
 
     -- leave environment
     environment.leave()
-
-    -- trace
     cprint("${green}ok")
 end
 
@@ -160,37 +176,20 @@ function _clear(is_global)
 
     -- clear quick search cache
     _clear_quick_search_cache(is_global)
-
-    -- trace
     cprint("${color.success}clear %s repositories: ok!", (is_global and "global" or "local"))
 end
 
 -- list all repositories
 function _list(is_global)
-
-    -- list all repositories
     local count = 0
     for _, position in ipairs(is_global and "global" or {"local", "global"}) do
-
-        -- trace
         print("%s repositories:", position)
-
-        -- list all
-        for _, repo in pairs(repository.repositories(position == "global")) do
-
-            -- trace
-            local description = repo:get("description")
-            print("    %s %s%s %s", repo:name(), repo:url(), repo:branch() and (" " .. repo:branch()) or "", description and ("(" .. description .. ")") or "")
-
-            -- update count
+        for _, repo in pairs(repository.repositories({global = position == "global"})) do
+            print("    %s %s%s", repo:name(), repo:url(), repo:branch() and (" " .. repo:branch()) or "")
             count = count + 1
         end
-
-        -- trace
         print("")
     end
-
-    -- trace
     print("%d repositories were found!", count)
 end
 
@@ -255,4 +254,3 @@ function main()
         _directory(option.get("global"))
     end
 end
-

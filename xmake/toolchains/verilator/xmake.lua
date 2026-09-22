@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -22,13 +22,11 @@ toolchain("verilator")
     set_homepage("https://verilator.org/")
     set_description("Verilator open-source SystemVerilog simulator and lint system")
 
-    set_kind("standalone")
-
     on_check(function (toolchain)
         import("lib.detect.find_tool")
         local paths = {}
         for _, package in ipairs(toolchain:packages()) do
-            local envs = package:get("envs")
+            local envs = package:envs()
             if envs then
                 table.join2(paths, envs.PATH)
             end
@@ -41,14 +39,13 @@ toolchain("verilator")
             cprint("${dim}checking for verilator ... ${color.nothing}${text.nothing}")
             raise("verilator not found!")
         end
-        toolchain:configs_save()
         return true
     end)
 
     on_load(function (toolchain)
         if is_host("windows") then
             for _, package in ipairs(toolchain:packages()) do
-                local envs = package:get("envs")
+                local envs = package:envs()
                 if envs then
                     local verilator_root = envs.VERILATOR_ROOT
                     if verilator_root then

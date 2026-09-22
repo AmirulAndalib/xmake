@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        package.lua
@@ -88,7 +88,7 @@ function main(argv)
         config.load()
         os.cd(project.directory())
 
-        local outputdir = args.outputdir or config.get("buildir")
+        local outputdir = args.outputdir or config.builddir()
         local targets = {}
         if option.get("target") then
             local target = project.target(option.get("target"))

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        utils.lua
@@ -30,7 +30,11 @@ local io     = require("base/io")
 local dump   = require("base/dump")
 local text   = require("base/text")
 
--- dump values
+
+-- dump values with colored pretty-printing
+--
+-- @param ...   the values to dump
+--
 function utils.dump(...)
     if option.get("quiet") then
         return ...
@@ -141,74 +145,62 @@ function utils._decode_errors(errors)
 end
 
 -- print format string with newline
+--
+-- @param format the format string
+-- @param ...    the format arguments
+--
 function utils.print(format, ...)
-
-    -- check
     assert(format)
-
-    -- init message
     local message = string.tryformat(format, ...)
-
-    -- trace
     utils._print(message)
-
-    -- write to the log file
     log:printv(message)
 end
 
 -- print format string without newline
+--
+-- @param format the format string
+-- @param ...    the format arguments
+--
 function utils.printf(format, ...)
-
-    -- check
     assert(format)
-
-    -- init message
     local message = string.tryformat(format, ...)
-
-    -- trace
     utils._iowrite(message)
-
-    -- write to the log file
     log:write(message)
 end
 
--- print format string and colors with newline
+-- print format string with color markup and newline
+--
+-- @param format the format string with ${color} markup
+-- @param ...    the format arguments
+--
 function utils.cprint(format, ...)
-
-    -- check
     assert(format)
-
-    -- init message
     local message = string.tryformat(format, ...)
-
-    -- trace
     utils._print(colors.translate(message))
-
-    -- write to the log file
     if log:file() then
         log:printv(colors.ignore(message))
     end
 end
 
--- print format string and colors without newline
+-- print format string with color markup without newline
+--
+-- @param format the format string with ${color} markup
+-- @param ...    the format arguments
+--
 function utils.cprintf(format, ...)
-
-    -- check
     assert(format)
-
-    -- init message
     local message = string.tryformat(format, ...)
-
-    -- trace
     utils._iowrite(colors.translate(message))
-
-    -- write to the log file
     if log:file() then
         log:write(colors.ignore(message))
     end
 end
 
--- print the verbose information
+-- print the verbose information (only when -v is enabled)
+--
+-- @param format the format string
+-- @param ...    the format arguments
+--
 function utils.vprint(format, ...)
     if (option.get("verbose") or option.get("diagnosis")) and format ~= nil then
         utils.print(format, ...)
@@ -222,7 +214,29 @@ function utils.vprintf(format, ...)
     end
 end
 
--- print the error information
+-- print the diagnosis information (only when -D is enabled)
+--
+-- @param format the format string
+-- @param ...    the format arguments
+--
+function utils.dprint(format, ...)
+    if option.get("diagnosis") and format ~= nil then
+        utils.print(format, ...)
+    end
+end
+
+-- print the diagnosis information without newline
+function utils.dprintf(format, ...)
+    if option.get("diagnosis") and format ~= nil then
+        utils.printf(format, ...)
+    end
+end
+
+-- print the error information to stderr
+--
+-- @param format the format string
+-- @param ...    the format arguments
+--
 function utils.error(format, ...)
     if format ~= nil then
         local errors = string.tryformat(format, ...)
@@ -235,11 +249,15 @@ function utils.error(format, ...)
     end
 end
 
--- add warning message
+-- add a warning message (displayed at the end of execution)
+--
+-- @param format the format string
+-- @param ...    the format arguments
+--
 function utils.warning(format, ...)
-
-    -- check
-    assert(format)
+    if option.get("quiet") then
+        return
+    end
 
     -- format message
     local args = table.pack(...)
@@ -270,12 +288,13 @@ function utils.show_warnings()
     end
 end
 
--- ifelse, a? b : c
-function utils.ifelse(a, b, c)
-    if a then return b else return c end
-end
-
--- try to call script
+-- try to call script safely
+--
+-- @param script     the script function
+-- @param traceback  the traceback function (optional)
+-- @param ...        the script arguments
+-- @return           true and results on success, or false and errors
+--
 function utils.trycall(script, traceback, ...)
     return xpcall(script, function (errors)
 

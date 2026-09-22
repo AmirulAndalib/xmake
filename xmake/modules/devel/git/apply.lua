@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        apply.lua
@@ -38,6 +38,13 @@ import("lib.detect.find_tool")
 function main(patchfile, opt)
     opt = opt or {}
     local git = assert(find_tool("git"), "git not found!")
-    local argv = {"apply", "--reject", "--ignore-whitespace", patchfile}
+    local argv = {"apply", "--reject", "--ignore-whitespace"}
+    if opt.reverse then
+        table.insert(argv, "-R")
+    end
+    if opt.gitdir then
+        table.insert(argv, 1, "--git-dir=" .. opt.gitdir)
+    end
+    table.insert(argv, patchfile)
     os.vrunv(git.program, argv, {curdir = opt.repodir})
 end

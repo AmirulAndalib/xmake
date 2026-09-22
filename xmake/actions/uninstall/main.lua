@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        main.lua
@@ -25,18 +25,19 @@ import("core.platform.platform")
 import("core.base.privilege")
 import("privilege.sudo")
 import("uninstall")
+import("private.action.utils", {alias = "action_utils"})
 
 function main()
 
-    -- config it first
-    local targetname = option.get("target")
-    task.run("config", {require = "n", verbose = false})
+    -- load config first
+    task.run("config", {require = false}, {disable_dump = true})
 
     -- attempt to uninstall directly
+    local targetnames, group_pattern = action_utils.get_targets_and_group()
     try
     {
         function ()
-            uninstall(targetname)
+            uninstall(targetnames, group_pattern)
             cprint("${color.success}uninstall ok!")
         end,
 
@@ -50,7 +51,7 @@ function main()
                     local ok = try
                     {
                         function ()
-                            uninstall(targetname)
+                            uninstall(targetnames, group_pattern)
                             cprint("${color.success}uninstall ok!")
                             return true
                         end
@@ -68,7 +69,13 @@ function main()
                 if sudo.has() and option.get("admin") then
 
                     -- uninstall target with administrator permission
-                    sudo.execl(path.join(os.scriptdir(), "uninstall_admin.lua"), {targetname or "__all", option.get("installdir"), option.get("prefix")})
+                    sudo.execl(path.join(os.scriptdir(), "uninstall_admin.lua"), {
+                        targetnames and table.concat(targetnames, path.envsep()) or "__all",
+                        group_pattern or "",
+                        option.get("installdir") or "",
+                        option.get("bindir"),
+                        option.get("libdir"),
+                        option.get("includedir")})
 
                     -- trace
                     cprint("${color.success}uninstall ok!")

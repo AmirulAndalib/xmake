@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        application.lua
@@ -99,6 +99,7 @@ end
 
 -- run application
 function application:run(...)
+    assert(curses.done, "ncurses not found, please install it first.")
 
     -- init runner
     local argv = {...}

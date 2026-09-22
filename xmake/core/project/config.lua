@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        config.lua
@@ -28,6 +28,7 @@ local path          = require("base/path")
 local table         = require("base/table")
 local utils         = require("base/utils")
 local option        = require("base/option")
+local is_cross      = require("base/private/is_cross")
 
 -- always use workingdir?
 --
@@ -51,7 +52,29 @@ function config._use_workingdir()
     return use_workingdir
 end
 
--- get the current given configuration
+-- the current config is belong to the given config values?
+function config._is_value(value, ...)
+    if value == nil then
+        return false
+    end
+
+    value = tostring(value)
+    for _, v in ipairs(table.pack(...)) do
+        local v = v
+        -- escape '-'
+        v = tostring(v)
+        if value == v or value:find("^" .. v:gsub("%-", "%%-") .. "$") then
+            return true
+        end
+    end
+    return false
+end
+
+-- get the current given configuration value
+--
+-- @param name  the configuration name, e.g. "plat", "arch", "mode"
+-- @return      the configuration value
+--
 function config.get(name)
     local value = nil
     if config._CONFIGS then
@@ -75,25 +98,45 @@ end
 -- @param opt   the argument options, e.g. {readonly = false, force = false}
 --
 function config.set(name, value, opt)
-
-    -- check
-    assert(name)
-
-    -- init options
     opt = opt or {}
-
-    -- check readonly
+    assert(name)
     assert(opt.force or not config.readonly(name), "cannot set readonly config: " .. name)
 
-    -- set it
     config._CONFIGS = config._CONFIGS or {}
     config._CONFIGS[name] = value
-
-    -- mark as readonly
     if opt.readonly then
         config._MODES = config._MODES or {}
         config._MODES["__readonly_" .. name] = true
     end
+end
+
+-- get the current platform, e.g. "windows", "linux", "macosx"
+--
+-- @return      the platform name
+--
+function config.plat()
+    return config.get("plat")
+end
+
+-- get the current architecture, e.g. "x86_64", "arm64"
+--
+-- @return      the architecture name
+--
+function config.arch()
+    return config.get("arch")
+end
+
+-- get the current build mode, e.g. "debug", "release"
+--
+-- @return      the mode name
+--
+function config.mode()
+    return config.get("mode")
+end
+
+-- get the current host
+function config.host()
+    return config.get("host")
 end
 
 -- get all options
@@ -111,9 +154,9 @@ function config.options()
     return configs
 end
 
--- get the buildir
+-- get the builddir
 -- we can use `{absolute = true}` to force to get absolute path
-function config.buildir(opt)
+function config.builddir(opt)
 
     -- get the absolute path first
     opt = opt or {}
@@ -131,16 +174,22 @@ function config.buildir(opt)
     if not rootdir then
         rootdir = os.projectdir()
     end
-    local buildir = config.get("buildir") or "build"
-    if not path.is_absolute(buildir) then
-        buildir = path.absolute(buildir, rootdir)
+    local builddir = config.get("builddir") or config.get("buildir") or "build"
+    if not path.is_absolute(builddir) then
+        builddir = path.absolute(builddir, rootdir)
     end
 
     -- adjust path for the current directory
     if not opt.absolute then
-        buildir = path.relative(buildir, os.curdir())
+        builddir = path.relative(builddir, os.curdir())
     end
-    return buildir
+    return builddir
+end
+
+-- get build directory (deprecated)
+function config.buildir(opt)
+    utils.warning("config.buildir() has been deprecated, please use config.builddir()")
+    return config.builddir(opt)
 end
 
 -- get the configure file
@@ -154,6 +203,9 @@ function config.cachedir()
 end
 
 -- get the configure directory on the current host/arch platform
+--
+-- @return      the configuration cache directory, e.g. ".xmake/macosx/x86_64"
+--
 function config.directory()
     if config._DIRECTORY == nil then
         local rootdir = os.getenv("XMAKE_CONFIGDIR")
@@ -204,6 +256,10 @@ function config.load(filepath, opt)
 end
 
 -- save the project configuration
+--
+-- @note we pass only_changed to avoid frequent changes to the file's mtime,
+-- because some plugins(vscode, compile_commands.autoupdate) depend on it's mtime.
+--
 function config.save(filepath, opt)
     opt = opt or {}
     filepath = filepath or config.filepath()
@@ -214,9 +270,9 @@ function config.save(filepath, opt)
                 configs[name] = value
             end
         end
-        return io.save(filepath, configs, {orderkeys = true})
+        return io.save(filepath, configs, {orderkeys = true, only_changed = true})
     else
-        return io.save(filepath, config.options(), {orderkeys = true})
+        return io.save(filepath, config.options(), {orderkeys = true, only_changed = true})
     end
 end
 
@@ -244,41 +300,22 @@ end
 
 -- the current mode is belong to the given modes?
 function config.is_mode(...)
-    return config.is_value("mode", ...)
+    return config._is_value(config.get("mode"), ...)
 end
 
 -- the current platform is belong to the given platforms?
 function config.is_plat(...)
-    return config.is_value("plat", ...)
+    return config._is_value(config.get("plat"), ...)
 end
 
 -- the current architecture is belong to the given architectures?
 function config.is_arch(...)
-    return config.is_value("arch", ...)
+    return config._is_value(config.get("arch"), ...)
 end
 
--- the current config is belong to the given config values?
-function config.is_value(name, ...)
-
-    -- get the current config value
-    local value = config.get(name)
-    if not value then return false end
-
-    -- exists this value? and escape '-'
-    for _, v in ipairs(table.pack(...)) do
-        if v and type(v) == "string" and value:find("^" .. v:gsub("%-", "%%-") .. "$") then
-            return true
-        end
-    end
-end
-
--- has the given configs?
-function config.has(...)
-    for _, name in ipairs(table.pack(...)) do
-        if name and type(name) == "string" and config.get(name) then
-            return true
-        end
-    end
+-- is cross-compilation?
+function config.is_cross()
+    return is_cross(config.plat(), config.arch())
 end
 
 -- dump the configure

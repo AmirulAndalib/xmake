@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -32,7 +32,11 @@ rule("utils.symbols.export_all")
         if target:is_plat("windows") then
             assert(target:get("optimize") ~= "smallest", 'rule("utils.symbols.export_all"): does not support set_optimize("smallest") for target(%s)!', target:name())
             local allsymbols_filepath = path.join(target:autogendir(), "rules", "symbols", "export_all.def")
-            target:add("shflags", "/def:" .. allsymbols_filepath, {force = true})
+            if target:has_tool("sh", "link") then
+                target:add("shflags", "/def:" .. allsymbols_filepath, {force = true})
+            elseif target:has_tool("sh", "clang", "clangxx") then
+                target:add("shflags", "-Wl,/def:" .. allsymbols_filepath, {force = true})
+            end
         end
     end)
     before_link("export_all")

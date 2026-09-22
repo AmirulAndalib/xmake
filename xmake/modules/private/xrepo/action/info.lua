@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        info.lua
@@ -38,8 +38,19 @@ function menu_options()
                                        values = {"release", "debug"}         },
         {'f', "configs",    "kv", nil, "Set the given extra package configs.",
                                        "e.g.",
-                                       "    - xrepo fetch --configs=\"vs_runtime='MD'\" zlib",
+                                       "    - xrepo fetch --configs=\"runtimes='MD'\" zlib",
                                        "    - xrepo fetch --configs=\"regex=true,thread=true\" boost"},
+        {nil, "depgraph",   "k",  nil, "Show the dependency graph of the given packages.",
+                                       "e.g.",
+                                       "    - xrepo info --depgraph libpng",
+                                       "    - xrepo info --depgraph --format=json libpng",
+                                       "    - xrepo info --depgraph --format=dot libpng"},
+        {nil, "format",     "kv", nil, "Set the output format.",
+                                       "e.g.",
+                                       "    - xrepo info --format=json zlib",
+                                       "    - xrepo info --depgraph --format=dot libpng",
+                                       "values: json (for --info/--depgraph), dot (for --depgraph only)",
+                                       values = {"plain", "json", "dot"}},
         {},
         {nil, "packages",   "vs", nil, "The packages list.",
                                        "e.g.",
@@ -70,15 +81,18 @@ function _info_packages(packages)
     if not os.isdir(workdir) then
         os.mkdir(workdir)
         os.cd(workdir)
-        os.vrunv("xmake", {"create", "-P", "."})
+        os.vrunv(os.programfile(), {"create", "-P", "."})
     else
         os.cd(workdir)
     end
 
-    -- do configure first
+    -- do configure first, use `-q` to suppress checking noise
+    -- unless `-vD` is enabled for diagnosis
     local config_argv = {"f", "-c"}
     if option.get("diagnosis") then
         table.insert(config_argv, "-vD")
+    else
+        table.insert(config_argv, "-q")
     end
     if option.get("plat") then
         table.insert(config_argv, "-p")
@@ -88,20 +102,29 @@ function _info_packages(packages)
         table.insert(config_argv, "-a")
         table.insert(config_argv, option.get("arch"))
     end
-    local mode  = option.get("mode")
+    local mode = option.get("mode")
     if mode then
         table.insert(config_argv, "-m")
         table.insert(config_argv, mode)
     end
-    local kind  = option.get("kind")
+    local kind = option.get("kind")
     if kind then
         table.insert(config_argv, "-k")
         table.insert(config_argv, kind)
     end
-    os.vrunv("xmake", config_argv)
+    os.vrunv(os.programfile(), config_argv)
 
-    -- show info
-    local require_argv = {"require", "--info"}
+    -- show package info or dependency graph
+    local require_argv = {"require"}
+    if option.get("depgraph") then
+        table.insert(require_argv, "--depgraph")
+    else
+        table.insert(require_argv, "--info")
+    end
+    local format = option.get("format")
+    if format then
+        table.insert(require_argv, "--format=" .. format)
+    end
     if option.get("verbose") then
         table.insert(require_argv, "-v")
     end
@@ -131,7 +154,7 @@ function _info_packages(packages)
         table.insert(require_argv, "--extra=" .. extra_str)
     end
     table.join2(require_argv, packages)
-    os.vexecv("xmake", require_argv)
+    os.vexecv(os.programfile(), require_argv)
 end
 
 -- main entry

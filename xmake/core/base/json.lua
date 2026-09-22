@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        json.lua
@@ -24,27 +24,29 @@ local json  = json or {}
 -- load modules
 local io    = require("base/io")
 local os    = require("base/os")
+local table = require("base/table")
 local utils = require("base/utils")
 
 -- export null
+json.purenull = {}
+setmetatable(json.purenull, {
+    __is_json_null = true,
+    __eq = function (obj)
+        if type(obj) == "table" then
+            local mt = getmetatable(obj)
+            if mt and mt.__is_json_null then
+                return true
+            end
+        end
+        return false
+    end,
+    __tostring = function()
+        return "null"
+    end})
 if cjson then
     json.null = cjson.null
 else
-    json.null = {}
-    setmetatable(json.null, {
-        __is_json_null = true,
-        __eq = function (obj)
-            if type(obj) == "table" then
-                local mt = getmetatable(obj)
-                if mt and mt.__is_json_null then
-                    return true
-                end
-            end
-            return false
-        end,
-        __tostring = function()
-            return "null"
-        end})
+    json.null = json.purenull
 end
 
 function json._pure_kind_of(obj)
@@ -54,7 +56,7 @@ function json._pure_kind_of(obj)
     if json.is_marked_as_array(obj) then
         return "array"
     end
-    if obj == json.null then
+    if obj == json.purenull then
         return "nil"
     end
     local i = 1
@@ -112,11 +114,45 @@ function json._pure_parse_str_val(str, pos, val)
     if not nextc then
         os.raise(early_end_error)
     end
+
+    -- decode the unicode escape, e.g. \uXXXX, a surrogate pair, e.g. \uD83D\uDE00, is combined
+    if nextc == 'u' then
+        local code = tonumber(str:sub(pos + 2, pos + 5):match('^%x%x%x%x$'), 16)
+        if not code then
+            os.raise("invalid unicode escape near position %d", pos)
+        end
+        if code >= 0xD800 and code <= 0xDBFF and str:sub(pos + 6, pos + 7) == '\\u' then
+            local low = tonumber(str:sub(pos + 8, pos + 11):match('^%x%x%x%x$'), 16)
+            if low and low >= 0xDC00 and low <= 0xDFFF then
+                code = 0x10000 + (code - 0xD800) * 0x400 + low - 0xDC00
+                pos = pos + 6
+            end
+        end
+        if code >= 0xD800 and code <= 0xDFFF then
+            os.raise("invalid unicode escape near position %d", pos)
+        end
+        local utf8char
+        if code < 0x80 then
+            utf8char = string.char(code)
+        elseif code < 0x800 then
+            utf8char = string.char(0xC0 + math.floor(code / 0x40), 0x80 + code % 0x40)
+        elseif code < 0x10000 then
+            utf8char = string.char(0xE0 + math.floor(code / 0x1000), 0x80 + math.floor(code / 0x40) % 0x40, 0x80 + code % 0x40)
+        else
+            utf8char = string.char(0xF0 + math.floor(code / 0x40000), 0x80 + math.floor(code / 0x1000) % 0x40, 0x80 + math.floor(code / 0x40) % 0x40, 0x80 + code % 0x40)
+        end
+        return json._pure_parse_str_val(str, pos + 6, val .. utf8char)
+    end
     return json._pure_parse_str_val(str, pos + 2, val .. (esc_map[nextc] or nextc))
 end
 
 function json._pure_parse_num_val(str, pos)
-    local num_str = str:match('^-?%d+%.?%d*[eE]?[+-]?%d*', pos)
+    local num_str
+    if str:sub(pos, pos + 1) == "0x" then
+        num_str = str:match('^-?0[xX][0-9a-fA-F]+', pos)
+    else
+        num_str = str:match('^-?%d+%.?%d*[eE]?[+-]?%d*', pos)
+    end
     local val = tonumber(num_str)
     if not val then
         os.raise("error parsing number at position %d", pos)
@@ -124,7 +160,18 @@ function json._pure_parse_num_val(str, pos)
     return val, pos + #num_str
 end
 
-function json._pure_stringify(obj, as_key)
+function json._pure_stringify(obj, level, as_key, opt)
+    opt = opt or {}
+    level = level or 0
+    local pretty = opt.pretty
+    local orderkeys = opt.orderkeys
+    if orderkeys == nil and pretty then
+        orderkeys = true
+    end
+    local indent_step = pretty and (opt.indent or 4) or nil
+    local newline = pretty and "\n" or ""
+    local curr_indent = indent_step and string.rep(" ", indent_step * level) or nil
+    local child_indent = indent_step and string.rep(" ", indent_step * (level + 1)) or nil
     local s = {}
     local kind = json._pure_kind_of(obj)
     if kind == "array" then
@@ -132,9 +179,25 @@ function json._pure_stringify(obj, as_key)
             os.raise("can\'t encode array as key.")
         end
         s[#s + 1] = '['
-        for i, val in ipairs(obj) do
-            if i > 1 then s[#s + 1] = ',' end
-            s[#s + 1] = json._pure_stringify(val)
+        local arrlen = #obj
+        if pretty and arrlen > 0 then
+            s[#s + 1] = newline
+        end
+        for idx = 1, arrlen do
+            if idx > 1 then
+                s[#s + 1] = ','
+                if pretty then
+                    s[#s + 1] = newline
+                end
+            end
+            if pretty then
+                s[#s + 1] = child_indent
+            end
+            s[#s + 1] = json._pure_stringify(obj[idx], level + 1, false, opt)
+        end
+        if pretty and arrlen > 0 then
+            s[#s + 1] = newline
+            s[#s + 1] = curr_indent
         end
         s[#s + 1] = ']'
     elseif kind == "table" then
@@ -142,11 +205,27 @@ function json._pure_stringify(obj, as_key)
             os.raise("can\'t encode table as key.")
         end
         s[#s + 1] = '{'
-        for k, v in pairs(obj) do
-            if #s > 1 then s[#s + 1] = ',' end
-            s[#s + 1] = json._pure_stringify(k, true)
+        local first = true
+        local iter = orderkeys and table.orderpairs or pairs
+        for k, v in iter(obj) do
+            if not first then
+                s[#s + 1] = ','
+            end
+            if pretty then
+                s[#s + 1] = newline
+                s[#s + 1] = child_indent
+            end
+            s[#s + 1] = json._pure_stringify(k, level + 1, true, opt)
             s[#s + 1] = ':'
-            s[#s + 1] = json._pure_stringify(v)
+            if pretty then
+                s[#s + 1] = ' '
+            end
+            s[#s + 1] = json._pure_stringify(v, level + 1, false, opt)
+            first = false
+        end
+        if pretty and not first then
+            s[#s + 1] = newline
+            s[#s + 1] = curr_indent
         end
         s[#s + 1] = '}'
     elseif kind == "string" then
@@ -212,7 +291,7 @@ function json._pure_parse(str, pos, end_delim)
         -- end of an object or array.
         return nil, pos + 1
     else
-        local literals = {["true"] = true, ["false"] = false, ["null"] = json.null}
+        local literals = {["true"] = true, ["false"] = false, ["null"] = json.purenull}
         for lit_str, lit_val in pairs(literals) do
             local lit_end = pos + #lit_str - 1
             if str:sub(pos, lit_end) == lit_str then
@@ -231,7 +310,7 @@ end
 
 -- encode json string using pua lua
 function json._pure_encode(luatable, opt)
-    return json._pure_stringify(luatable)
+    return json._pure_stringify(luatable, 0, false, opt)
 end
 
 -- support empty array
@@ -256,7 +335,11 @@ end
 -- @return              the lua table
 --
 function json.decode(jsonstr, opt)
-    local ok, luatable_or_errors = utils.trycall(cjson and cjson.decode or json._pure_decode, nil, jsonstr)
+    local decode = cjson and cjson.decode or json._pure_decode
+    if opt and opt.pure then
+        decode = json._pure_decode
+    end
+    local ok, luatable_or_errors = utils.trycall(decode, nil, jsonstr)
     if not ok then
         return nil, string.format("decode json failed, %s", luatable_or_errors)
     end
@@ -271,7 +354,14 @@ end
 -- @return              the json string
 --
 function json.encode(luatable, opt)
-    local ok, jsonstr_or_errors = utils.trycall(cjson and cjson.encode or json._pure_encode, nil, luatable)
+    local use_pure = not cjson or (opt and (opt.pure or opt.pretty))
+    local encode = use_pure and json._pure_encode or cjson.encode
+    local ok, jsonstr_or_errors
+    if use_pure then
+        ok, jsonstr_or_errors = utils.trycall(encode, nil, luatable, opt)
+    else
+        ok, jsonstr_or_errors = utils.trycall(encode, nil, luatable)
+    end
     if not ok then
         return nil, string.format("encode json failed, %s", jsonstr_or_errors)
     end

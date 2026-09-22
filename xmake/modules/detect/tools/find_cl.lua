@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_cl.lua
@@ -35,16 +35,15 @@ import("lib.detect.find_programver")
 -- @endcode
 --
 function main(opt)
-
-    -- init options
-    opt         = opt or {}
-    opt.check   = opt.check or function (program)
+    opt = opt or {}
+    opt.norunfile = true
+    opt.check = opt.check or function (program)
         local ok = try { function () os.runv(program, {}, {envs = opt.envs}); return true end }
         if not ok then
             -- @see https://github.com/xmake-io/xmake/issues/3057
             local objectfile = os.tmpfile() .. ".obj"
             local sourcefile = os.tmpfile() .. ".c"
-            io.writefile(sourcefile, "int main(int argc, char** argv)\n{return 0;}")
+            io.writefile(sourcefile, "int main(int argc, char** argv)\n{return 0;}\n")
             os.runv(program, {"-c", "-Fo" .. objectfile, sourcefile}, {envs = opt.envs})
             os.rm(objectfile)
             os.rm(sourcefile)
@@ -57,9 +56,16 @@ function main(opt)
     -- find program version
     local version = nil
     if program and opt and opt.version then
-        opt.command = opt.command or function () local _, info = os.iorunv(program, {}, {envs = opt.envs}); return info end
-        opt.parse   = opt.parse or function (output) return output:match("Version (%d+%.?%d*%.?%d*.-)%s") end
-        version     = find_programver(program, opt)
+        opt.command = opt.command or function ()
+            local _, info = os.iorunv(program, {}, {envs = opt.envs})
+            return info
+        end
+        opt.parse = opt.parse or function (output)
+            -- we only keep the first three digits of the version number, making sure to provide a valid semver string.
+            -- @see https://github.com/xmake-io/xmake/issues/6474
+            return output:match("%s(%d+%.%d+%.%d+)")
+        end
+        version = find_programver(program, opt)
     end
     return program, version
 end

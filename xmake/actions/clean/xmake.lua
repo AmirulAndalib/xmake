@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -21,21 +21,21 @@
 task("clean")
     set_category("action")
     on_run("main")
-
     set_menu {
-                usage = "xmake clean|c [options] [target]"
-            ,   description = "Remove all binary and temporary files."
-            ,   shortname = 'c'
-
-            ,   options =
-                {
-                    {'a', "all",        "k",  nil   , "Clean all auto-generated files by xmake."                      }
-
-                ,   {}
-                ,   {nil, "target",     "v",  nil   , "The target name. It will clean all default targets if this parameter is not specified."
-                                                    , values = function (complete, opt) return import("private.utils.complete_helper.targets")(complete, opt) end }
-                }
-            }
-
-
-
+        usage = "xmake clean|c [options] [targets]",
+        description = "Remove all binary and temporary files.",
+        shortname = 'c',
+        options = {
+            {'a', "all",        "k",  nil,    "Clean all auto-generated files by xmake."},
+            {'g', "group",      "kv", nil,    "Clean all targets of the given group. It supports path pattern matching.",
+                                              "e.g.",
+                                              "    xmake clean -g test",
+                                              "    xmake clean -g test_*",
+                                              "    xmake clean --group=benchmark/*"},
+            {},
+            {nil, "targets",    "vs", nil,    "The target names. It will clean all default targets if this parameter is not specified.",
+                                              "e.g.",
+                                              "    xmake clean target1 target2 ...",
+                                              values = function (complete, opt) return import("private.utils.complete_helper.targets")(complete, opt) end},
+        }
+    }

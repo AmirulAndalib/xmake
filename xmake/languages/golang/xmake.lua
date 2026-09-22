@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -77,14 +77,14 @@ language("golang")
     set_menu {
                 config =
                 {
-                    {category = "Cross Complation Configuration/Compiler Configuration"        }
+                    {category = "Cross Compilation Configuration/Compiler Configuration"        }
                 ,   {nil, "go",         "kv", nil,          "The Golang Compiler"              }
 
-                ,   {category = "Cross Complation Configuration/Linker Configuration"          }
+                ,   {category = "Cross Compilation Configuration/Linker Configuration"          }
                 ,   {nil, "gcld",      "kv", nil,          "The Golang Linker"                }
                 ,   {nil, "go-ar",      "kv", nil,          "The Golang Static Library Linker" }
 
-                ,   {category = "Cross Complation Configuration/Builtin Flags Configuration"   }
+                ,   {category = "Cross Compilation Configuration/Builtin Flags Configuration"   }
                 ,   {nil, "links",      "kv", nil,          "The Link Libraries"               }
                 ,   {nil, "syslinks",   "kv", nil,          "The System Link Libraries"        }
                 ,   {nil, "linkdirs",   "kv", nil,          "The Link Search Directories"      }

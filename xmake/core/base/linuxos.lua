@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        linuxos.lua
@@ -66,17 +66,10 @@ function linuxos._uname_r()
     return uname_r or nil
 end
 
--- get system name
+-- get linux distribution name
 --
--- e.g.
---  - ubuntu
---  - debian
---  - archlinux
---  - rhel
---  - centos
---  - fedora
---  - opensuse
---  - ...
+-- @return      the distribution name string, e.g. "ubuntu", "debian", "archlinux", "fedora"
+--
 function linuxos.name()
     local name = linuxos._NAME
     if name == nil then
@@ -97,14 +90,23 @@ function linuxos.name()
                     name = "deepin"
                 elseif os_release:find("linux mint", 1, true) or os_release:find("linuxmint", 1, true) then
                     name = "linuxmint"
+                -- kylin contains keyword 'UBUNTU_CODENAME', so we check kylin before ubuntu
+                elseif os_release:find("kylin", 1, true) then
+                    name = "kylin"
                 elseif os_release:find("ubuntu", 1, true) then
                     name = "ubuntu"
                 elseif os_release:find("debian", 1, true) then
                     name = "debian"
+                elseif os_release:find("gentoo linux", 1, true) then
+                    name = "gentoo"
                 elseif os_release:find("opensuse", 1, true) then
                     name = "opensuse"
                 elseif os_release:find("manjaro", 1, true) then
                     name = "manjaro"
+                elseif os_release:find("nixos", 1, true) then
+                    name = "nixos"
+                elseif os_release:find("alpine", 1, true) then
+                    name = "alpine"
                 end
             end
         end
@@ -129,7 +131,10 @@ function linuxos.name()
     return name
 end
 
--- get system version
+-- get linux distribution version
+--
+-- @return      the semver version object
+--
 function linuxos.version()
     local version = linuxos._VERSION
     if version == nil then
@@ -140,14 +145,23 @@ function linuxos.version()
             if os_release then
                 os_release = os_release:trim():lower():split("\n")
                 for _, line in ipairs(os_release) do
+                    local line = line
                     -- ubuntu: VERSION="16.04.7 LTS (Xenial Xerus)"
                     -- fedora: VERSION="32 (Container Image)"
                     -- debian: VERSION="9 (stretch)"
+                    -- kylin : VERSION="V10(kylin)"
                     if line:find("version=") then
                         line = line:sub(9)
                         version = semver.match(line)
                         if not version then
                             version = line:match("\"(%d+)%s+.*\"")
+                            if version then
+                                version = semver.new(version .. ".0")
+                            end
+                        end
+                        -- is kylin?
+                        if not version and line:find("kylin", 1, true) then
+                            version = line:match("\"v(%d+)%(kylin%)\"")
                             if version then
                                 version = semver.new(version .. ".0")
                             end
@@ -181,6 +195,9 @@ function linuxos.version()
 end
 
 -- get linux kernel version
+--
+-- @return      the semver version object
+--
 function linuxos.kernelver()
     local version = linuxos._KERNELVER
     if version == nil then

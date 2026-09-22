@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        statistics.lua
@@ -32,7 +32,7 @@ function _is_enabled()
 
     -- disable statistics? need not post it
     local stats = (os.getenv("XMAKE_STATS") or ""):lower()
-    if stats == "false" then
+    if option.boolean(stats) == false then
         return false
     end
 
@@ -86,7 +86,7 @@ function post()
     try
     {
         function ()
-            process.openv("xmake", argv, {stdout = path.join(os.tmpdir(), projectname .. ".stats.log"), detach = true}):close()
+            process.openv(os.programfile(), argv, {stdout = path.join(os.tmpdir(), projectname .. ".stats.log"), detach = true}):close()
         end
     }
 

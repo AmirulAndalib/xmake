@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_cuda.lua
@@ -27,11 +27,21 @@ import("core.project.config")
 import("core.cache.detectcache")
 
 -- find cuda sdk directory
-function _find_sdkdir(version)
+function _find_sdkdir(version, sdkdir)
 
     -- init the search directories
     local paths = {}
-    if version then
+    if sdkdir then
+        version = version or "*"
+        table.insert(paths, path.join(sdkdir, "bin"))
+        if is_host("macosx") then
+            table.insert(paths, path.join(sdkdir, format("CUDA-%s/bin", version)))
+        elseif is_host("windows") then
+            table.insert(paths, path.join(sdkdir, format("v%s\\bin", version)))
+        else
+            table.insert(paths, path.join(sdkdir, format("cuda-%s/bin", version)))
+        end
+    elseif version then
         if is_host("macosx") then
             table.insert(paths, format("/Developer/NVIDIA/CUDA-%s/bin", version))
         elseif is_host("windows") then
@@ -71,22 +81,28 @@ function _find_msbuildextensionsdir(sdkdir)
 end
 
 -- find cuda sdk toolchains
-function _find_cuda(sdkdir)
+function _find_cuda(sdkdir, sdkver)
+
+    -- handle sdkdir as version
+    if sdkdir and sdkdir:match("^[%d*]+%.[%d*]+$") then
+        sdkver = sdkdir
+        sdkdir = nil
+    end
 
     -- check sdkdir
-    if sdkdir and not os.isdir(sdkdir) and not sdkdir:match("^[%d*]+%.[%d*]+$") then
-        raise("invalid cuda version/location: " .. sdkdir)
+    if sdkdir and not os.isdir(sdkdir) then
+        raise("invalid cuda location: " .. sdkdir)
+    end
+
+    -- check sdkver
+    if sdkver and not sdkver:match("^[%d*]+%.[%d*]+$") then
+        raise("invalid cuda version: " .. sdkver)
     end
 
     -- find cuda directory
-    if not sdkdir then
-        sdkdir = _find_sdkdir()
-    elseif sdkdir:match("^[%d*]+%.[%d*]+$") then
-        local cudaversion = sdkdir
-        sdkdir = _find_sdkdir(cudaversion)
-        if not sdkdir then
-            raise("cuda version %s not found!", cudaversion)
-        end
+    sdkdir = _find_sdkdir(sdkver, sdkdir)
+    if not sdkdir and sdkver then
+        raise("cuda version %s not found!", sdkver)
     end
 
     -- not found?
@@ -105,11 +121,9 @@ function _find_cuda(sdkdir)
     if is_host("windows") then
         local subdir = is_arch("x64") and "x64" or "Win32"
         table.insert(linkdirs, path.join(sdkdir, "lib", subdir))
-    elseif is_host("linux") and is_arch("x86_64") then
-        table.insert(linkdirs, path.join(sdkdir, "lib64", "stubs"))
+    elseif is_host("linux") and is_arch("x86_64", "arm64") then
         table.insert(linkdirs, path.join(sdkdir, "lib64"))
     else
-        table.insert(linkdirs, path.join(sdkdir, "lib", "stubs"))
         table.insert(linkdirs, path.join(sdkdir, "lib"))
     end
 
@@ -144,6 +158,12 @@ end
 --
 -- @endcode
 --
+-- find CUDA SDK
+--
+-- @param sdkdir the CUDA SDK directory (optional)
+-- @param opt    the options, e.g. {verbose = true, force = false}
+-- @return       the SDK info table {sdkdir, bindir, libdirs, includedirs, ...}
+--
 function main(sdkdir, opt)
 
     -- init arguments
@@ -157,11 +177,12 @@ function main(sdkdir, opt)
     end
 
     -- find cuda
-    local cuda = _find_cuda(sdkdir or config.get("cuda") or global.get("cuda") or config.get("sdk"))
+    local cuda = _find_cuda(sdkdir or config.get("cuda") or global.get("cuda") or config.get("sdk"), opt.version or config.get("cuda_sdkver"))
     if cuda then
 
         -- save to config
         config.set("cuda", cuda.sdkdir, {force = true, readonly = true})
+        config.set("cuda_sdkver", cuda.version, {force = true, readonly = true})
 
         -- trace
         if opt.verbose or option.get("verbose") then
@@ -178,6 +199,5 @@ function main(sdkdir, opt)
     -- save to cache
     cacheinfo.cuda = cuda or false
     detectcache:set(key, cacheinfo)
-    detectcache:save()
     return cuda
 end

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -35,7 +35,7 @@ rule("fortran.build")
     add_deps("fortran.build.modules")
     on_load(function (target)
         -- we disable to build across targets in parallel, because the source files may depend on other target modules
-        target:set("policy", "build.across_targets_in_parallel", false)
+        target:set("policy", "build.fence", true)
     end)
     on_build_files(function (target, sourcebatch, opt)
         import("private.action.build.object").build(target, sourcebatch, opt)

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        bytes.lua
@@ -583,12 +583,20 @@ function _instance:__gc()
     end
 end
 
--- new an bytes instance
+-- create a new bytes instance
+--
+-- @param ...   the data (string, number/size, cdata + size, or another bytes)
+-- @return      the bytes instance
+--
 function bytes.new(...)
     return _instance.new(...)
 end
 
--- is instance of bytes?
+-- is the data an instance of bytes?
+--
+-- @param data  the data to check
+-- @return      true if it is a bytes instance
+--
 function bytes.instance_of(data)
     if type(data) == "table" and data.cdata and data.size then
         return true

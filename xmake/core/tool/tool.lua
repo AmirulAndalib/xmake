@@ -12,7 +12,7 @@
 -- See the License for the specific tool governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        tool.lua
@@ -33,20 +33,19 @@ local sandbox       = require("sandbox/sandbox")
 local toolchain     = require("tool/toolchain")
 local platform      = require("platform/platform")
 local language      = require("language/language")
+local is_cross      = require("base/private/is_cross")
 local import        = require("sandbox/modules/import")
 
 -- new an instance
 function _instance.new(kind, name, program, plat, arch, toolchain_inst)
 
     -- import "core.tools.xxx"
-    local toolclass = nil
-    if os.isfile(path.join(os.programdir(), "modules", "core", "tools", name .. ".lua")) then
-        toolclass = import("core.tools." .. name, {nocache = true}) -- @note we need to create a tool instance with unique toolclass context (_g)
-    end
+    -- @note we need to create a tool instance with unique toolclass context (_g)
+    local toolclass = import("core.tools." .. name, {try = true, nocache = true})
 
     -- not found?
     if not toolclass then
-        return nil, string.format("cannot import \"core.tool.%s\" module!", name)
+        return nil, string.format("cannot import \"core.tools.%s\" module!", name)
     end
 
     -- new an instance
@@ -63,7 +62,7 @@ function _instance.new(kind, name, program, plat, arch, toolchain_inst)
 
     -- init instance
     if instance.init then
-        local ok, errors = sandbox.load(instance.init, instance)
+        local ok, errors = sandbox.call(instance.init, instance)
         if not ok then
             return nil, errors
         end
@@ -109,6 +108,11 @@ function _instance:is_arch(...)
             return true
         end
     end
+end
+
+-- is cross-compilation?
+function _instance:is_cross()
+    return is_cross(self:plat(), self:arch())
 end
 
 -- get the tool program
@@ -172,7 +176,7 @@ end
 function _instance:_load_once()
     if not self._LOADED then
         if self.load then
-            local ok, errors = sandbox.load(self.load, self)
+            local ok, errors = sandbox.call(self.load, self)
             if not ok then
                 return false, errors
             end
@@ -231,25 +235,14 @@ end
 -- @param opt.toolchain_info  the toolchain info (optional)
 --
 function tool.load(kind, opt)
-
-    -- get tool information
     opt = opt or {}
     local program = opt.program
     local toolname = opt.toolname
     local toolchain_info = opt.toolchain_info or {}
 
     -- get platform and architecture
-    local plat = toolchain_info.plat or config.get("plat") or os.host()
-    local arch = toolchain_info.arch or config.get("arch") or os.arch()
-
-    -- init cachekey
-    local cachekey = kind .. (program or "") .. plat .. arch
-
-    -- get it directly from cache dirst
-    tool._TOOLS = tool._TOOLS or {}
-    if tool._TOOLS[cachekey] then
-        return tool._TOOLS[cachekey]
-    end
+    local plat = toolchain_info.plat or config.plat() or os.host()
+    local arch = toolchain_info.arch or config.arch() or os.arch()
 
     -- contain toolname? parse it, e.g. 'gcc@xxxx.exe'
     if program then
@@ -267,7 +260,7 @@ function tool.load(kind, opt)
 
     -- get the tool program and name
     if not program then
-        program, toolname, toolchain_info = platform.tool(kind, plat, arch)
+        program, toolname, toolchain_info = platform.tool(kind, plat, arch, {host = opt.host})
         if toolchain_info then
             assert(toolchain_info.plat == plat)
             assert(toolchain_info.arch == arch)
@@ -281,7 +274,7 @@ function tool.load(kind, opt)
     tool._find_toolname = tool._find_toolname or import("lib.detect.find_toolname")
 
     -- get the tool name from the program
-    local ok, name_or_errors = sandbox.load(tool._find_toolname, toolname or program, {program = program})
+    local ok, name_or_errors = sandbox.call(tool._find_toolname, toolname or program, {program = program})
     if not ok then
         return nil, name_or_errors
     end
@@ -303,7 +296,6 @@ function tool.load(kind, opt)
     if not instance then
         return nil, errors
     end
-    tool._TOOLS[cachekey] = instance
     return instance
 end
 

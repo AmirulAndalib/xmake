@@ -1,6 +1,6 @@
 <div align="center">
-  <a href="https://xmake.io/cn">
-    <img width="160" heigth="160" src="https://tboox.org/static/img/xmake/logo256c.png">
+  <a href="https://xmake.io/zh">
+    <img width="160" height="160" src="https://xmake.io/assets/img/logo.png">
   </a>
 
   <h1>xmake</h1>
@@ -35,7 +35,7 @@
     <a href="https://discord.gg/xmake">
       <img src="https://img.shields.io/badge/chat-on%20discord-7289da.svg?style=flat-square" alt="Discord" />
     </a>
-    <a href="https://xmake.io/#/zh-cn/about/sponsor">
+    <a href="https://xmake.io/zh/about/sponsor.html">
       <img src="https://img.shields.io/badge/donate-us-orange.svg?style=flat-square" alt="Donate" />
     </a>
   </div>
@@ -46,18 +46,7 @@
 
 ## 项目支持
 
-通过[成为赞助者](https://xmake.io/#/about/sponsor)来支持该项目。您的logo将显示在此处，并带有指向您网站的链接。🙏
-
-<a href="https://opencollective.com/xmake#sponsors" target="_blank"><img src="https://opencollective.com/xmake/sponsors.svg?width=890"></a>
-<a href="https://opencollective.com/xmake#backers" target="_blank"><img src="https://opencollective.com/xmake/backers.svg?width=600"></a>
-
-## 技术支持
-
-你也可以考虑通过 [Github 的赞助计划](https://github.com/sponsors/waruqi) 赞助我们来获取额外的技术支持服务，然后你就能获取 [xmake-io/technical-support](https://github.com/xmake-io/technical-support) 仓库的访问权限，获取更多技术咨询相关的信息。
-
-- [x] 更高优先级的 Issues 问题处理
-- [x] 一对一技术咨询服务
-- [x] Review xmake.lua 并提供改进建议
+通过[成为赞助者](https://xmake.io/zh/about/sponsor.html)来支持该项目。您的logo将显示在此处，并带有指向您网站的链接。🙏
 
 ## 简介
 
@@ -82,15 +71,15 @@ Xmake ≈ Make/Ninja + CMake/Meson + Vcpkg/Conan + distcc + ccache/sccache
 ```
 
 
-如果你想要了解更多，请参考：[在线文档](https://xmake.io/#/zh-cn/getting_started), [Github](https://github.com/xmake-io/xmake)以及[Gitee](https://gitee.com/tboox/xmake)，同时也欢迎加入我们的 [社区](https://xmake.io/#/zh-ch/about/contact).
+如果你想要了解更多，请参考：[在线文档](https://xmake.io/zh/guide/quick-start.html), [Github](https://github.com/xmake-io/xmake)以及[Gitee](https://gitee.com/tboox/xmake) 和 [GitCode](https://gitcode.com/xmake-io/xmake)，同时也欢迎加入我们的 [社区](https://xmake.io/zh/about/contact)。
 
-![](https://github.com/xmake-io/xmake-docs/raw/master/assets/img/index/xmake-basic-render.gif)
+![](https://github.com/xmake-io/xmake-docs/raw/master/docs/public/assets/img/index/xmake-basic-render.gif)
 
 ## 课程
 
 xmake 官方也推出了一些入门课程，带你一步步快速上手 xmake，课程列表如下：
 
-* [Xmake 带你轻松构建 C/C++ 项目](https://xmake.io/#/zh-cn/about/course)
+* [Xmake 带你轻松构建 C/C++ 项目](https://xmake.io/zh/about/course)
 
 ## 安装
 
@@ -109,12 +98,12 @@ wget https://xmake.io/shget.text -O - | bash
 #### 使用powershell
 
 ```powershell
-Invoke-Expression (Invoke-Webrequest 'https://xmake.io/psget.text' -UseBasicParsing).Content
+irm https://xmake.io/psget.text | iex
 ```
 
 #### 其他安装方式
 
-如果不想使用脚本安装，也可以点击查看 [安装文档](https://xmake.io/#/zh-cn/guide/installation)，了解其他安装方法。
+如果不想使用脚本安装，也可以点击查看 [安装文档](https://xmake.io/zh/guide/quick-start.html#installation)，了解其他安装方法。
 
 ## 简单的工程描述
 
@@ -215,7 +204,7 @@ $ xmake f --menu
 
 * 官方自建仓库 [xmake-repo](https://github.com/xmake-io/xmake-repo) (tbox >1.6.1)
 * 官方包管理器 [Xrepo](https://github.com/xmake-io/xrepo)
-* [用户自建仓库](https://xmake.io/#/zh-cn/package/remote_package?id=%e4%bd%bf%e7%94%a8%e8%87%aa%e5%bb%ba%e7%a7%81%e6%9c%89%e5%8c%85%e4%bb%93%e5%ba%93)
+* [用户自建仓库](https://xmake.io/package/remote_package?id=using-self-built-private-package-repository)
 * Conan (conan::openssl/1.1.1g)
 * Conda (conda::libpng 1.3.67)
 * Vcpkg (vcpkg::ffmpeg)
@@ -227,6 +216,7 @@ $ xmake f --menu
 * Portage on Gentoo/Linux (portage::libhandy)
 * Nimble for nimlang (nimble::zip >1.3)
 * Cargo for rust (cargo::base64 0.13.0)
+* NuGet (nuget::Humanizer.Core 2.14.1)
 
 ### 包管理特性
 
@@ -241,19 +231,25 @@ $ xmake f --menu
 
 ## 支持平台
 
-* Windows (x86, x64)
+* Windows (x86, x64, arm, arm64, arm64ec)
 * macOS (i386, x86_64, arm64)
-* Linux (i386, x86_64, cross-toolchains ..)
-* *BSD (i386, x86_64)
+* Linux (i386, x86_64, arm, arm64, riscv, mips, 390x, sh4 ...)
+* FreeBSD (i386, x86_64)
+* NetBSD (i386, x86_64)
+* OpenBSD (i386, x86_64)
+* DragonflyBSD (i386, x86_64)
+* Solaris (i386, x86_64)
 * Android (x86, x86_64, armeabi, armeabi-v7a, arm64-v8a)
 * iOS (armv7, armv7s, arm64, i386, x86_64)
 * WatchOS (armv7k, i386)
 * AppleTVOS (armv7, arm64, i386, x86_64)
+* AppleXROS (arm64, x86_64)
 * MSYS (i386, x86_64)
 * MinGW (i386, x86_64, arm, arm64)
 * Cygwin (i386, x86_64)
-* Wasm (wasm32)
+* Wasm (wasm32, wasm64)
 * Haiku (i386, x86_64)
+* Harmony (x86_64, armeabi-v7a, arm64-v8a)
 * Cross (cross-toolchains ..)
 
 ## 支持工具链
@@ -271,7 +267,9 @@ dmd           D Programming Language Compiler
 ldc           The LLVM-based D Compiler
 gdc           The GNU D Compiler (GDC)
 gfortran      GNU Fortran Programming Language Compiler
+flang         LLVM Fortran Compiler
 zig           Zig Programming Language Compiler
+zigcc         Use zig cc/c++ as C/C++ Compiler
 sdcc          Small Device C Compiler
 cuda          CUDA Toolkit (nvcc, nvc, nvc++, nvfortran)
 ndk           Android NDK
@@ -289,10 +287,12 @@ tinycc        Tiny C Compiler
 emcc          A toolchain for compiling to asm.js and WebAssembly
 icc           Intel C/C++ Compiler
 ifort         Intel Fortran Compiler
+ifx           Intel LLVM Fortran Compiler
 muslcc        The musl-based cross-compilation toolchain
 fpc           Free Pascal Programming Language Compiler
 wasi          WASI-enabled WebAssembly C/C++ toolchain
 nim           Nim Programming Language Compiler
+dotnet        .NET SDK Toolchain
 circle        A new C++20 compiler
 armcc         ARM Compiler Version 5 of Keil MDK
 armclang      ARM Compiler Version 6 of Keil MDK
@@ -302,6 +302,14 @@ dpcpp         Intel LLVM C++ Compiler for data parallel programming model based 
 masm32        The MASM32 SDK
 iverilog      Icarus Verilog
 verilator     Verilator open-source SystemVerilog simulator and lint system
+cosmocc       build-once run-anywhere
+hdk           Harmony SDK
+ti-c2000      TI-CGT C2000 compiler
+ti-c6000      TI-CGT C6000 compiler
+iararm        IAR ARM C/C++ Compiler
+kotlin-native Kotlin Native Programming Language Compiler
+filc          A memory safe implementation of the C and C++ programming languages (https://fil-c.org/)
+ascendc       Huawei Ascend C (bisheng compiler driver)
 ```
 
 ## 支持语言
@@ -325,6 +333,9 @@ verilator     Verilator open-source SystemVerilog simulator and lint system
 * YASM
 * MASM32
 * Cppfront
+* Kotlin
+* C#
+* Ascend C
 
 ## 支持特性
 
@@ -378,12 +389,12 @@ verilator     Verilator open-source SystemVerilog simulator and lint system
 
 关于分布式编译和缓存，可以见下面的文档。
 
-- [分布式编译](https://xmake.io/#/zh-cn/features/distcc_build)
-- [编译缓存](https://xmake.io/#/zh-cn/features/build_cache)
+- [分布式编译](https://xmake.io/zh/guide/extras/distributed-compilation.html)
+- [编译缓存](https://xmake.io/zh/guide/extras/build-cache.html)
 
 ## 远程编译
 
-更多详情见：[远程编译](https://xmake.io/#/zh-cn/features/remote_build)
+更多详情见：[远程编译](https://xmake.io/zh/guide/extras/remote-compilation.html)
 
 ## 更多例子
 
@@ -443,7 +454,7 @@ target("test")
     set_kind("binary")
     add_files("src/*.cu")
     add_cugencodes("native")
-    add_cugencodes("compute_35")
+    add_cugencodes("compute_75")
 ```
 
 #### WDK/UMDF 驱动程序
@@ -460,7 +471,7 @@ target("app")
     add_files("exe/*.cpp")
 ```
 
-更多WDK驱动程序例子(umdf/kmdf/wdm)，见：[WDK工程例子](https://xmake.io/#/zh-cn/guide/project_examples?id=wdk%e9%a9%b1%e5%8a%a8%e7%a8%8b%e5%ba%8f)
+更多WDK驱动程序例子(umdf/kmdf/wdm)，见：[WDK工程例子](https://xmake.io/zh/examples/cpp/wdk.html)
 
 #### iOS/MacOS 应用程序
 
@@ -509,9 +520,9 @@ target("test")
 add_requires("llvm 10.x", {alias = "llvm-10"})
 target("test")
     set_kind("binary")
-    add_files("src/*.c)
+    add_files("src/*.c")
     set_toolchains("llvm@llvm-10")
-````
+```
 
 #### 拉取交叉编译工具链
 
@@ -521,7 +532,7 @@ target("test")
 add_requires("muslcc")
 target("test")
     set_kind("binary")
-    add_files("src/*.c)
+    add_files("src/*.c")
     set_toolchains("@muslcc")
 ```
 
@@ -543,7 +554,7 @@ target("test")
 
 ## 插件
 
-#### 生成IDE工程文件插件（makefile, vs2002 - vs2022, ...）
+#### 生成IDE工程文件插件（makefile, vs2002 - vs2026, ...）
 
 ```bash
 $ xmake project -k vsxmake -m "debug,release" # 新版vs工程生成插件（推荐）
@@ -569,7 +580,7 @@ $ xmake l
   }
 ```
 
-更多内置插件见相关文档：[内置插件文档](https://xmake.io/#/zh-cn/plugin/builtin_plugins)
+更多内置插件见相关文档：[内置插件文档](https://xmake.io/zh/guide/extensions/builtin-plugins.html)
 
 其他扩展插件，请到插件仓库进行下载安装: [xmake-plugins](https://github.com/xmake-io/xmake-plugins).
 
@@ -587,6 +598,7 @@ $ xmake l
 
 <img src="https://raw.githubusercontent.com/xmake-io/xmake-idea/master/res/problem.gif" width="650px" />
 
+* [xmake-zed](https://github.com/xmake-io/xmake-zed) (thanks [@jeleferai](https://github.com/jeleferai))
 * [xmake.vim](https://github.com/luzhlon/xmake.vim) (third-party, thanks [@luzhlon](https://github.com/luzhlon))
 
 * [xmake-visualstudio](https://github.com/HelloWorld886/xmake-visualstudio) (third-party, thanks [@HelloWorld886](https://github.com/HelloWorld886))
@@ -648,7 +660,7 @@ with:
 
 ## 谁在使用 Xmake?
 
-请点击 [用户列表](https://xmake.io/#/zh-cn/about/who_is_using_xmake) 查看完整用户使用列表。
+请点击 [用户列表](https://xmake.io/zh/about/who_is_using_xmake) 查看完整用户使用列表。
 
 如果您在使用 xmake，也欢迎通过 PR 将信息提交至上面的列表，让更多的用户了解有多少用户在使用 xmake，也能让用户更加安心使用 xmake。
 
@@ -657,7 +669,7 @@ with:
 ## 联系方式
 
 * 邮箱：[waruqi@gmail.com](mailto:waruqi@gmail.com)
-* 主页：[xmake.io](https://xmake.io/#/zh-cn/)
+* 主页：[xmake.io](https://xmake.io/zh/)
 * 社区
   - [Reddit论坛](https://www.reddit.com/r/xmake/)
   - [Telegram群组](https://t.me/tbooxorg)
@@ -675,4 +687,7 @@ with:
 * [uael](https://github.com/uael): 提供语义版本跨平台c库 [sv](https://github.com/uael/sv)。
 * [OpportunityLiu](https://github.com/OpportunityLiu): 改进cuda构建, tests框架和ci。
 * [xq144](https://github.com/xq114): 改进 `xrepo env shell`，并贡献大量包到 [xmake-repo](https://github.com/xmake-io/xmake-repo) 仓库。
+* [star-hengxing](https://github.com/star-hengxing): 贡献大量包到 [xmake-repo](https://github.com/xmake-io/xmake-repo) 仓库。
+* [SirLynix](https://github.com/SirLynix): 贡献了许多的包，并且让更多的人知道和了解 xmake。
+* [Arthapz](https://github.com/Arthapz): 贡献新的 C++ Modules 实现。
 

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        tcc.lua
@@ -23,7 +23,9 @@ import("core.base.option")
 import("core.base.global")
 import("core.project.config")
 import("core.project.project")
+import("core.project.policy")
 import("core.language.language")
+import("utils.progress")
 
 -- init it
 function init(self)
@@ -142,16 +144,23 @@ function compargv(self, sourcefile, objectfile, flags)
 end
 
 -- compile the source file
-function compile(self, sourcefile, objectfile, dependinfo, flags)
-
-    -- ensure the object directory
+function compile(self, sourcefile, objectfile, dependinfo, flags, opt)
+    opt = opt or {}
     os.mkdir(path.directory(objectfile))
 
-    -- compile it
+    local depfile = dependinfo and os.tmpfile() or nil
     try
     {
         function ()
-            local outdata, errdata = os.iorunv(compargv(self, sourcefile, objectfile, flags))
+
+            -- generate includes file
+            local compflags = flags
+            if depfile then
+                compflags = table.join(compflags, "-MD", "-MF", depfile)
+            end
+
+            -- do compile
+            local outdata, errdata = os.iorunv(compargv(self, sourcefile, objectfile, compflags))
             return (outdata or "") .. (errdata or "")
         end,
         catch
@@ -186,8 +195,19 @@ function compile(self, sourcefile, objectfile, dependinfo, flags)
             function (ok, warnings)
 
                 -- print some warnings
-                if warnings and #warnings > 0 and (option.get("verbose") or option.get("warning") or global.get("build_warning")) then
-                    cprint("${color.warning}%s", table.concat(table.slice(warnings:split('\n'), 1, 8), '\n'))
+                if warnings and #warnings > 0 and policy.build_warnings(opt) then
+                    progress.show_output("${color.warning}%s", table.concat(table.slice(warnings:split('\n'), 1, 8), '\n'))
+                end
+
+                -- generate the dependent includes
+                if depfile and os.isfile(depfile) then
+                    if dependinfo then
+                        dependinfo.depfiles_format = "gcc"
+                        dependinfo.depfiles = io.readfile(depfile, {continuation = "\\"})
+                    end
+
+                    -- remove the temporary dependent file
+                    os.tryrm(depfile)
                 end
             end
         }

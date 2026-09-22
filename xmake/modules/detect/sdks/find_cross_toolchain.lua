@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_cross_toolchain.lua
@@ -34,6 +34,7 @@ function _find_bindir(sdkdir, opt)
 
     -- attempt to find *-[gcc|clang|ld]
     for _, toolname in ipairs({"gcc", "clang", "ld"}) do
+        local toolname = toolname
         if is_host("windows") then
             toolname = toolname .. ".exe"
         end
@@ -73,6 +74,12 @@ end
 -- local toolchain = find_cross_toolchain("/xxx/android-cross-r10e", {cross = "arm-linux-androideabi-", bindir = ..})
 --
 -- @endcode
+--
+-- find cross-compilation toolchain
+--
+-- @param sdkdir the SDK directory
+-- @param opt    the options, e.g. {bindir = "", cross = "arm-linux-gnueabihf-"}
+-- @return       the toolchain info table {sdkdir, bindir, cross, ...}
 --
 function main(sdkdir, opt)
 

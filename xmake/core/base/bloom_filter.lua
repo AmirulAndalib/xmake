@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        bloom_filter.lua
@@ -54,12 +54,18 @@ function _instance.new(handle)
     return instance
 end
 
--- get cdata of the bloom filter
+-- get the internal cdata handle
+--
+-- @return      the cdata
+--
 function _instance:cdata()
     return self._HANDLE
 end
 
--- get the bloom filter data
+-- get serialized bloom filter data
+--
+-- @return      the data bytes, or nil and error info
+--
 function _instance:data()
     -- ensure opened
     local ok, errors = self:_ensure_opened()
@@ -78,7 +84,11 @@ function _instance:data()
     return bytes(size, data)
 end
 
--- set the bloom filter data
+-- load bloom filter from serialized data
+--
+-- @param data  the data bytes
+-- @return      true on success, or false and error info
+--
 function _instance:data_set(data)
     -- ensure opened
     local ok, errors = self:_ensure_opened()
@@ -95,7 +105,10 @@ function _instance:data_set(data)
     return bloom_filter._data_set(self:cdata(), dataaddr, datasize)
 end
 
--- clear the bloom filter data
+-- clear all data in the bloom filter
+--
+-- @return      true on success, or false and error info
+--
 function _instance:clear()
     -- ensure opened
     local ok, errors = self:_ensure_opened()
@@ -175,7 +188,14 @@ function _instance:__gc()
     end
 end
 
--- new a bloom filter, e.g. {probability = 0.001, hash_count = 3, item_maxn = 1000000}
+-- create a new bloom filter
+--
+-- @param opt   the options
+--              - probability:  false positive rate (default: 0.001), supports 0.1 ~ 0.000001
+--              - hash_count:   the hash function count (default: 3)
+--              - item_maxn:    the maximum item count (default: 1000000)
+-- @return      the bloom filter instance, or nil and error info
+--
 function bloom_filter.new(opt)
     opt = opt or {}
     local probability = opt.probability or 0.001

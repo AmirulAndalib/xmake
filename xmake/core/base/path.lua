@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        path.lua
@@ -29,6 +29,8 @@ local _instance = _instance or {}
 -- save original interfaces
 path._absolute = path._absolute or path.absolute
 path._relative = path._relative or path.relative
+path._translate = path._translate or path.translate
+path._directory = path._directory or path.directory
 
 -- new a path
 function _instance.new(p, transform)
@@ -88,6 +90,10 @@ function _instance:translate(opt)
     return path.new(path.translate(self:str(), opt), self._TRANSFORM)
 end
 
+function _instance:unix()
+    return path.new(path.unix(self:str()), self._TRANSFORM)
+end
+
 function _instance:filename()
     return path.filename(self:str())
 end
@@ -98,6 +104,14 @@ end
 
 function _instance:extension()
     return path.extension(self:str())
+end
+
+function _instance:startswith(prefix)
+    return self:str():startswith(tostring(prefix))
+end
+
+function _instance:endswith(suffix)
+    return self:str():endswith(tostring(suffix))
 end
 
 function _instance:directory()
@@ -151,6 +165,32 @@ function _instance:__todisplay()
     return "<path: " .. (self:empty() and "empty" or self:str()) .. ">"
 end
 
+-- get unix-style path (forward slashes), it is usually used on windows
+--
+-- @param p     the path
+-- @return      the unix-style path with forward slashes
+-- @see https://github.com/xmake-io/xmake/issues/4731
+--
+function path.unix(p)
+    return (tostring(p):gsub(path.sep(), "/"))
+end
+
+-- get cygwin-style path, e.g. c:\, C:\ -> /c/
+function path.cygwin(p)
+    return (tostring(p):gsub("^(%w):", function (drive)
+        return "/" .. drive:lower()
+    end):gsub("\\", "/"))
+end
+
+-- translate path
+--
+-- @param p     the path
+-- @param opt   the option, e.g. {normalize = true}
+--
+function path.translate(p, opt)
+    return path._translate(tostring(p), opt)
+end
+
 -- path.translate:
 -- - transform the path separator
 -- - expand the user directory with the prefix: ~
@@ -162,14 +202,21 @@ end
 -- - reduce "/xxx/.." => "/"
 --
 function path.normalize(p)
-    p = tostring(p)
-    return path.translate(p, {normalize = true})
+    return path.translate(tostring(p), {normalize = true})
 end
 
--- get the directory of the path, compatible with lower version core binary
-if not path.directory then
-    function path.directory(p, sep)
-        p = tostring(p)
+-- get the directory of the path
+--
+-- @param p     the path
+-- @param sep   the path separator (optional, auto-detect if nil)
+-- @return      the directory part, e.g. path.directory("/tmp/file.txt") => "/tmp"
+--
+function path.directory(p, sep)
+    p = tostring(p)
+    if path._directory then
+        return path._directory(p, sep)
+    else
+        -- compatible with lower version core binary
         local i =  0
         if sep then
             -- if the path has been normalized, we can quickly find it with a unique path separator prompt
@@ -187,6 +234,11 @@ if not path.directory then
 end
 
 -- get absolute path
+--
+-- @param p         the path
+-- @param rootdir   the root directory (optional, default is os.curdir())
+-- @return          the absolute path
+--
 function path.absolute(p, rootdir)
     if rootdir then
         rootdir = tostring(rootdir)
@@ -195,6 +247,11 @@ function path.absolute(p, rootdir)
 end
 
 -- get relative path
+--
+-- @param p         the path
+-- @param rootdir   the root directory (optional, default is os.curdir())
+-- @return          the relative path
+--
 function path.relative(p, rootdir)
     if rootdir then
         rootdir = tostring(rootdir)
@@ -203,6 +260,11 @@ function path.relative(p, rootdir)
 end
 
 -- get the filename of the path
+--
+-- @param p     the path
+-- @param sep   the path separator (optional)
+-- @return      the filename with extension, e.g. path.filename("/tmp/file.txt") => "file.txt"
+--
 function path.filename(p, sep)
     p = tostring(p)
     local i =  0
@@ -219,7 +281,11 @@ function path.filename(p, sep)
     end
 end
 
--- get the basename of the path
+-- get the basename of the path (filename without extension)
+--
+-- @param p     the path
+-- @return      the basename, e.g. path.basename("/tmp/file.txt") => "file"
+--
 function path.basename(p)
     p = tostring(p)
     local name = path.filename(p)
@@ -231,7 +297,13 @@ function path.basename(p)
     end
 end
 
--- get the file extension of the path: .xxx
+-- get the file extension of the path
+--
+-- @param p     the path
+-- @param level the extension level (optional, default is 1)
+-- @return      the extension, e.g. path.extension("file.txt") => ".txt"
+--              path.extension("file.tar.gz", 2) => ".tar.gz"
+--
 function path.extension(p, level)
     p = tostring(p)
     local i = p:lastof(".", true)
@@ -250,18 +322,27 @@ function path.extension(p, level)
 end
 
 -- join path
+--
+-- @param p     the first path component
+-- @param ...   the remaining path components
+-- @return      the joined path
+--
 function path.join(p, ...)
     p = tostring(p)
     return path.translate(p .. path.sep() .. table.concat({...}, path.sep()))
 end
 
 -- split path by the separator
+--
+-- @param p     the path
+-- @return      the path components table
+--
 function path.split(p)
     p = tostring(p)
     return p:split("[/\\]")
 end
 
--- get the path seperator
+-- get the path separator
 function path.sep()
     local sep = path._SEP
     if not sep then
@@ -271,7 +352,7 @@ function path.sep()
     return sep
 end
 
--- get the path seperator of environment variable
+-- get the path separator of environment variable
 function path.envsep()
     local envsep = path._ENVSEP
     if not envsep then
@@ -281,8 +362,11 @@ function path.envsep()
     return envsep
 end
 
--- split environment variable with `path.envsep()`,
--- also handles more speical cases such as posix flags and windows quoted paths
+-- split environment variable with `path.envsep()`
+--
+-- @param env_path  the environment variable value, e.g. "/usr/bin:/usr/local/bin"
+-- @return          the paths table
+--
 function path.splitenv(env_path)
     local result = {}
     if xmake._HOST == "windows" then
@@ -304,6 +388,7 @@ function path.splitenv(env_path)
         -- see https://git.kernel.org/pub/scm/utils/dash/dash.git/tree/src/exec.c?h=v0.5.9.1&id=afe0e0152e4dc12d84be3c02d6d62b0456d68580#n173
         -- no escape sequences, so `:` and `%` is invalid in environment variable
         for _, v in ipairs(env_path:split(path.envsep(), { plain = true })) do
+            local v = v
             -- flag for shells, style `<path>%<flag>`
             local flag = v:find("%", 1, true)
             if flag then
@@ -318,19 +403,21 @@ function path.splitenv(env_path)
     return result
 end
 
--- concat environment variable with `path.envsep()`,
--- also handles more speical cases such as posix flags and windows quoted paths
-function path.joinenv(env_table)
-
-    -- check
-    if not env_table or #env_table == 0 then
+-- concat environment variable with `path.envsep()`
+--
+-- @param paths     the paths table
+-- @param envsep    the separator (optional, default is path.envsep())
+-- @return          the joined environment variable string
+--
+function path.joinenv(paths, envsep)
+    if not paths or #paths == 0 then
         return ""
     end
-
-    local envsep = path.envsep()
+    envsep = envsep or path.envsep()
     if xmake._HOST == "windows" then
         local tab = {}
-        for _, v in ipairs(env_table) do
+        for _, v in ipairs(paths) do
+            local v = v
             if v ~= "" then
                 if v:find(envsep, 1, true) then
                     v = '"' .. v .. '"'
@@ -340,11 +427,11 @@ function path.joinenv(env_table)
         end
         return table.concat(tab, envsep)
     else
-        return table.concat(env_table, envsep)
+        return table.concat(paths, envsep)
     end
 end
 
--- the last character is the path seperator?
+-- the last character is the path separator?
 function path.islastsep(p)
     p = tostring(p)
     local sep = p:sub(#p, #p)
@@ -355,7 +442,7 @@ end
 function path.pattern(pattern)
 
     -- translate wildcards, e.g. *, **
-    pattern = pattern:gsub("([%+%.%-%^%$%(%)%%])", "%%%1")
+    pattern = pattern:gsub("([%+%.%-%^%$%(%)%%%[%]])", "%%%1")
     pattern = pattern:gsub("%*%*", "\001")
     pattern = pattern:gsub("%*", "\002")
     pattern = pattern:gsub("\001", ".*")
@@ -385,6 +472,9 @@ end
 
 -- new a path instance
 function path.new(p, transform)
+    if path.instance_of(p) then
+        p = tostring(p)
+    end
     return _instance.new(p, transform)
 end
 

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        swiftc.lua
@@ -118,6 +118,16 @@ function nf_vectorext(self, extension)
     ,   neon  = "-mfpu=neon"
     }
     return maps[extension]
+end
+
+-- make the includedir flag
+function nf_includedir(self, includedir)
+    return "-I" .. includedir
+end
+
+-- make the sysincludedir flag
+function nf_sysincludedir(self, dir)
+    return nf_includedir(self, dir)
 end
 
 -- make the define flag

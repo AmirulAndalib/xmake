@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        check.lua
@@ -23,6 +23,11 @@ import("core.base.option")
 import("core.project.config")
 import("detect.sdks.find_iccenv")
 import("lib.detect.find_tool")
+import("private.utils.toolchain", {alias = "toolchain_utils"})
+
+function _check_cl(toolchain, vcvars)
+    return find_tool("cl.exe", {force = true, envs = vcvars})
+end
 
 -- check intel on windows
 function _check_intel_on_windows(toolchain)
@@ -39,12 +44,11 @@ function _check_intel_on_windows(toolchain)
         local iclvarsall = iccenv.iclvars
         local iclenv = iclvarsall[toolchain:arch()]
         if iclenv and iclenv.PATH and iclenv.INCLUDE and iclenv.LIB then
-            local tool = find_tool("icl.exe", {force = true, envs = iclenv, version = true})
+            local tool = find_tool("icl.exe", {force = true, envs = iclenv})
             if tool then
                 cprint("checking for Intel C/C++ Compiler (%s) ... ${color.success}${text.success}", toolchain:arch())
                 toolchain:config_set("varsall", iclvarsall)
-                toolchain:configs_save()
-                return true
+                return toolchain_utils.check_vstudio(toolchain, _check_cl)
             end
         end
     end
@@ -64,7 +68,6 @@ function _check_intel_on_linux(toolchain)
             cprint("checking for Intel C/C++ Compiler (%s) ... ${color.success}${text.success}", toolchain:arch())
             toolchain:config_set("iccenv", iccenv)
             toolchain:config_set("bindir", iccenv.bindir)
-            toolchain:configs_save()
             return true
         end
         return true

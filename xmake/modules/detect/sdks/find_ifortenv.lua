@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_ifortenv.lua
@@ -53,7 +53,9 @@ function _load_ifortvars(ifortvars_bat, arch, opt)
     file:close()
 
     -- run genifortvars.bat
-    os.run(genifortvars_bat)
+    -- @note we use runv here so the bat path is not split on whitespace by os.argv,
+    -- which breaks detection when the temp file lives under a path with spaces.
+    os.runv(genifortvars_bat)
 
     -- load all envirnoment variables
     local variables = {}
@@ -116,6 +118,12 @@ function _find_intel_on_windows(opt)
             "$(env IFORT_COMPILER23)"
         }
         ifortvars_bat = find_file("../../../setvars.bat", paths)
+        if not ifortvars_bat then
+            paths = {
+                "$(env IFORT_COMPILER24)"
+            }
+            ifortvars_bat = find_file("../../setvars.bat", paths)
+        end
     end
 
     if ifortvars_bat then

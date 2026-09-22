@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -20,6 +20,7 @@
 
 -- @see https://github.com/xmake-io/xmake/issues/3257
 rule("verilator.binary")
+    add_deps("c++")
     set_extensions(".v", ".sv")
     on_load(function (target)
         target:set("kind", "binary")
@@ -29,19 +30,62 @@ rule("verilator.binary")
         import("verilator").config(target)
     end)
 
-    before_build_files(function (target, sourcebatch)
-        -- Just to avoid before_buildcmd_files being executed at build time
-    end)
-
-    on_build_files(function (target, batchjobs, sourcebatch, opt)
-        import("verilator").build_cppfiles(target, batchjobs, sourcebatch, opt)
-    end, {batch = true, distcc = true})
-
-    before_buildcmd_files(function(target, batchcmds, sourcebatch, opt)
+    -- we need to generate cpp files before scanning c++ modules
+    -- https://github.com/xmake-io/xmake/issues/7624
+    before_preparecmd_files(function(target, batchcmds, sourcebatch, opt)
         import("verilator").buildcmd_vfiles(target, batchcmds, sourcebatch, opt)
     end)
+
+    on_build_files(function (target, jobgraph, sourcebatch, opt)
+        import("verilator").build_cppfiles(target, jobgraph, sourcebatch, opt)
+    end, {jobgraph = true, batch = true, distcc = true})
 
     on_buildcmd_files(function (target, batchcmds, sourcebatch, opt)
         import("verilator").buildcmd_cppfiles(target, batchcmds, sourcebatch, opt)
     end)
 
+rule("verilator.static")
+    add_deps("c++")
+    set_extensions(".v", ".sv")
+    on_load(function (target)
+        target:set("kind", "static")
+    end)
+
+    on_config(function (target)
+        import("verilator").config(target)
+    end)
+
+    before_preparecmd_files(function(target, batchcmds, sourcebatch, opt)
+        import("verilator").buildcmd_vfiles(target, batchcmds, sourcebatch, opt)
+    end)
+
+    on_build_files(function (target, jobgraph, sourcebatch, opt)
+        import("verilator").build_cppfiles(target, jobgraph, sourcebatch, opt)
+    end, {jobgraph = true, batch = true, distcc = true})
+
+    on_buildcmd_files(function (target, batchcmds, sourcebatch, opt)
+        import("verilator").buildcmd_cppfiles(target, batchcmds, sourcebatch, opt)
+    end)
+
+rule("verilator.shared")
+    add_deps("c++")
+    set_extensions(".v", ".sv")
+    on_load(function (target)
+        target:set("kind", "shared")
+    end)
+
+    on_config(function (target)
+        import("verilator").config(target)
+    end)
+
+    before_preparecmd_files(function(target, batchcmds, sourcebatch, opt)
+        import("verilator").buildcmd_vfiles(target, batchcmds, sourcebatch, opt)
+    end)
+
+    on_build_files(function (target, jobgraph, sourcebatch, opt)
+        import("verilator").build_cppfiles(target, jobgraph, sourcebatch, opt)
+    end, {jobgraph = true, batch = true, distcc = true})
+
+    on_buildcmd_files(function (target, batchcmds, sourcebatch, opt)
+        import("verilator").buildcmd_cppfiles(target, batchcmds, sourcebatch, opt)
+    end)

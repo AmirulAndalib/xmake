@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        project.lua
@@ -67,9 +67,12 @@ sandbox_core_project.requireconfs_str     = project.requireconfs_str
 sandbox_core_project.requireslock         = project.requireslock
 sandbox_core_project.requireslock_version = project.requireslock_version
 sandbox_core_project.policy               = project.policy
+sandbox_core_project.policy_set           = project.policy_set
 sandbox_core_project.tmpdir               = project.tmpdir
 sandbox_core_project.tmpfile              = project.tmpfile
 sandbox_core_project.is_loaded            = project.is_loaded
+sandbox_core_project.apis                 = project.apis
+sandbox_core_project.namespaces           = project.namespaces
 
 -- check project options
 function sandbox_core_project.check_options()
@@ -97,15 +100,15 @@ function sandbox_core_project.check_options()
         if opt then
             -- check deps of this option first
             for _, dep in ipairs(opt:orderdeps()) do
-                if not checked[dep:name()] then
+                if not checked[dep:fullname()] then
                     dep:check()
-                    checked[dep:name()] = true
+                    checked[dep:fullname()] = true
                 end
             end
             -- check this option
-            if not checked[opt:name()] then
+            if not checked[opt:fullname()] then
                 opt:check()
-                checked[opt:name()] = true
+                checked[opt:fullname()] = true
             end
         end
     end
@@ -124,18 +127,10 @@ function sandbox_core_project.check_options()
     end
 end
 
--- config target
-function sandbox_core_project._config_target(target, opt)
-    for _, rule in ipairs(table.wrap(target:orderules())) do
-        local on_config = rule:script("config")
-        if on_config then
-            on_config(target, opt)
-        end
-    end
-    local on_config = target:script("config")
-    if on_config then
-        on_config(target, opt)
-    end
+-- config targets
+function sandbox_core_project._config_targets(opt)
+    import("private.utils.target", {alias = "target_utils"})
+    target_utils.config_targets(opt)
 end
 
 -- config targets
@@ -148,30 +143,42 @@ end
 --        target:has_cfuncs(...)
 --    end
 -- end
---
+-- TODO we need to optimize jobgraph
+-- https://github.com/xmake-io/xmake/issues/6775
+--[[
 function sandbox_core_project._config_targets(opt)
-    opt = opt or {}
-    for _, target in ipairs(table.wrap(project.ordertargets())) do
-        if target:is_enabled() then
-            sandbox_core_project._config_target(target, opt)
-        end
-    end
-end
+    import("private.action.build.target", {alias = "target_buildutils"})
+
+    -- we need to config all targets (contains non-default targets)
+    --
+    -- @note Currently, many configurations still depend on the order of rules/add_deps (e.g. qt rules),
+    -- so we can only execute single tasks for now (jobs = 1).
+    local targets_root = target_buildutils.get_root_targets(nil, {all = true})
+    target_buildutils.run_targetjobs(targets_root, {job_kind = "config", target_fence = true, jobs = 1, job_opt = opt})
+end]]
 
 -- load rules in the required packages for target
 function sandbox_core_project._load_package_rules_for_target(target)
     for _, rulename in ipairs(table.wrap(target:get("rules"))) do
         local packagename = rulename:match("@(.-)/")
+        -- @note we need to ignore the addon rules, e.g. add_rules("@addon/foo")
+        if packagename == "addon" then
+            packagename = nil
+        end
         if packagename then
+            local ruleinst
             local pkginfo = project.required_package(packagename)
             if pkginfo then
-                local r = pkginfo:rule(rulename)
-                if r then
-                    target:rule_add(r)
-                    for _, dep in pairs(table.wrap(r:deps())) do
+                ruleinst = pkginfo:rule(rulename)
+                if ruleinst then
+                    target:rule_add(ruleinst)
+                    for _, dep in pairs(table.wrap(ruleinst:deps())) do
                         target:rule_add(dep)
                     end
                 end
+            end
+            if not ruleinst then
+                raise("target(\"%s\"): unknown package rule in add_rules(\"%s\")", target:fullname(), rulename)
             end
         end
     end
@@ -199,11 +206,7 @@ end
 
 -- load project targets
 function sandbox_core_project.load_targets(opt)
-
-    -- load package rules for targets
     sandbox_core_project._load_package_rules_for_targets()
-
-    -- config targets
     sandbox_core_project._config_targets(opt)
 end
 

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 -- Based On template file xmake\modules\detect\sdks\find_mdk.lua
 --
 -- @author      DawnMagnet
@@ -117,6 +117,5 @@ function main(sdkdir, opt)
     -- save to cache
     cacheinfo.c51 = c51 or false
     detectcache:set(key, cacheinfo)
-    detectcache:save()
     return c51
 end

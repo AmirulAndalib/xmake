@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        install_package.lua
@@ -24,18 +24,7 @@ import("core.base.json")
 import("core.base.semver")
 import("lib.detect.find_tool")
 import("package.manager.vcpkg.configurations")
-
--- need manifest mode?
-function _need_manifest(opt)
-    local require_version = opt.require_version
-    if require_version ~= nil and require_version ~= "latest" then
-        return true
-    end
-    local configs = opt.configs
-    if configs and (configs.features or configs.default_features == false or configs.baseline) then
-        return true
-    end
-end
+import("package.manager.vcpkg.utils", {alias = "vcpkg_utils"})
 
 -- install for classic mode
 function _install_for_classic(vcpkg, name, opt)
@@ -56,8 +45,29 @@ function _install_for_classic(vcpkg, name, opt)
         table.insert(argv, "--debug")
     end
 
+    -- check if the base package is already installed with different features,
+    -- if so, prompt user before rebuilding with --recurse
+    -- @see https://github.com/xmake-io/xmake/issues/7388
+    local basename = name:gsub("%[.-%]", "")
+    if basename ~= name then
+        if not vcpkg_utils.is_installed(vcpkg, name, triplet, opt) then
+            if vcpkg_utils.is_installed(vcpkg, basename, triplet, opt) then
+                local confirm = utils.confirm({default = true,
+                    description = format("%s:%s is already installed (possibly with different features). Installing %s will require a rebuild of it and its dependencies. Continue?", basename, triplet, name)})
+                if confirm then
+                    table.insert(argv, "--recurse")
+                else
+                    raise("install %s:%s cancelled!", name, triplet)
+                end
+            end
+        end
+    end
+
     -- install package
-    os.vrunv(vcpkg, argv)
+    -- run in a neutral directory so that a project-owned vcpkg.json in the current working
+    -- directory does not switch vcpkg into manifest mode (which rejects package arguments).
+    -- @see https://github.com/xmake-io/xmake/issues/7660
+    os.vrunv(vcpkg, argv, {curdir = vcpkg_utils.classic_curdir()})
 end
 
 -- install for manifest mode
@@ -106,7 +116,7 @@ function _install_for_manifest(vcpkg, name, opt)
     end
 
     -- generate manifest, vcpkg.json
-    local baseline = configs.baseline or "44d94c2edbd44f0c01d66c2ad95eb6982a9a61bc" -- 2021.04.30
+    local baseline = configs.baseline or "2e6fcc44573d091af0321f99c89b212997a76f1f" -- 2025.09.27
     local manifest = {
         name = "stub",
         version = "1.0",
@@ -139,8 +149,6 @@ end
 -- @param name  the package name, e.g. pcre2, pcre2/libpcre2-8
 -- @param opt   the options, e.g. {verbose = true}
 --
--- @return      true or false
---
 function main(name, opt)
 
     -- attempt to find vcpkg
@@ -151,7 +159,7 @@ function main(name, opt)
 
     -- do install
     opt = opt or {}
-    if _need_manifest(opt) then
+    if vcpkg_utils.need_manifest(opt) then
         _install_for_manifest(vcpkg.program, name, opt)
     else
         _install_for_classic(vcpkg.program, name, opt)

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        install.lua
@@ -82,7 +82,14 @@ function main(requires_raw)
 
     -- install packages
     environment.enter()
-    local packages = install_packages(requires, {requires_extra = requires_extra})
+    -- @note the `--plugin` option is deprecated, please use `--addon` instead
+    local packagekind = "package"
+    if option.get("addon") then
+        packagekind = "addon"
+    elseif option.get("plugin") then
+        packagekind = "plugin"
+    end
+    local packages = install_packages(requires, {packagekind = packagekind, requires_extra = requires_extra})
     if packages then
         _check_missing_packages(packages)
     end

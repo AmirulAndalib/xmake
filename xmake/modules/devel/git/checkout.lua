@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        checkout.lua
@@ -20,6 +20,8 @@
 
 -- imports
 import("core.base.option")
+import("core.base.semver")
+import("devel.git.support")
 import("lib.detect.find_tool")
 
 -- checkout to given branch, tag or commit
@@ -46,6 +48,13 @@ function main(commit, opt)
     else
         table.insert(argv, "-c")
         table.insert(argv, "core.fsmonitor=false")
+    end
+
+    -- @see https://github.com/xmake-io/xmake/issues/6071
+    -- https://github.blog/open-source/git/bring-your-monorepo-down-to-size-with-sparse-checkout/
+    if opt.includes and support.can_sparse_checkout() then
+        os.vrunv(git.program, {"sparse-checkout", "init", "--cone"}, {curdir = opt.repodir})
+        os.vrunv(git.program, table.join({"sparse-checkout", "set"}, opt.includes), {curdir = opt.repodir})
     end
 
     table.insert(argv, "checkout")

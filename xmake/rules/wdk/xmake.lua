@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -24,8 +24,8 @@ rule("wdk.driver")
     -- add rules
     add_deps("wdk.inf", "wdk.man", "wdk.mc", "wdk.mof", "wdk.tracewpp", "wdk.sign", "wdk.package.cab")
 
-    -- after load
-    after_load(function (target)
+    -- on config
+    on_config(function (target)
 
         -- load environment
         if target:rule("wdk.env.umdf") then

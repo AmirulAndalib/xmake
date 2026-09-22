@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -26,18 +26,24 @@ rule("utils.merge.archive")
         --
         -- @see https://github.com/xmake-io/xmake/issues/3404
         if target:policy("build.merge_archive") then
+            target:data_set("inherit.links.export_static", false)
+
             for _, dep in ipairs(target:orderdeps()) do
                 if dep:is_static() then
                     dep:data_set("inherit.links.deplink", false)
                 end
             end
+        else
+            target:rule_enable("utils.merge.archive", false)
         end
     end)
+
     on_build_files(function (target, sourcebatch, opt)
         if sourcebatch.sourcefiles then
             target:data_set("merge_archive.sourcefiles", sourcebatch.sourcefiles)
         end
     end)
+
     after_link(function (target, opt)
         if not target:is_static() then
             return
@@ -47,13 +53,29 @@ rule("utils.merge.archive")
             import("utils.archive.merge_staticlib")
             import("core.project.depend")
             import("utils.progress")
+
             local libraryfiles = {}
             if sourcefiles then
                 table.join2(libraryfiles, sourcefiles)
             else
+
+                -- merge libraryfiles from deps
                 for _, dep in ipairs(target:orderdeps()) do
                     if dep:is_static() then
                         table.insert(libraryfiles, dep:targetfile())
+                    end
+                end
+
+                -- merge libraryfiles from packages
+                -- @see https://github.com/xmake-io/xmake/issues/7531
+                for _, pkg in ipairs(target:orderpkgs()) do
+                    if pkg:has_static() then
+                        local libfiles = pkg:libraryfiles()
+                        for _, libfile in ipairs(libfiles) do
+                            if libfile:endswith(".a") or libfile:endswith(".lib") then
+                                table.insert(libraryfiles, libfile)
+                            end
+                        end
                     end
                 end
             end

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        client_config.lua
@@ -38,17 +38,19 @@ function _generate_configfile()
     local filepath = configfile()
     assert(not _g.configs and not os.isfile(filepath))
     local token = _get_local_server_token()
-    print("generating the config file to %s ..", filepath)
+    print("generating config file to %s ..", filepath)
     local configs = {
         send_timeout = -1,
         recv_timeout = -1,
-        connect_timeout = -1,
+        connect_timeout = 10000,
         remote_build = {
-            -- without authorization: "127.0.0.1:9691"
-            -- with user authorization: "user@127.0.0.1:9691"
-            connect = "127.0.0.1:9691",
-            -- with token authorization
-            token = token
+            hosts = {
+                {
+                    name = "local",
+                    connect = "127.0.0.1:9691",
+                    token = token
+                }
+            }
         },
         remote_cache = {
             connect = "127.0.0.1:9692",

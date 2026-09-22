@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        vs200x_vcproj.lua
@@ -33,6 +33,7 @@ function _make_compflags(sourcefile, target, vcprojdir)
     -- replace -Idir or /Idir, -Fdsymbol.pdb or /Fdsymbol.pdb
     local flags = {}
     for _, flag in ipairs(compflags) do
+        local flag = flag
 
         -- replace -Idir or /Idir
         flag = flag:gsub("[%-|/]I(.*)", function (dir)
@@ -75,6 +76,7 @@ function _make_linkflags(target, vcprojdir)
     -- replace -libpath:dir or /libpath:dir, -pdb:symbol.pdb or /pdb:symbol.pdb
     local flags = {}
     for _, flag in ipairs(linkflags) do
+        local flag = flag
 
         -- replace -libpath:dir or /libpath:dir
         flag = flag:gsub("[%-|/]libpath:(.*)", function (dir)

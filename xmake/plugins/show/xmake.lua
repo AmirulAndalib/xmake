@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -25,16 +25,31 @@ task("show")
         usage = "xmake show [options] [arguments]",
         description = "Show the given project information.",
         options = {
-            {'l', "list",   "kv", nil, "Show the values list of the given name.",
-                values = function (complete, opt)
-                    return import("list").lists()
-                end},
-            {'t', "target", "kv", nil, "Show the information of the given target.",
-                values = function (complete, opt)
-                    return import("private.utils.complete_helper.targets")(complete, opt)
-                end}
+            {'l', "list",   "kv", nil,   "Show the values list of the given name.",
+                                         values = function (complete, opt)
+                                             return import("list").lists()
+                                         end},
+            {'g', "group",  "kv", nil,   "Filter targets by the given group name."},
+            {nil, "json",   "k",  false, "Show information with json format (deprecated, use --format=json)."},
+            {nil, "pretty", "k",  false, "Enable pretty formatted output."},
+            {nil, "format", "kv", nil,   "Set the output format.",
+                                         "e.g.",
+                                         "    - xmake show --format=json",
+                                         "    - xmake show --info=depgraph --format=dot",
+                                         "values: json (for all), dot (for --info=depgraph only)",
+                                         values = {"plain", "json", "dot"}},
+            {'i', "info",   "kv", nil,   "Show the given information.",
+                                         "e.g.",
+                                         "    - xmake show --info=depgraph",
+                                         "    - xmake show --info=depgraph --target=app",
+                                         "    - xmake show --info=depgraph --format=json",
+                                         "    - xmake show --info=depgraph --format=dot",
+                                         values = function (complete, opt)
+                                             return import("list").infos()
+                                         end},
+            {'t', "target", "kv", nil,   "Show the information of the given target.",
+                                         values = function (complete, opt)
+                                             return import("private.utils.complete_helper.targets")(complete, opt)
+                                         end}
         }
     }
-
-
-

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        search_packages.lua
@@ -40,6 +40,11 @@ function _search_packages(name, opt)
 end
 
 -- search packages
+-- search packages by names
+--
+-- @param names  the package names to search
+-- @param opt    the options
+--
 function main(names, opt)
     local results = {}
     for _, name in ipairs(names) do

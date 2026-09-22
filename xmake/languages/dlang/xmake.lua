@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -33,41 +33,59 @@ language("dlang")
     set_nameflags {
         object = {
             "config.includedirs"
+        ,   "config.frameworkdirs"
+        ,   "config.frameworks"
         ,   "target.symbols"
         ,   "target.warnings"
         ,   "target.optimize:check"
         ,   "target.vectorexts:check"
         ,   "target.includedirs"
+        ,   "target.frameworkdirs"
+        ,   "target.frameworks"
         ,   "toolchain.includedirs"
         ,   "target.sysincludedirs"
         ,   "toolchain.sysincludedirs"
+        ,   "toolchain.frameworkdirs"
+        ,   "toolchain.frameworks"
         }
     ,   binary = {
             "config.linkdirs"
+        ,   "config.frameworkdirs"
         ,   "target.linkdirs"
+        ,   "target.frameworkdirs"
         ,   "target.rpathdirs"
         ,   "target.strip"
         ,   "target.symbols"
         ,   "toolchain.linkdirs"
         ,   "toolchain.rpathdirs"
+        ,   "toolchain.frameworkdirs"
         ,   "config.links"
         ,   "target.links"
         ,   "target.linkgroups"
         ,   "toolchain.links"
+        ,   "config.frameworks"
+        ,   "target.frameworks"
+        ,   "toolchain.frameworks"
         ,   "config.syslinks"
         ,   "target.syslinks"
         ,   "toolchain.syslinks"
         }
     ,   shared = {
             "config.linkdirs"
+        ,   "config.frameworkdirs"
         ,   "target.linkdirs"
+        ,   "target.frameworkdirs"
         ,   "target.strip"
         ,   "target.symbols"
         ,   "toolchain.linkdirs"
+        ,   "toolchain.frameworkdirs"
         ,   "config.links"
         ,   "target.links"
         ,   "target.linkgroups"
         ,   "toolchain.links"
+        ,   "config.frameworks"
+        ,   "target.frameworks"
+        ,   "toolchain.frameworks"
         ,   "config.syslinks"
         ,   "target.syslinks"
         ,   "toolchain.syslinks"
@@ -81,15 +99,15 @@ language("dlang")
     set_menu {
                 config =
                 {
-                    {category = "Cross Complation Configuration/Compiler Configuration"         }
+                    {category = "Cross Compilation Configuration/Compiler Configuration"         }
                 ,   {nil, "dc",         "kv", nil,          "The Dlang Compiler"                }
 
-                ,   {category = "Cross Complation Configuration/Linker Configuration"           }
+                ,   {category = "Cross Compilation Configuration/Linker Configuration"           }
                 ,   {nil, "dcld",      "kv", nil,          "The Dlang Linker"                  }
                 ,   {nil, "dcar",      "kv", nil,          "The Dlang Static Library Archiver" }
                 ,   {nil, "dcsh",      "kv", nil,          "The Dlang Shared Library Linker"   }
 
-                ,   {category = "Cross Complation Configuration/Builtin Flags Configuration"    }
+                ,   {category = "Cross Compilation Configuration/Builtin Flags Configuration"    }
                 ,   {nil, "links",      "kv", nil,          "The Link Libraries"                }
                 ,   {nil, "syslinks",   "kv", nil,          "The System Link Libraries"         }
                 ,   {nil, "linkdirs",   "kv", nil,          "The Link Search Directories"       }

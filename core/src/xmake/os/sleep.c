@@ -12,7 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Copyright (C) 2015-present, TBOOX Open Source Group.
+ * Copyright (C) 2015-present, Xmake Open Source Community.
  *
  * @author      ruki
  * @file        sleep.c
@@ -22,8 +22,8 @@
 /* //////////////////////////////////////////////////////////////////////////////////////
  * trace
  */
-#define TB_TRACE_MODULE_NAME                "sleep"
-#define TB_TRACE_MODULE_DEBUG               (0)
+#define TB_TRACE_MODULE_NAME "sleep"
+#define TB_TRACE_MODULE_DEBUG (0)
 
 /* //////////////////////////////////////////////////////////////////////////////////////
  * includes
@@ -33,17 +33,11 @@
 /* //////////////////////////////////////////////////////////////////////////////////////
  * implementation
  */
-tb_int_t xm_os_sleep(lua_State* lua)
-{
-    // check
+tb_int_t xm_os_sleep(lua_State *lua) {
     tb_assert_and_check_return_val(lua, 0);
-
-    // get the interval (ms)
-    tb_long_t interval = (tb_long_t)luaL_checklong(lua, 1);
-
-    // sleep it
-    if (interval >= 0) tb_msleep(interval);
-
-    // ok
+    tb_long_t interval = (tb_long_t)luaL_checkinteger(lua, 1);
+    if (interval >= 0) {
+        tb_msleep(interval);
+    }
     return 0;
 }

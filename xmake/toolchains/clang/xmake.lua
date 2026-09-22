@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -20,46 +20,37 @@
 
 -- define toolchain
 function toolchain_clang(version)
-local suffix = ""
-if version then
-    suffix = suffix .. "-" .. version
-end
-toolchain("clang" .. suffix)
+    local suffix = version and ("-" .. version) or ""
 
-    set_homepage("https://clang.llvm.org/")
-    set_description("A C language family frontend for LLVM" .. (version and (" (" .. version .. ")") or ""))
+    toolchain("clang" .. suffix)
+        set_kind("standalone")
+        set_homepage("https://clang.llvm.org/")
+        set_description("A C language family frontend for LLVM" .. (version and (" (" .. version .. ")") or ""))
 
-    set_kind("standalone")
-
-    set_toolset("cc", "clang" .. suffix)
-    set_toolset("cxx", "clang" .. suffix, "clang++" .. suffix)
-    set_toolset("ld", "clang++" .. suffix, "clang" .. suffix)
-    set_toolset("sh", "clang++" .. suffix, "clang" .. suffix)
-    set_toolset("ar", "ar")
-    set_toolset("strip", "strip")
-    set_toolset("mm", "clang" .. suffix)
-    set_toolset("mxx", "clang" .. suffix, "clang++" .. suffix)
-    set_toolset("as", "clang" .. suffix)
-    set_toolset("mrc", "llvm-rc")
-
-    on_check(function (toolchain)
-        return import("lib.detect.find_tool")("clang" .. suffix)
-    end)
-
-    on_load(function (toolchain)
-        local march
-        if toolchain:is_arch("x86_64", "x64") then
-            march = "-m64"
-        elseif toolchain:is_arch("i386", "x86") then
-            march = "-m32"
+        set_toolset("cc",      "clang" .. suffix)
+        set_toolset("cxx",     "clang++" .. suffix, "clang" .. suffix)
+        set_toolset("ld",      "clang++" .. suffix, "clang" .. suffix)
+        set_toolset("sh",      "clang++" .. suffix, "clang" .. suffix)
+        set_toolset("ar",      "llvm-ar" .. suffix, "ar")
+        set_toolset("strip",   "llvm-strip" .. suffix, "strip")
+        set_toolset("ranlib",  "llvm-ranlib" .. suffix, "ranlib")
+        set_toolset("objcopy", "llvm-objcopy" .. suffix, "objcopy")
+        set_toolset("nm",      "llvm-nm" .. suffix, "nm")
+        set_toolset("mm",      "clang" .. suffix)
+        set_toolset("mxx",     "clang++" .. suffix, "clang" .. suffix)
+        set_toolset("as",      "clang" .. suffix)
+        set_toolset("mrc",     "llvm-rc" .. suffix)
+        set_toolset("dlltool", "llvm-dlltool" .. suffix)
+        if is_host("macosx") then
+            set_toolset("dsymutil", "dsymutil")
         end
-        if march then
-            toolchain:add("cxflags", march)
-            toolchain:add("mxflags", march)
-            toolchain:add("asflags", march)
-            toolchain:add("ldflags", march)
-            toolchain:add("shflags", march)
-        end
-    end)
+
+        on_check(function (toolchain)
+            return import("toolchains.clang.check", {rootdir = os.programdir()})(toolchain, suffix)
+        end)
+
+        on_load(function (toolchain)
+            import("toolchains.clang.load", {rootdir = os.programdir()})(toolchain, suffix)
+        end)
 end
 toolchain_clang()

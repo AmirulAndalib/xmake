@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Copyright (C) 2022-present, TBOOX Open Source Group.
+# Copyright (C) 2022-present, Xmake Open Source Community.
 #
 # @author      ruki, Dragon1573
 # @homepage    register-completions.fish
@@ -27,7 +27,7 @@ function _xmake_fish_complete
     set -l token (commandline -ot)
 
     # Call XMake built-in completion to get available results
-    set -l result (MAKE_SKIP_HISTORY=1 XMAKE_ROOT=y xmake lua private.utils.complete 0 nospace "$raw_cmd")
+    set -l result (XMAKE_SKIP_HISTORY=1 XMAKE_ROOT=y XMAKE_COLORTERM=nocolor xmake lua private.utils.complete 0 nospace "$raw_cmd" 2>/dev/null)
     if test (count $result) -lt 1
         # When there are no available completions, the function ends immediately
         # Otherwise, the subsequent `contains` command will trigger an error

@@ -12,23 +12,54 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
--- @author      OpportunityLiu
+-- @author      OpportunityLiu, ruki
 -- @file        hashset.lua
 --
 
--- define module
-local hashset      = hashset or {}
-local hashset_impl = hashset.__index or {}
-
 -- load modules
-local table      = require("base/table")
-local todisplay  = require("base/todisplay")
+local object    = require("base/object")
+local table     = require("base/table")
+local todisplay = require("base/todisplay")
+
+-- define module
+local hashset = hashset or object { _init = {"_DATA", "_SIZE"} }
 
 -- representaion for nil key
-hashset._NIL = setmetatable({}, { __todisplay = function() return "${reset}${color.dump.keyword}nil${reset}" end, __tostring = function() return "symbol(nil)" end })
+hashset._NIL = setmetatable({}, {
+    __todisplay = function()
+        return "${reset}${color.dump.keyword}nil${reset}"
+    end,
+    __tostring = function()
+        return "symbol(nil)"
+    end
+})
 
+function hashset._to_key(key)
+    if key == nil then
+        key = hashset._NIL
+    end
+    return key
+end
+
+-- h1 == h1?
+function hashset:__eq(h)
+    if self._DATA == h._DATA then
+        return true
+    end
+    if self:size() ~= h:size() then
+        return false
+    end
+    for item in h:items() do
+        if not self:has(item) then
+            return false
+        end
+    end
+    return true
+end
+
+-- to display
 function hashset:__todisplay()
     return string.format("hashset${reset}(%s) {%s}", todisplay(self._SIZE), table.concat(table.imap(table.keys(self._DATA), function (i, k)
         if i > 10 then
@@ -41,42 +72,14 @@ function hashset:__todisplay()
     end), ", "))
 end
 
-function hashset._to_key(key)
-    if key == nil then
-        key = hashset._NIL
-    end
-    return key
-end
-
--- make a new hashset
-function hashset.new()
-    return setmetatable({ _DATA = {}, _SIZE = 0 }, hashset)
-end
-
--- construct from list of items
-function hashset.of(...)
-    local result = hashset.new()
-    local data = table.pack(...)
-    for i = 1, data.n do
-        result:insert(data[i])
-    end
-    return result
-end
-
--- construct from an array
-function hashset.from(array)
-    assert(array)
-    return hashset.of(table.unpack(array))
-end
-
 -- check value is in hashset
-function hashset_impl:has(value)
+function hashset:has(value)
     value = hashset._to_key(value)
     return self._DATA[value] or false
 end
 
 -- insert value to hashset, returns false if value has already in the hashset
-function hashset_impl:insert(value)
+function hashset:insert(value)
     value = hashset._to_key(value)
     local result = not (self._DATA[value] or false)
     if result then
@@ -87,7 +90,7 @@ function hashset_impl:insert(value)
 end
 
 -- remove value from hashset, returns false if value is not in the hashset
-function hashset_impl:remove(value)
+function hashset:remove(value)
     value = hashset._to_key(value)
     local result = self._DATA[value] or false
     if result then
@@ -98,17 +101,86 @@ function hashset_impl:remove(value)
 end
 
 -- convert hashset to an array, nil in the set will be ignored
-function hashset_impl:to_array()
+function hashset:to_array()
     local result = {}
-    for k, _ in pairs(self._DATA) do
-        if k ~= hashset._NIL then
-            table.insert(result, k)
+    for item in self:items() do
+        if item ~= nil then
+            table.insert(result, item)
         end
     end
     return result
 end
 
--- iterate keys of hashtable
+-- iterate items
+--
+-- @code
+-- for item in instance:items() do
+--   ...
+-- end
+-- @endcode
+--
+-- Stateful closure so the loop body can safely reassign the first loop
+-- variable under lua 5.4+ (paired with the RDKCONST->VDKREG compile-time
+-- patch in core/src/lua/xmake.lua).
+function hashset:items()
+    -- keep `next`'s key in an upvalue so the loop body can safely reassign
+    -- the first loop variable. In lua 5.4+ the for-in control slot is
+    -- merged with the first user variable; threading the key through the
+    -- loop would otherwise corrupt `next` on the following iteration.
+    --
+    -- nil-as-a-member is stored under the `_NIL` sentinel. For-loop
+    -- semantics don't let us yield nil (it would end the loop), so we
+    -- skip the sentinel and continue to the next real key; the nil
+    -- member is omitted but entries after it are still visited.
+    local data = self._DATA
+    local k = nil
+    return function ()
+        repeat
+            k = next(data, k)
+        until k ~= hashset._NIL
+        return k
+    end
+end
+
+-- iterate order items
+--
+-- @code
+-- for item in instance:orderitems() do
+--   ...
+-- end
+-- @endcode
+--
+function hashset:orderitems()
+    local orderkeys = table.orderkeys(self._DATA, function (a, b)
+        if a == hashset._NIL then
+            a = math.inf
+        end
+        if b == hashset._NIL then
+            b = math.inf
+        end
+        if type(a) == "table" then
+            a = tostring(a)
+        end
+        if type(b) == "table" then
+            b = tostring(b)
+        end
+        return a < b
+    end)
+    -- see hashset:items() for the `_NIL` handling rationale
+    local n = #orderkeys
+    local i = 0
+    return function ()
+        local k
+        repeat
+            i = i + 1
+            if i > n then return nil end
+            k = orderkeys[i]
+        until k ~= hashset._NIL
+        return k
+    end
+end
+
+-- iterate keys (deprecated, please use items())
 --
 -- @code
 -- for _, key in instance:keys() do
@@ -116,18 +188,23 @@ end
 -- end
 -- @endcode
 --
-function hashset_impl:keys()
-    return function (t, key)
-        local k, _ = next(t._DATA, key)
-        if k == hashset._NIL then
-            return k, nil
-        else
-            return k, k
+function hashset:keys()
+    -- see hashset:items() for the stateful-closure rationale and the
+    -- `_NIL` skipping behavior.
+    local data = self._DATA
+    local k = nil
+    return function ()
+        repeat
+            k = next(data, k)
+        until k ~= hashset._NIL
+        if k == nil then
+            return nil
         end
-    end, self, nil
+        return k, k
+    end
 end
 
--- order keys iterator
+-- iterate order keys (deprecated, please use orderitems())
 --
 -- @code
 -- for _, key in instance:orderkeys() do
@@ -135,7 +212,9 @@ end
 -- end
 -- @endcode
 --
-function hashset_impl:orderkeys()
+function hashset:orderkeys()
+    -- see hashset:items() for the stateful-closure rationale and the
+    -- `_NIL` skipping behavior.
     local orderkeys = table.keys(self._DATA)
     table.sort(orderkeys, function (a, b)
         if a == hashset._NIL then
@@ -152,39 +231,82 @@ function hashset_impl:orderkeys()
         end
         return a < b
     end)
-    local i = 1
-    return function (t, k)
-        k = orderkeys[i]
-        i = i + 1
-        if k == hashset._NIL then
-            return k, nil
-        else
-            return k, k
-        end
-    end, self, nil
+    local n = #orderkeys
+    local i = 0
+    return function ()
+        local k
+        repeat
+            i = i + 1
+            if i > n then return nil end
+            k = orderkeys[i]
+        until k ~= hashset._NIL
+        return k, k
+    end
 end
 
 -- get size of hashset
-function hashset_impl:size()
+function hashset:size()
     return self._SIZE
 end
 
 -- is empty?
-function hashset_impl:empty()
+function hashset:empty()
     return self:size() == 0
 end
 
 -- get data of hashset
-function hashset_impl:data()
+function hashset:data()
     return self._DATA
 end
 
 -- clear hashset
-function hashset_impl:clear()
+function hashset:clear()
     self._DATA = {}
     self._SIZE = 0
 end
 
--- return module
-hashset.__index = hashset_impl
+-- clone hashset
+function hashset:clone()
+    local h = hashset.new()
+    h._SIZE = self._SIZE
+    h._DATA = table.clone(self._DATA)
+    return h
+end
+
+-- construct from list of items
+--
+-- @param ...   the items to insert
+-- @return      the new hashset
+--
+function hashset.of(...)
+    local result = hashset.new()
+    local data = table.pack(...)
+    for i = 1, data.n do
+        result:insert(data[i])
+    end
+    return result
+end
+
+-- construct from an array
+--
+-- @param array the array of items to insert
+-- @return      the new hashset
+--
+function hashset.from(array)
+    local result = hashset.new()
+    for i = 1, #array do
+        result:insert(array[i])
+    end
+    return result
+end
+
+-- create a new empty hashset
+--
+-- @return      the new hashset
+--
+function hashset.new()
+    return hashset {{}, 0}
+end
+
+-- return module: hashset
 return hashset

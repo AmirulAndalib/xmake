@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        scopeinfo.lua
@@ -239,7 +239,10 @@ function _instance:_api_add_groups(name, ...)
     values = table.join(table.unpack(values))
 
     -- save values
-    scope[name] = scope[name] or {}
+    --
+    -- @note maybe scope[name] has been unwrapped, we need wrap it first
+    -- https://github.com/xmake-io/xmake/issues/4428
+    scope[name] = table.wrap(scope[name])
     table.wrap_lock(values)
     table.insert(scope[name], values)
     scope[name] = self:_api_handle(name, scope[name])
@@ -356,11 +359,7 @@ end
 
 -- add the api dictionary to the scope info
 function _instance:_api_add_dictionary(name, dict_or_key, value, extra_config)
-
-    -- get the scope info
     local scope = self._INFO
-
-    -- check
     scope[name] = scope[name] or {}
     if type(dict_or_key) == "table" then
         local dict = {}
@@ -745,7 +744,10 @@ end
 
 -- clone a new instance from the current
 function _instance:clone()
-    return _instance.new(self:kind(), table.clone(self:info()), {interpreter = self:interpreter(), deduplicate = self._DEDUPLICATE, enable_filter = self._ENABLE_FILTER})
+    return _instance.new(self:kind(), table.clone(self:info(), 3), { -- @note we need do deep clone
+        interpreter = self:interpreter(),
+        deduplicate = self._DEDUPLICATE,
+        enable_filter = self._ENABLE_FILTER})
 end
 
 -- new a scope instance

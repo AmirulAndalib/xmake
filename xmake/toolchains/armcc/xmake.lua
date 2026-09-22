@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -37,7 +37,6 @@ toolchain("armcc")
         local mdk = find_mdk()
         if mdk and mdk.sdkdir_armcc and find_tool("armcc") then
             toolchain:config_set("sdkdir", mdk.sdkdir_armcc)
-            toolchain:configs_save()
             return true
         end
     end)

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        cpu.lua
@@ -281,34 +281,53 @@ function cpu._statinfo(name)
     end
 end
 
--- get vendor id
+-- get cpu vendor id, e.g. "GenuineIntel", "AuthenticAMD"
+--
+-- @return      the vendor id string
+--
 function cpu.vendor()
     return cpu._info().vendor_id
 end
 
--- get cpu model
+-- get cpu model number
+--
+-- @return      the model number
+--
 function cpu.model()
     local cpu_model = cpu._info().cpu_model
     return cpu_model and tonumber(cpu_model)
 end
 
--- get cpu model name
+-- get cpu model name, e.g. "Intel(R) Core(TM) i7-10700K"
+--
+-- @return      the model name string
+--
 function cpu.model_name()
     return cpu._info().cpu_model_name
 end
 
--- get cpu family
+-- get cpu family number
+--
+-- @return      the family number
+--
 function cpu.family()
     local cpu_family = cpu._info().cpu_family
     return cpu_family and tonumber(cpu_family)
 end
 
--- get cpu features
+-- get cpu features string, e.g. "sse sse2 avx avx2"
+--
+-- @return      the features string (space separated)
+--
 function cpu.features()
     return cpu._info().cpu_features
 end
 
--- has the given feature?
+-- has the given cpu feature?
+--
+-- @param name  the feature name, e.g. "avx2", "sse4_2"
+-- @return      true if supported
+--
 function cpu.has_feature(name)
     local features = cpu._FEATURES
     if not features then
@@ -321,7 +340,10 @@ function cpu.has_feature(name)
     return features:has(name)
 end
 
--- get cpu micro architecture
+-- get cpu micro architecture, e.g. "skylake", "zen3"
+--
+-- @return      the micro architecture name, or nil if unknown
+--
 function cpu.march()
     local march = cpu._MARCH
     if march == nil then
@@ -336,17 +358,27 @@ function cpu.march()
     return march
 end
 
--- get cpu number
+-- get cpu core count
+--
+-- @return      the number of cpu cores
+--
 function cpu.number()
     return cpu._statinfo("ncpu")
 end
 
 -- get cpu usage rate
+--
+-- @return      the usage rate (0.0 ~ 1.0)
+--
 function cpu.usagerate()
     return cpu._statinfo("usagerate")
 end
 
--- get cpu info
+-- get all cpu info as a table
+--
+-- @param name  the specific info name (optional), e.g. "march", "ncpu"
+-- @return      the cpu info table or specific value
+--
 function cpu.info(name)
     local cpuinfo = {}
     cpuinfo.vendor     = cpu.vendor()

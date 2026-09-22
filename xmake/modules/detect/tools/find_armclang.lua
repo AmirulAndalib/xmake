@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_armclang.lua
@@ -39,7 +39,8 @@ import("detect.sdks.find_mdk")
 function main(opt)
 
     -- init options
-    opt = opt or {}
+    opt         = opt or {}
+    opt.parse   = opt.parse or function (output) return output:match("Arm Compiler for Embedded (%d+%.?%d+%.?%d+)%s") end
 
     -- find program
     local program = find_program(opt.program or "armclang.exe", opt)

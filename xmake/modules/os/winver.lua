@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        winver.lua
@@ -63,6 +63,14 @@ function ntddi_version(name)
     ,   rs1    = "0002"
     ,   rs2    = "0003"
     ,   rs3    = "0004"
+    ,   rs4    = "0005"
+    ,   rs5    = "0006"
+    ,   h1     = "0007"
+    ,   vb     = "0008"
+    ,   nm     = "0009"
+    ,   fe     = "000A"
+    ,   co     = "000B"
+    ,   ni     = "000C"
     }
 
     -- get subvalue

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_lib.lua
@@ -48,7 +48,7 @@ function main(opt)
         local libraryfile = os.tmpfile() .. ".lib"
         local objectfile  = os.tmpfile() .. ".obj"
         local sourcefile  = os.tmpfile() .. ".c"
-        io.writefile(sourcefile, "int test(void)\n{return 0;}")
+        io.writefile(sourcefile, "int test(void)\n{return 0;}\n")
 
         -- check it
         local cl = assert(find_tool("cl", {envs = opt.envs}))

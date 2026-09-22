@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        sandbox.lua
@@ -127,15 +127,29 @@ end
 
 -- get the filter of the current sandbox for the given script
 function sandbox_core_sandbox.filter(script)
-
-    -- get the current sandbox instance
     local instance = sandbox.instance(script)
     if not instance then
         raise("cannot get sandbox instance!")
     end
-
-    -- get it
     return instance:filter()
+end
+
+-- fork a new sandbox and bind a raw script
+function sandbox_core_sandbox.fork(script)
+    local instance = sandbox.instance()
+    if not instance then
+        raise("cannot get sandbox instance!")
+    end
+    local newinst, errors = instance:fork(script)
+    if not newinst then
+        raise(errors)
+    end
+    return newinst
+end
+
+-- get all builtin modules
+function sandbox_core_sandbox.builtin_modules()
+    return sandbox.builtin_modules()
 end
 
 -- return module

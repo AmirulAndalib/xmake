@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        build.lua
@@ -23,9 +23,8 @@ import("core.base.option")
 import("core.theme.theme")
 import("core.project.depend")
 import("private.tools.codesign")
+import("utils.binary.rpath", {alias = "rpath_utils"})
 import("utils.progress")
-
--- main entry
 function main (target, opt)
 
     -- get app and resources directory
@@ -51,19 +50,25 @@ function main (target, opt)
         -- @see https://github.com/xmake-io/xmake/issues/2679#issuecomment-1221839215
         local targetfile = path.join(binarydir, path.filename(target:targetfile()))
         try { function () os.vrunv("install_name_tool", {"-delete_rpath", "@loader_path", targetfile}) end }
-        os.vrunv("install_name_tool", {"-add_rpath", "@executable_path/../Frameworks", targetfile})
+        -- macOS uses @executable_path/../Frameworks due to Contents/MacOS/ layout
+        -- iOS/watchOS/tvOS/visionOS use flat bundle layout where frameworks are in the same directory as the executable
+        local rpath = target:is_plat("macosx") and "@executable_path/../Frameworks" or "@executable_path/Frameworks"
+        local rpathdirs = rpath_utils.list(targetfile, {plat = target:plat(), arch = target:arch()}) or {}
+        if not table.contains(rpathdirs, rpath) then
+            os.vrunv("install_name_tool", {"-add_rpath", rpath, targetfile})
+        end
 
         -- copy dependent dynamic libraries and frameworks
         for _, dep in ipairs(target:orderdeps()) do
             if dep:kind() == "shared" then
+                if not os.isdir(frameworksdir) then
+                    os.mkdir(frameworksdir)
+                end
                 local frameworkdir = dep:data("xcode.bundle.rootdir")
                 if dep:rule("xcode.framework") and frameworkdir then
-                    if not os.isdir(frameworkdir) then
-                        os.mkdir(frameworksdir)
-                    end
                     os.cp(frameworkdir, frameworksdir, {symlink = true})
                 else
-                    os.vcp(dep:targetfile(), binarydir)
+                    os.vcp(dep:targetfile(), frameworksdir)
                 end
             end
         end
@@ -86,21 +91,24 @@ function main (target, opt)
         end
 
         -- generate embedded.mobileprovision to *.app/embedded.mobileprovision
+        local mobile_provision
         local mobile_provision_embedded = path.join(bundledir, "embedded.mobileprovision")
-        local mobile_provision = target:values("xcode.mobile_provision") or get_config("xcode_mobile_provision")
-        if mobile_provision and target:is_plat("iphoneos") then
-            os.tryrm(mobile_provision_embedded)
-            local provisions = codesign.mobile_provisions()
-            if provisions then
-                local mobile_provision_data = provisions[mobile_provision]
-                if mobile_provision_data then
-                    io.writefile(mobile_provision_embedded, mobile_provision_data)
+        if target:is_plat("iphoneos") then
+            mobile_provision = target:values("xcode.mobile_provision") or codesign.xcode_mobile_provision()
+            if mobile_provision then
+                os.tryrm(mobile_provision_embedded)
+                local provisions = codesign.mobile_provisions()
+                if provisions then
+                    local mobile_provision_data = provisions[mobile_provision]
+                    if mobile_provision_data then
+                        io.writefile(mobile_provision_embedded, mobile_provision_data)
+                    end
                 end
             end
         end
 
         -- do codesign
-        local codesign_identity = target:values("xcode.codesign_identity") or get_config("xcode_codesign_identity")
+        local codesign_identity = target:values("xcode.codesign_identity") or codesign.xcode_codesign_identity()
         if target:is_plat("macosx") or (target:is_plat("iphoneos") and target:is_arch("x86_64", "i386")) then
             codesign_identity = nil
         end
@@ -108,4 +116,3 @@ function main (target, opt)
 
     end, {dependfile = target:dependfile(bundledir), files = {bundledir, target:targetfile()}, changed = target:is_rebuilt()})
 end
-

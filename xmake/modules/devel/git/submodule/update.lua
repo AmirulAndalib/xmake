@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        update.lua
@@ -20,7 +20,9 @@
 
 -- imports
 import("core.base.option")
+import("devel.git.remote")
 import("lib.detect.find_tool")
+import("net.proxy")
 
 -- update submodule
 --
@@ -36,11 +38,7 @@ import("lib.detect.find_tool")
 -- @endcode
 --
 function main(opt)
-
-    -- init options
     opt = opt or {}
-
-    -- find git
     local git = assert(find_tool("git"), "git not found!")
 
     -- init argv
@@ -52,6 +50,13 @@ function main(opt)
         table.insert(argv, "-c")
         table.insert(argv, "core.fsmonitor=false")
     end
+
+    -- use longpaths, we need it on windows
+    if opt.longpaths then
+        table.insert(argv, "-c")
+        table.insert(argv, "core.longpaths=true")
+    end
+
     table.insert(argv, "submodule")
     table.insert(argv, "update")
     for _, name in ipairs({"init", "remote", "force", "checkout", "merge", "rebase", "recursive"}) do
@@ -67,26 +72,18 @@ function main(opt)
         table.join2(argv, opt.paths)
     end
 
-    -- enable long paths
-    local longpaths_old
-    local longpaths_changed = false
-    if opt.longpaths then
-        local longpaths_old = try {function () return os.iorunv(git.program, {"config", "--get", "--global", "core.longpaths"}, {curdir = opt.repodir}) end}
-        if not longpaths_old or not longpaths_old:find("true") then
-            os.vrunv(git.program, {"config", "--global", "core.longpaths", "true"}, {curdir = opt.repodir})
-            longpaths_changed = true
+    -- use proxy?
+    local envs
+    local proxy_conf = proxy.config()
+    if proxy_conf then
+        -- get proxy configuration from the current remote url
+        local url = remote.get_url({remote = opt.remote or "origin", repodir = opt.repodir})
+        if url then
+            proxy_conf = proxy.config(url)
         end
+        envs = {ALL_PROXY = proxy_conf}
     end
 
-    -- submodule it
-    os.vrunv(git.program, argv, {curdir = opt.repodir})
-
-    -- restore old long paths configuration
-    if longpaths_changed then
-        if longpaths_old and longpaths_old:find("false") then
-            os.vrunv(git.program, {"config", "--global", "core.longpaths", "false"}, {curdir = opt.repodir})
-        else
-            os.vrunv(git.program, {"config", "--global", "--unset", "core.longpaths"}, {curdir = opt.repodir})
-        end
-    end
+    -- update it
+    os.vrunv(git.program, argv, {envs = envs, curdir = opt.repodir})
 end

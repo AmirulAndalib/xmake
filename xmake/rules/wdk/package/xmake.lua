@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -30,7 +30,7 @@ rule("wdk.package.cab")
         import("lib.detect.find_program")
 
         -- the output directory
-        local outputdir = path.join(option.get("outputdir") or config.buildir(), "drivers", target:name())
+        local outputdir = path.join(option.get("outputdir") or config.builddir(), "drivers", target:name())
         local mode = config.mode()
         if mode then
             outputdir = path.join(outputdir, mode)
@@ -55,7 +55,7 @@ rule("wdk.package.cab")
 
         -- get makecab
         local makecab = find_program("makecab", {check = "/?"})
-        assert(makecab, "makecab not found!")
+        assert(makecab and os.isexec(makecab), "makecab not found!")
 
         -- make .ddf file
         local file = io.open(ddfile, "w")

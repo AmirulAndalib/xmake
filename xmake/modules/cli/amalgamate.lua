@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        amalgamate.lua
@@ -24,6 +24,7 @@ import("core.base.graph")
 import("core.project.config")
 import("core.project.task")
 import("core.project.project")
+import("private.detect.check_targetnames")
 
 -- the options
 local options =
@@ -88,14 +89,14 @@ function _generate_file(target, inputpaths, outputpath, uniqueid)
     -- generate include graph
     local gh = graph.new(true)
     for idx, inputpath in ipairs(inputpaths) do
-        inputpath = path.normalize(path.absolute(inputpath, os.projectdir()))
+        local inputpath = path.normalize(path.absolute(inputpath, os.projectdir()))
         inputpaths[idx] = inputpath
         gh:add_edge("__root__", inputpath)
     end
     _generate_include_graph(target, inputpaths, gh, {})
 
     -- sort file paths and remove root path
-    local filepaths = gh:topological_sort()
+    local filepaths = gh:topo_sort()
     table.remove(filepaths, 1)
 
     -- generate amalgamate file
@@ -157,9 +158,9 @@ function main(...)
     task.run("config")
 
     -- generate amalgamate code
-    args.outputdir = args.outputdir or config.buildir()
+    args.outputdir = args.outputdir or config.builddir()
     if args.target then
-        local target = assert(project.target(args.target), "target(%s): not found!", args.target)
+        local target = assert(check_targetnames(args.target))
         _generate_amalgamate_code(target, args)
     else
         for _, target in ipairs(project.ordertargets()) do

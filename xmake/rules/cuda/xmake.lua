@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -22,7 +22,15 @@
 rule("cuda.build")
     set_sourcekinds("cu")
     add_deps("cuda.build.devlink")
-    on_build_files("private.action.build.object", {batch = true})
+    on_build_files("private.action.build.object", {jobgraph = true, batch = true})
+    on_config(function (target)
+        -- https://github.com/xmake-io/xmake/issues/4755
+        local cu_ccbin = target:tool("cu-ccbin")
+        if cu_ccbin then
+            target:add("cuflags", "-ccbin=" .. os.args(cu_ccbin), {force = true})
+            target:add("culdflags", "-ccbin=" .. os.args(cu_ccbin), {force = true})
+        end
+    end)
 
 -- define rule: cuda
 rule("cuda")

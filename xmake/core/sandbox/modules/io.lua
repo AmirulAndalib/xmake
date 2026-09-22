@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        io.lua
@@ -199,6 +199,17 @@ function sandbox_io.insert(filepath, lineidx, text, opt)
         raise(errors)
     end
     return data
+end
+
+-- convert file encoding
+function sandbox_io.convert(inputfile, outputfile, opt)
+    assert(inputfile and outputfile)
+    inputfile = vformat(inputfile)
+    outputfile = vformat(outputfile)
+    local ok, errors = io.convert(inputfile, outputfile, opt)
+    if not ok then
+        raise(errors)
+    end
 end
 
 -- get std file

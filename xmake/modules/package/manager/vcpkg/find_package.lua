@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_package.lua
@@ -26,7 +26,32 @@ import("core.project.config")
 import("core.project.target")
 import("detect.sdks.find_vcpkgdir")
 import("package.manager.vcpkg.configurations")
+import("package.manager.vcpkg.utils", {alias = "vcpkg_utils"})
 import("package.manager.pkgconfig.find_package", {alias = "find_package_from_pkgconfig"})
+
+-- extract required features from both package name and configs.features.
+function _required_features(name, configs)
+    local features = {}
+    local features_str = name:match("%[(.-)%]")
+    if features_str then
+        for _, feature in ipairs(features_str:split(",", {plain = true})) do
+            local feature = feature:trim()
+            if #feature > 0 then
+                table.insert(features, feature)
+            end
+        end
+    end
+    for _, feature in ipairs(table.wrap(configs and configs.features)) do
+        local feature = tostring(feature):trim()
+        if #feature > 0 then
+            table.insert(features, feature)
+        end
+    end
+    features = table.unique(features)
+    if #features > 0 then
+        return features
+    end
+end
 
 -- we iterate over each pkgconfig file to extract the required data
 function _find_package_from_pkgconfig(pkgconfig_files, opt)
@@ -63,30 +88,7 @@ function _find_package_from_pkgconfig(pkgconfig_files, opt)
     end
 end
 
-function _find_package(vcpkgdir, name, opt)
-
-    -- get configs
-    local configs = opt.configs or {}
-
-    -- fix name, e.g. ffmpeg[x264] as ffmpeg
-    -- @see https://github.com/xmake-io/xmake/issues/925
-    name = name:gsub("%[.-%]", "")
-
-    -- init triplet
-    local arch = opt.arch
-    local plat = opt.plat
-    local mode = opt.mode
-    plat = configurations.plat(plat)
-    arch = configurations.arch(arch)
-    local triplet = configurations.triplet(configs, plat, arch)
-
-    -- get the vcpkg info directories
-    local infodirs = {}
-	if opt.installdir then
-        table.join2(infodirs, path.join(opt.installdir, "vcpkg_installed", "vcpkg", "info"))
-	end
-    table.join2(infodirs, path.join(vcpkgdir, "installed", "vcpkg", "info"))
-
+function _get_package_info(name, triplet, infodirs, arch, plat, mode)
     -- find the package info file, e.g. zlib_1.2.11-3_x86-windows[-static].list
     local infofile = find_file(format("%s_*_%s.list", name, triplet), infodirs)
     if not infofile then
@@ -100,7 +102,7 @@ function _find_package(vcpkgdir, name, opt)
     local info = io.readfile(infofile)
     if info then
         for _, line in ipairs(info:split('\n')) do
-            line = line:trim()
+            local line = line:trim()
             if plat == "windows" then
                 line = line:lower()
             end
@@ -151,6 +153,110 @@ function _find_package(vcpkgdir, name, opt)
         end
     end
 
+    return result
+end
+
+function _find_package(vcpkg, vcpkgdir, name, opt)
+
+    -- get configs
+    local configs = opt.configs or {}
+
+    -- is need manifest mode?
+    local manifest_mode = vcpkg_utils.need_manifest(opt)
+
+    -- manifest mode requires installdir to run vcpkg commands in the context of the manifest
+    if manifest_mode and not opt.installdir then
+        raise("installdir is required for manifest mode!")
+    end
+
+    -- extract required features from both package name and configs.features.
+    local required_features = _required_features(name, configs)
+
+    -- fix name, e.g. ffmpeg[x264] as ffmpeg
+    -- @see https://github.com/xmake-io/xmake/issues/925
+    name = name:gsub("%[.-%]", "")
+
+    -- init triplet
+    local arch = opt.arch
+    local plat = opt.plat
+    local mode = opt.mode
+    plat = configurations.plat(plat)
+    arch = configurations.arch(arch)
+    local triplet = configurations.triplet(configs, plat, arch)
+
+    -- get the vcpkg info directories
+    local infodirs = {}
+	if manifest_mode then
+        table.join2(infodirs, path.join(opt.installdir, "vcpkg_installed", "vcpkg", "info"))
+    else
+        table.join2(infodirs, path.join(vcpkgdir, "installed", "vcpkg", "info"))
+	end
+
+    -- find the package info file, e.g. zlib_1.2.11-3_x86-windows[-static].list
+    local infofile = find_file(format("%s_*_%s.list", name, triplet), infodirs)
+    if not infofile then
+        return
+    end
+
+    -- check that required features are installed
+    -- @see https://github.com/xmake-io/xmake/issues/7388
+    if required_features and not vcpkg_utils.has_installed_features(vcpkg, name, triplet, required_features, opt) then
+        return
+    end
+
+    -- find dependency package
+    -- pass features to depend-info to get the complete dependency tree
+    -- e.g. curl[mbedtls] needs mbedtls libraries
+    -- @see https://github.com/xmake-io/xmake/issues/7388
+    local depend_name = name
+    if required_features then
+        depend_name = name .. "[" .. table.concat(required_features, ",") .. "]"
+    end
+    local argv = {"depend-info", depend_name, "--sort=reverse", "--triplet=" .. triplet}
+
+    -- pass feature flags to depend-info when in manifest mode, otherwise depend-info will not show the complete dependency tree with features
+    if manifest_mode then
+        table.insert(argv, 1, "--feature-flags=versions")
+    end
+
+    local _, dependinfo = try { function () return os.iorunv(vcpkg, argv, {curdir = manifest_mode and opt.installdir or vcpkg_utils.classic_curdir()}) end }
+    if manifest_mode and not dependinfo then
+        -- fallback: in manifest mode vcpkg rejects the package name as a positional argument, so
+        -- drop it and query the manifest's dependency tree instead.
+        -- see https://github.com/microsoft/vcpkg-tool/pull/1909
+        table.remove(argv, 3)
+        _, dependinfo = try { function () return os.iorunv(vcpkg, argv, {curdir = opt.installdir}) end }
+    end
+
+    -- collect the packages to read info from: always the main package (its .list file was found
+    -- above, so it is known-installed), plus any transitive dependencies reported by depend-info.
+    -- this keeps resolution working even when depend-info fails, e.g. a project-owned vcpkg.json
+    -- puts vcpkg in manifest mode and it rejects arguments; only transitive deps are then missing.
+    -- @see https://github.com/xmake-io/xmake/issues/7660
+    local packagenames = {name}
+    if dependinfo then
+        for _, line in ipairs(dependinfo:split("\n", {plain = true})) do
+            if not line:startswith("vcpkg-") then
+                local packagename = line:match("^([^%[:]+)[^:]*:")
+                if packagename then
+                    table.insert(packagenames, packagename)
+                end
+            end
+        end
+    end
+
+    local result = nil
+    for _, packagename in ipairs(table.unique(packagenames)) do
+        local dependencyresult = _get_package_info(packagename, triplet, infodirs, arch, plat, mode)
+        if dependencyresult then
+            result = result or {}
+            for key, dependencylist in pairs(dependencyresult) do
+                result[key] = result[key] or {}
+                table.join2(result[key], dependencylist)
+            end
+        end
+    end
+
     -- save version
     if result then
         local infoname = path.basename(infofile)
@@ -165,11 +271,12 @@ function _find_package(vcpkgdir, name, opt)
 
     -- remove repeat
     if result then
-        if result.linkdirs then
-            result.linkdirs = table.unique(result.linkdirs)
-        end
-        if result.includedirs then
-            result.includedirs = table.unique(result.includedirs)
+        for k, v in pairs(result) do
+            if k == "links" or k == "syslinks" or k == "frameworks" then
+                result[k] = table.unwrap(table.reverse_unique(v))
+            else
+                result[k] = table.unwrap(table.unique(v))
+            end
         end
     end
     return result
@@ -192,6 +299,12 @@ function main(name, opt)
         return
     end
 
+    -- attempt to find vcpkg
+    local vcpkg = find_tool("vcpkg")
+    if not vcpkg then
+        raise("vcpkg not found!")
+    end
+
     -- do find package
-    return _find_package(vcpkgdir, name, opt)
+    return _find_package(vcpkg.program, vcpkgdir, name, opt)
 end

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -21,32 +21,20 @@
 -- define rule: objc.build
 rule("objc.build")
     set_sourcekinds("mm")
-    add_deps("objc.build.pcheader", "c.build.optimization", "objc.build.sanitizer")
-    after_load(function (target)
-        -- deprecated, we only need to use `add_mflags("-fno-objc-arc")` to override it
-        if target:values("objc.build.arc") == false then
-            target:add("mflags", "-fno-objc-arc")
-        end
-        if target:is_plat("macosx", "iphoneos", "watchos") then
-            target:add("frameworks", "Foundation", "CoreFoundation")
-        end
+    add_deps("objc.build.pcheader")
+    on_config(function (target)
+        import("config")(target, "mm")
     end)
-    on_build_files("private.action.build.object", {batch = true, distcc = true})
+    on_build_files("private.action.build.object", {jobgraph = true, batch = true, distcc = true})
 
 -- define rule: objc++.build
 rule("objc++.build")
     set_sourcekinds("mxx")
-    add_deps("objc++.build.pcheader", "c++.build.optimization", "objc++.build.sanitizer")
-    after_load(function (target)
-        -- deprecated, we only need to use `add_mxxflags("-fno-objc-arc")` to override it
-        if target:values("objc++.build.arc") == false then
-            target:add("mxxflags", "-fno-objc-arc")
-        end
-        if target:is_plat("macosx", "iphoneos", "watchos") then
-            target:add("frameworks", "Foundation", "CoreFoundation")
-        end
+    add_deps("objc++.build.pcheader")
+    on_config(function (target)
+        import("config")(target, "mxx")
     end)
-    on_build_files("private.action.build.object", {batch = true, distcc = true})
+    on_build_files("private.action.build.object", {jobgraph = true, batch = true, distcc = true})
 
 -- define rule: objc
 rule("objc++")

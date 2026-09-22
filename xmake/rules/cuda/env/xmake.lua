@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -41,12 +41,6 @@ rule("cuda.env")
         else
             target:add("cuflags", "-m64", {force = true})
             target:add("culdflags", "-m64", {force = true})
-        end
-
-        -- add ccbin
-        local cu_ccbin = platform.tool("cu-ccbin")
-        if cu_ccbin then
-            target:add("culdflags", "-ccbin=" .. os.args(cu_ccbin), {force = true})
         end
 
         -- add rdc, @see https://github.com/xmake-io/xmake/issues/1975

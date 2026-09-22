@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        executable_path.lua
@@ -48,6 +48,14 @@ function main(program)
             if #result > 0 then
                 filepath = result
             end
+        end
+    end
+    -- patch .exe
+    -- @see https://github.com/xmake-io/xmake/discussions/4781
+    if is_host("windows") and path.is_absolute(program) then
+        local program_exe = program .. ".exe"
+        if os.isfile(program_exe) then
+            program = program_exe
         end
     end
     if not filepath then

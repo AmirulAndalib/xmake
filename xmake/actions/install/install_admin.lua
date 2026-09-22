@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        install_admin.lua
@@ -25,39 +25,50 @@ import("core.project.project")
 import("core.platform.platform")
 import("install")
 
--- install
-function main(targetname, group_pattern, installdir, prefix)
-
+function main(targetname, group_pattern, installdir, bindir, libdir, includedir)
     local verbose = option.get("verbose")
 
-    -- enter project directory
+    -- the targetname may be a list of target names joined with the path separator
+    if targetname and targetname:find(path.envsep(), 1, true) then
+        targetname = path.splitenv(targetname)
+    end
+    if group_pattern and #group_pattern == 0 then
+        group_pattern = nil
+    end
+    if installdir and #installdir == 0 then
+        installdir = nil
+    end
+    if bindir and #bindir == 0 then
+        bindir = nil
+    end
+    if libdir and #libdir == 0 then
+        libdir = nil
+    end
+    if includedir and #includedir == 0 then
+        includedir = nil
+    end
+
     os.cd(project.directory())
-
-    -- load config
     config.load()
-
-    -- load platform
     platform.load(config.plat())
 
     -- save the current option and push a new option context
     option.save()
-
-    -- preserve verbose option
     option.set("verbose", verbose)
-
-    -- pass installdir to option
     if installdir then
         option.set("installdir", installdir)
     end
-
-    -- pass prefix to option
-    if prefix then
-        option.set("prefix", prefix)
+    if bindir then
+        option.set("bindir", bindir)
+    end
+    if libdir then
+        option.set("libdir", libdir)
+    end
+    if includedir then
+        option.set("includedir", includedir)
     end
 
     -- install target
     install(targetname, group_pattern)
-
-    -- restore the previous option context
     option.restore()
 end

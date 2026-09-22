@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_rc.lua
@@ -63,7 +63,7 @@ function main(opt)
         local arch = toolchain and toolchain:arch() or config.arch()
         local bindir = path.join(envs.WindowsSdkDir, "bin", envs.WindowsSDKVersion, arch)
         if os.isdir(bindir) then
-            opt.paths = opt.paths or {}
+            opt.paths = table.wrap(opt.paths)
             table.insert(opt.paths, bindir)
         end
     end

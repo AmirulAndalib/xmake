@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        install_package.lua
@@ -21,6 +21,7 @@
 -- imports
 import("core.base.option")
 import("core.project.config")
+import("core.tools.rustc.target_triple")
 import("lib.detect.find_tool")
 import("private.tools.rust.check_target")
 
@@ -40,9 +41,94 @@ function _translate_local_path_in_deps(cargotoml, rootdir)
         if not path.is_absolute(localpath) then
             localpath = path.absolute(localpath, rootdir)
         end
+        localpath = localpath:gsub("\\", "/")
         return "path = \"" .. localpath .. "\""
     end)
     io.writefile(cargotoml, content)
+end
+
+-- is it a cargo workspace manifest? (it contains a [workspace] or [workspace.xxx] table)
+function _is_workspace_manifest(content)
+    for _, line in ipairs(content:split("\n", {plain = true, strict = true})) do
+        if line:match("^%s*%[workspace[%].]") then
+            return true
+        end
+    end
+    return false
+end
+
+-- get the workspace inheritance tables from the workspace root manifest
+--
+-- if the given Cargo.toml is a member of a cargo workspace and uses workspace inheritance,
+-- e.g. `anyhow.workspace = true`, `version.workspace = true`, `[lints] workspace = true`,
+-- we need to inject the `[workspace.package]`/`[workspace.dependencies]`/`[workspace.lints]`
+-- tables from the workspace root manifest, otherwise cargo will fail to resolve them, e.g.
+--
+--   error inheriting `anyhow` from workspace root manifest's `workspace.dependencies.anyhow`
+--   `workspace.dependencies` was not defined
+--
+-- @see https://github.com/xmake-io/xmake/issues/7619
+-- https://doc.rust-lang.org/cargo/reference/workspaces.html#the-workspacedependencies-table
+function _get_workspace_inherited_tables(cargo_toml)
+
+    -- find the workspace root manifest by walking up
+    local rootmanifest
+    local dir = path.directory(path.absolute(cargo_toml))
+    while dir and #dir > 0 do
+        local manifest = path.join(dir, "Cargo.toml")
+        if os.isfile(manifest) then
+            local content = io.readfile(manifest)
+            if content and _is_workspace_manifest(content) then
+                rootmanifest = manifest
+                break
+            end
+        end
+        local parentdir = path.directory(dir)
+        if parentdir == dir then
+            break
+        end
+        dir = parentdir
+    end
+
+    -- not a workspace member, or the manifest itself is the workspace root (self-contained)
+    if not rootmanifest or path.absolute(rootmanifest) == path.absolute(cargo_toml) then
+        return
+    end
+
+    -- extract all the [workspace.xxx] sub-tables, e.g. [workspace.package]/[workspace.dependencies]/[workspace.lints]
+    -- we do not copy the bare [workspace] table (members/exclude), otherwise cargo will search for the member crates.
+    local content = io.readfile(rootmanifest)
+    if not content then
+        return
+    end
+    local result = {}
+    local in_subtable = false
+    for _, line in ipairs(content:split("\n", {plain = true, strict = true})) do
+        local header = line:match("^%s*%[(.-)%]%s*$")
+        if header then
+            in_subtable = header:trim():startswith("workspace.")
+            if in_subtable then
+                table.insert(result, line)
+            end
+        elseif in_subtable then
+            table.insert(result, line)
+        end
+    end
+    if #result == 0 then
+        return
+    end
+
+    -- translate the local paths in the workspace dependencies, they are relative to the workspace root directory
+    local rootdir = path.directory(rootmanifest)
+    local workspace_toml = table.concat(result, "\n")
+    workspace_toml = workspace_toml:gsub("path%s+=%s+\"(.-)\"", function (localpath)
+        if not path.is_absolute(localpath) then
+            localpath = path.absolute(localpath, rootdir)
+        end
+        localpath = localpath:gsub("\\", "/")
+        return "path = \"" .. localpath .. "\""
+    end)
+    return workspace_toml
 end
 
 -- install package
@@ -77,7 +163,10 @@ function main(name, opt)
     -- get target
     -- e.g. x86_64-pc-windows-msvc, aarch64-unknown-none
     -- @see https://github.com/xmake-io/xmake/issues/4049
-    local target = check_target(opt.arch, true) and opt.arch or nil
+    local target = #opt.arch:split("%-") >= 2 and check_target(opt.arch, true) and opt.arch
+    if not target then
+        target = target_triple(opt.plat, opt.arch)
+    end
 
     -- generate Cargo.toml
     local sourcedir = path.join(opt.cachedir, "source")
@@ -91,11 +180,24 @@ function main(name, opt)
         -- https://github.com/rust-lang/cargo/issues/10534#issuecomment-1087631050
         local tomlfile = io.open(cargotoml, "a")
         tomlfile:print("")
+        tomlfile:print("[lib]")
+        tomlfile:print("crate-type = [\"staticlib\"]")
+        tomlfile:print("")
         tomlfile:print("[workspace]")
         tomlfile:print("")
+        -- inject the workspace inheritance tables if the given Cargo.toml is a workspace member,
+        -- e.g. `anyhow.workspace = true`. @see https://github.com/xmake-io/xmake/issues/7619
+        local workspace_toml = _get_workspace_inherited_tables(configs.cargo_toml)
+        if workspace_toml then
+            tomlfile:write(workspace_toml)
+            tomlfile:print("")
+        end
         tomlfile:close()
     else
         local tomlfile = io.open(cargotoml, "w")
+        tomlfile:print("[lib]")
+        tomlfile:print("crate-type = [\"staticlib\"]")
+        tomlfile:print("")
         tomlfile:print("[package]")
         tomlfile:print("name = \"cargodeps\"")
         tomlfile:print("version = \"0.1.0\"")
@@ -124,7 +226,7 @@ target = "%s"
     end
 
     -- generate main.rs
-    local file = io.open(path.join(sourcedir, "src", "main.rs"), "w")
+    local file = io.open(path.join(sourcedir, "src", "lib.rs"), "w")
     if configs.main == false then
         file:print("#![no_main]")
     end
@@ -159,11 +261,15 @@ target = "%s"
 
     -- do install
     local installdir = opt.installdir
-    os.tryrm(path.join(installdir, "lib"))
+    local librarydir = path.join(installdir, "lib")
+    local librarydir_host = path.join(installdir, "lib", "host")
+    os.tryrm(librarydir)
     if target then
-        os.vcp(path.join(sourcedir, "target", target, opt.mode == "debug" and "debug" or "release", "deps"), path.join(installdir, "lib"))
+        os.vcp(path.join(sourcedir, "target", target, opt.mode == "debug" and "debug" or "release", "deps"), librarydir)
+        -- @see https://github.com/xmake-io/xmake/issues/5156#issuecomment-2142566862
+        os.vcp(path.join(sourcedir, "target", opt.mode == "debug" and "debug" or "release", "deps"), librarydir_host)
     else
-        os.vcp(path.join(sourcedir, "target", opt.mode == "debug" and "debug" or "release", "deps"), path.join(installdir, "lib"))
+        os.vcp(path.join(sourcedir, "target", opt.mode == "debug" and "debug" or "release", "deps"), librarydir)
     end
 
     -- install metadata

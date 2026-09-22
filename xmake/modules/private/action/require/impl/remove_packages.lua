@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        remove_packages.lua
@@ -33,7 +33,7 @@ function _get_package_configs_str(manifest_file)
             if type(v) == "boolean" then
                 table.insert(configs, k .. ":" .. (v and "y" or "n"))
             else
-                table.insert(configs, k .. ":" .. v)
+                table.insert(configs, k .. ":" .. string.serialize(v, {strip = true, indent = false}))
             end
         end
         local configs_str = #configs > 0 and "[" .. table.concat(configs, ", ") .. "]" or ""

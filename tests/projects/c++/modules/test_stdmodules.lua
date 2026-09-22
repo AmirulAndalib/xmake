@@ -1,45 +1,42 @@
-import("lib.detect.find_tool")
-import("core.base.semver")
-import("core.tool.toolchain")
+inherit("test_base")
 
-function _build()
-    local ci = (os.getenv("CI") or os.getenv("GITHUB_ACTIONS") or ""):lower()
-    if ci == "true" then
-        os.exec("xmake -rvD")
-    else
-        os.exec("xmake -r")
-    end
+local _CLANG_MIN_VER = "19"
+local _GCC_MIN_VER = "15"
+local _MSVC_MIN_VER = "14.35"
+
+function clang_min_ver()
+    return _CLANG_MIN_VER
+end
+function gcc_min_ver()
+    return _GCC_MIN_VER
+end
+function msvc_min_ver()
+    return _MSVC_MIN_VER
 end
 
-function main(t)
-    if is_subhost("windows") then
-        local msvc = toolchain.load("msvc")
-        if msvc and msvc:check() then
-            local vcvars = msvc:config("vcvars")
-            if vcvars and vcvars.VCInstallDir and vcvars.VCToolsVersion and semver.compare(vcvars.VCToolsVersion, "14.35") then
-                local stdmodulesdir = path.join(vcvars.VCInstallDir, "Tools", "MSVC", vcvars.VCToolsVersion, "modules")
-                if os.isdir(stdmodulesdir) then
-                    os.exec("xmake f -c")
-                    _build()
-                end
-            end
-        end
-    elseif is_host("linux") then -- or is_host("macosx") then
-        -- gcc don't support std modules atm
-        -- local gcc = find_tool("gcc", {version = true})
-        -- if is_host("linux") and gcc and gcc.version and semver.compare(gcc.version, "11.0") >= 0 then
-            -- os.exec("xmake f -c")
-            -- _build()
-        -- end
-        local clang = find_tool("clang", {version = true})
-        if clang and clang.version and semver.compare(clang.version, "14.0") >= 0 then
-            -- clang don't support libstdc++ std modules atm
-            -- os.exec("xmake clean -a")
-            -- os.exec("xmake f --toolchain=clang -c")
-            -- _build()
-            os.exec("xmake clean -a")
-            os.exec("xmake f --toolchain=clang --cxxflags=\"-stdlib=libc++\" -c")
-            _build()
-        end
+function main(_)
+    local clang_options = {stdmodule = true, compiler = "clang", version = clang_min_ver()}
+    local gcc_options = {stdmodule = true, compiler = "gcc", version = gcc_min_ver()}
+    -- latest mingw gcc 15.1 is broken
+    --  error: F:/msys64/mingw64/include/c++/15.1.0/shared_mutex:105:3: error: 'int std::__glibcxx_rwlock_timedrdlock(pthread_rwlock_t*, const timespec*)' exposes TU-local entity 'int pthread_rwlock_timedrdlock(pthread_rwlock_t*, const timespec*)'
+    --   105 |   __glibcxx_rwlock_timedrdlock (pthread_rwlock_t *__rwlock,
+    --       |   ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    -- In file included from F:/msys64/mingw64/include/c++/15.1.0/x86_64-w64-mingw32/bits/gthr-default.h:35,
+    --                  from F:/msys64/mingw64/include/c++/15.1.0/x86_64-w64-mingw32/bits/gthr.h:157,
+    --                  from F:/msys64/mingw64/include/c++/15.1.0/ext/atomicity.h:37,
+    --                  from F:/msys64/mingw64/include/c++/15.1.0/bits/ios_base.h:41,
+    --                  from F:/msys64/mingw64/include/c++/15.1.0/streambuf:45,
+    --                  from F:/msys64/mingw64/include/c++/15.1.0/bits/streambuf_iterator.h:37,
+    --                  from F:/msys64/mingw64/include/c++/15.1.0/iterator:68,
+    --                  from F:/msys64/mingw64/include/c++/15.1.0/x86_64-w64-mingw32/bits/stdc++.h:56:
+    -- F:/msys64/mingw64/include/pthread.h:296:28: note: 'int pthread_rwlock_timedrdlock(pthread_rwlock_t*, const timespec*)' declared with internal linkage
+    --   296 | WINPTHREAD_RWLOCK_DECL int pthread_rwlock_timedrdlock(pthread_rwlock_t *l, const struct timespec *ts)
+    --       |                            ^~~~~~~~~~~~~~~~~~~~~~~~~~
+    -- F:/msys64/mingw64/include/c++/15.1.0/shared_mutex:115:3: error: 'int std::__glibcxx_rwlock_timedwrlock(pthread_rwlock_t*, const timespec*)' exposes TU-local entity 'int pthread_rwlock_timedwrlock(pthread_rwlock_t*, const timespec*)'
+    --   115 |   __glibcxx_rwlock_timedwrlock (pthread_rwlock_t *__rwlock,   local gcc_options = {stdmodule = true, compiler = "gcc", version = GCC_MIN_VER}
+    if is_subhost("msys") then
+        gcc_options = nil
     end
+    local msvc_options = {stdmodule = true, version = msvc_min_ver()}
+    run_tests(clang_options, gcc_options, msvc_options)
 end

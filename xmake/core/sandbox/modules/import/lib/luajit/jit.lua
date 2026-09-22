@@ -12,11 +12,12 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        jit.lua
 --
 
--- return module
-return require("jit")
+if xmake._LUAJIT then
+    return require("jit")
+end

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -27,14 +27,23 @@
 -- compile *.vert/*.frag and generate binary c header files
 --   add_rules("utils.glsl2spv", {bin2c = true})
 --
--- in c code:
+-- compile *.vert/*.frag and generate object files for direct linking
+--   add_rules("utils.glsl2spv", {bin2obj = true})
+--
+-- in c code (bin2c):
 --   static unsigned char g_test_frag_spv_data[] = {
 --      #include "test.frag.spv.h"
 --   };
 --
+-- in c code (bin2obj):
+--   extern const uint8_t _binary_test_frag_spv_start[];
+--   extern const uint8_t _binary_test_frag_spv_end[];
+--   const uint32_t size = (uint32_t)(_binary_test_frag_spv_end - _binary_test_frag_spv_start);
+--
 --
 rule("utils.glsl2spv")
     set_extensions(".vert", ".tesc", ".tese", ".geom", ".comp", ".frag", ".comp", ".mesh", ".task", ".rgen", ".rint", ".rahit", ".rchit", ".rmiss", ".rcall", ".glsl")
+    add_orders("utils.glsl2spv", "c++.build.modules.scanner")
     on_load(function (target)
         local is_bin2c = target:extraconf("rules", "utils.glsl2spv", "bin2c")
         if is_bin2c then
@@ -45,8 +54,10 @@ rule("utils.glsl2spv")
             target:add("includedirs", headerdir)
         end
     end)
-    before_buildcmd_file(function (target, batchcmds, sourcefile_glsl, opt)
+    on_preparecmd_file(function (target, batchcmds, sourcefile_glsl, opt)
         import("lib.detect.find_tool")
+        import("rules.utils.bin2obj.utils", {alias = "bin2obj_utils", rootdir = os.programdir()})
+        import("rules.utils.bin2c.utils", {alias = "bin2c_utils", rootdir = os.programdir()})
 
         -- get glslangValidator
         local glslc
@@ -58,29 +69,43 @@ rule("utils.glsl2spv")
 
         -- glsl to spv
         local targetenv = target:extraconf("rules", "utils.glsl2spv", "targetenv") or "vulkan1.0"
+        local client = target:extraconf("rules", "utils.glsl2spv", "client") or "vulkan100"
+        local debugsource = target:extraconf("rules", "utils.glsl2spv", "debugsource") or false
         local outputdir = target:extraconf("rules", "utils.glsl2spv", "outputdir") or path.join(target:autogendir(), "rules", "utils", "glsl2spv")
         local spvfilepath = path.join(outputdir, path.filename(sourcefile_glsl) .. ".spv")
         batchcmds:show_progress(opt.progress, "${color.build.object}generating.glsl2spv %s", sourcefile_glsl)
         batchcmds:mkdir(outputdir)
         if glslangValidator then
-            batchcmds:vrunv(glslangValidator.program, {"--target-env", targetenv, "-o", path(spvfilepath), path(sourcefile_glsl)})
+            if debugsource then
+                batchcmds:vrunv(glslangValidator.program, {"--target-env", targetenv, "--client", client, "-gVS", "-o", path(spvfilepath), path(sourcefile_glsl)})
+            else
+                batchcmds:vrunv(glslangValidator.program, {"--target-env", targetenv, "--client", client, "-o", path(spvfilepath), path(sourcefile_glsl)})
+            end
         else
             batchcmds:vrunv(glslc.program, {"--target-env", targetenv, "-o", path(spvfilepath), path(sourcefile_glsl)})
         end
 
-        -- do bin2c
+        -- do bin2c or bin2obj
         local outputfile = spvfilepath
         local is_bin2c = target:extraconf("rules", "utils.glsl2spv", "bin2c")
+        local is_bin2obj = target:extraconf("rules", "utils.glsl2spv", "bin2obj")
         if is_bin2c then
-            -- get header file
-            local headerdir = outputdir
-            local headerfile = path.join(headerdir, path.filename(spvfilepath) .. ".h")
-            target:add("includedirs", headerdir)
+            -- generate header file
+            -- note: explicitly disable zeroend (SPIR-V is binary format, not null-terminated string)
+            local headerfile = bin2c_utils.generate_headerfile(target, batchcmds, spvfilepath, {
+                progress = opt.progress,
+                headerdir = outputdir,
+                zeroend = false  -- SPIR-V is binary format, not null-terminated string
+            })
             outputfile = headerfile
-
-            -- add commands
-            local argv = {"lua", "private.utils.bin2c", "--nozeroend", "-i", path(spvfilepath), "-o", path(headerfile)}
-            batchcmds:vrunv(os.programfile(), argv, {envs = {XMAKE_SKIP_HISTORY = "y"}})
+        elseif is_bin2obj then
+            -- convert to object file using bin2obj
+            -- note: zeroend is false by default (SPIR-V is binary format, not null-terminated string)
+            local objectfile = bin2obj_utils.generate_objectfile(target, batchcmds, spvfilepath, {
+                progress = opt.progress,
+                rulename = "utils.glsl2spv"  -- pass current rule name for config lookup
+            })
+            outputfile = objectfile
         end
 
         -- add deps

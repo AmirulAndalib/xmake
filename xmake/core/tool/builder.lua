@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        builder.lua
@@ -22,19 +22,21 @@
 local builder = builder or {}
 
 -- load modules
-local io       = require("base/io")
-local path     = require("base/path")
-local utils    = require("base/utils")
-local table    = require("base/table")
-local string   = require("base/string")
-local option   = require("base/option")
-local hashset  = require("base/hashset")
-local graph    = require("base/graph")
-local tool     = require("tool/tool")
-local config   = require("project/config")
-local sandbox  = require("sandbox/sandbox")
-local language = require("language/language")
-local platform = require("platform/platform")
+local io             = require("base/io")
+local path           = require("base/path")
+local utils          = require("base/utils")
+local table          = require("base/table")
+local string         = require("base/string")
+local option         = require("base/option")
+local hashset        = require("base/hashset")
+local graph          = require("base/graph")
+local tool           = require("tool/tool")
+local config         = require("project/config")
+local sandbox        = require("sandbox/sandbox")
+local language       = require("language/language")
+local platform       = require("platform/platform")
+local sandbox_module = require("sandbox/modules/import/core/sandbox/module")
+local target_utils   = nil -- lazy import("private.utils.target")
 
 -- get the tool of builder
 function builder:_tool()
@@ -125,6 +127,19 @@ function builder:_flagkinds()
     return self._FLAGKINDS
 end
 
+-- get the extra configuration from value
+function builder:_extraconf(extras, value)
+    local extra = extras
+    if extra then
+        if type(value) == "table" then
+            extra = extra[table.concat(value, "_")]
+        else
+            extra = extra[value]
+        end
+    end
+    return extra
+end
+
 -- inherit flags (only for public/interface) from target deps
 --
 -- e.g.
@@ -132,48 +147,28 @@ end
 -- add_cflags("", {interface = true})
 --
 function builder:_inherit_flags_from_targetdeps(flags, target)
-    local orderdeps = target:orderdeps()
+    local orderdeps = target:orderdeps({inherit = true})
     local total = #orderdeps
     for idx, _ in ipairs(orderdeps) do
         local dep = orderdeps[total + 1 - idx]
-        local depinherit = target:extraconf("deps", dep:name(), "inherit")
-        if depinherit == nil or depinherit then
-            for _, flagkind in ipairs(self:_flagkinds()) do
-                self:_add_flags_from_flagkind(flags, dep, flagkind, {interface = true})
-            end
+        for _, flagkind in ipairs(self:_flagkinds()) do
+            self:_add_flags_from_flagkind(flags, dep, flagkind, {interface = true})
         end
     end
 end
 
 -- add flags from the flagkind
 function builder:_add_flags_from_flagkind(flags, target, flagkind, opt)
+    if target_utils == nil then
+        target_utils = sandbox_module.import("private.utils.target", {anonymous = true})
+    end
     local targetflags = target:get(flagkind, opt)
     local extraconf   = target:extraconf(flagkind)
     for _, flag in ipairs(table.wrap(targetflags)) do
-        -- does this flag belong to this tool?
-        -- @see https://github.com/xmake-io/xmake/issues/3022
-        --
-        -- e.g.
-        -- for all: add_cxxflags("-g")
-        -- only for clang: add_cxxflags("clang::-stdlib=libc++")
-        -- only for clang and multiple flags: add_cxxflags("-stdlib=libc++", "-DFOO", {tools = "clang"})
-        --
-        local for_this_tool = true
-        local flagconf = extraconf and extraconf[flag]
-        if type(flag) == "string" and flag:find("::", 1, true) then
-            for_this_tool = false
-            local splitinfo = flag:split("::", {plain = true})
-            local toolname = splitinfo[1]
-            if toolname == self:name() then
-                flag = splitinfo[2]
-                for_this_tool = true
-            end
-        elseif flagconf and flagconf.tools then
-            for_this_tool = table.contains(table.wrap(flagconf.tools), self:name())
-        end
-
-        if for_this_tool then
+        local flag = target_utils.flag_belong_to_tool(flag, self, extraconf)
+        if flag then
             if extraconf then
+                local flagconf = extraconf[flag]
                 -- @note we need join the single flag with shallow mode, aboid expand table values
                 -- e.g. add_cflags({"-I", "/tmp/xxx foo"}, {force = true, expand = false})
                 if flagconf and flagconf.force then
@@ -200,18 +195,33 @@ end
 
 -- add flags from the target options
 function builder:_add_flags_from_targetopts(flags, target)
-    for _, opt in ipairs(target:orderopts()) do
-        for _, flagkind in ipairs(self:_flagkinds()) do
-            self:_add_flags_from_flagkind(flags, opt, flagkind)
+    for _, flagkind in ipairs(self:_flagkinds()) do
+        local result = target:get_from(flagkind, "option::*")
+        if result then
+            for _, values in ipairs(table.wrap(result)) do
+                table.join2(flags, self:_mapflags(values, flagkind, target))
+            end
         end
     end
 end
 
 -- add flags from the target packages
 function builder:_add_flags_from_targetpkgs(flags, target)
-    for _, pkg in ipairs(target:orderpkgs()) do
-        for _, flagkind in ipairs(self:_flagkinds()) do
-            table.join2(flags, self:_mapflags(pkg:get(flagkind), flagkind, target))
+    local kind = self:kind()
+    for _, flagkind in ipairs(self:_flagkinds()) do
+        -- attempt to add special lanugage flags from package first, e.g. gcldflags, dcarflags
+        -- @see https://github.com/xmake-io/xmake-repo/issues/5255
+        local result
+        if kind:endswith("ld") or kind:endswith("sh") then
+            result = target:get_from(kind .. "flags", "package::*")
+        end
+        if not result then
+            result = target:get_from(flagkind, "package::*")
+        end
+        if result then
+            for _, values in ipairs(table.wrap(result)) do
+                table.join2(flags, self:_mapflags(values, flagkind, target))
+            end
         end
     end
 end
@@ -241,7 +251,7 @@ function builder:_add_flags_from_target(flags, target)
 
         -- add flags from language
         targetflags = {}
-        self:_add_flags_from_language(targetflags, target)
+        self:_add_flags_from_language(targetflags, {target = target})
 
         -- add flags for the target
         if target_type == "target" then
@@ -278,9 +288,24 @@ function builder:_add_flags_from_argument(flags, target, args)
     end
 
     -- add flags (named) from the language
-    self:_add_flags_from_language(flags, nil, {
-        target = function (name) return args[name] end,
+    self:_add_flags_from_language(flags, {linkorders = args.linkorders, linkgroups = args.linkgroups, getters = {
+        target = function (name)
+            -- we need also to get extra from arguments
+            -- @see https://github.com/xmake-io/xmake/issues/4274
+            --
+            -- e.g.
+            -- package/add_linkgroups("xxx", {group = true})
+            -- {linkgroups = , extras = {
+            --     linkgroups = {z = {group = true}}
+            -- }}
+            local values = args[name]
+            local extras = args.extras and args.extras[name]
+            return values, extras
+        end,
         toolchain = function (name)
+            if target and target.toolconfig then
+                return target:toolconfig(name)
+            end
             local plat, arch
             if target and target.plat then
                 plat = target:plat()
@@ -289,14 +314,20 @@ function builder:_add_flags_from_argument(flags, target, args)
                 arch = target:arch()
             end
             return platform.toolconfig(name, plat, arch)
-        end})
+        end}})
 end
 
 -- add items from getter
 function builder:_add_items_from_getter(items, name, opt)
-    local values = opt.getter(name)
+    local values, extras = opt.getter(name)
     if values then
-        table.insert(items, {name = name, values = table.wrap(values), check = opt.check, multival = opt.multival, mapper = opt.mapper})
+        table.insert(items, {
+            name = name,
+            values = table.wrap(values),
+            check = opt.check,
+            multival = opt.multival,
+            mapper = opt.mapper,
+            extras = extras})
     end
 end
 
@@ -307,7 +338,12 @@ function builder:_add_items_from_config(items, name, opt)
         values = path.splitenv(values)
     end
     if values then
-        table.insert(items, {name = name, values = table.wrap(values), check = opt.check, multival = opt.multival, mapper = opt.mapper})
+        table.insert(items, {
+            name = name,
+            values = table.wrap(values),
+            check = opt.check,
+            multival = opt.multival,
+            mapper = opt.mapper})
     end
 end
 
@@ -321,7 +357,12 @@ function builder:_add_items_from_toolchain(items, name, opt)
         values = platform.toolconfig(name)
     end
     if values then
-        table.insert(items, {name = name, values = table.wrap(values), check = opt.check, multival = opt.multival, mapper = opt.mapper})
+        table.insert(items, {
+            name = name,
+            values = table.wrap(values),
+            check = opt.check,
+            multival = opt.multival,
+            mapper = opt.mapper})
     end
 end
 
@@ -333,35 +374,47 @@ function builder:_add_items_from_option(items, name, opt)
         values = target:get(name)
     end
     if values then
-        table.insert(items, {name = name, values = table.wrap(values), check = opt.check, multival = opt.multival, mapper = opt.mapper})
+        table.insert(items, {
+            name = name,
+            values = table.wrap(values),
+            check = opt.check,
+            multival = opt.multival,
+            mapper = opt.mapper})
     end
 end
 
 -- add items from target
 function builder:_add_items_from_target(items, name, opt)
-    local values = {}
     local target = opt.target
     if target then
-        -- get flagvalues of target with given flagname
-        table.join2(values, target:get(name))
-
-        -- get flagvalues of the attached options and packages
-        table.join2(values, target:get_from_opts(name))
-        table.join2(values, target:get_from_pkgs(name))
-
-        -- get flagvalues (public or interface) of all dependent targets (contain packages/options)
-        table.join2(values, target:get_from_deps(name, {interface = true}))
-    end
-    if values and #values > 0 then
-        table.insert(items, {name = name, values = table.wrap(values), check = opt.check, multival = opt.multival, mapper = opt.mapper})
+        local result, sources = target:get_from(name, "*")
+        if result then
+            for idx, values in ipairs(result) do
+                local values = values
+                local source = sources[idx]
+                local extras = target:extraconf_from(name, source)
+                values = table.wrap(values)
+                if values and #values > 0 then
+                    table.insert(items, {
+                        name = name,
+                        values = values,
+                        extras = extras,
+                        check = opt.check,
+                        multival = opt.multival,
+                        mapper = opt.mapper})
+                end
+            end
+        end
     end
 end
 
 -- add flags from the language
-function builder:_add_flags_from_language(flags, target, getters)
+function builder:_add_flags_from_language(flags, opt)
+    opt = opt or {}
 
     -- get order named items
     local items = {}
+    local target = opt.target
     for _, flaginfo in ipairs(self:_nameflags()) do
 
         -- get flag info
@@ -391,37 +444,58 @@ function builder:_add_flags_from_language(flags, target, getters)
         -- map named flags to real flags
         local mapper = self:_tool()["nf_" .. apiname]
         if mapper then
-            local opt = {target = target, check = checkstate, multival = multival, mapper = mapper}
-            if getters then
-                local getter = getters[flagscope]
+            local opt_ = {target = target, check = checkstate, multival = multival, mapper = mapper}
+            if opt.getters then
+                local getter = opt.getters[flagscope]
                 if getter then
-                    opt.getter = getter
-                    self:_add_items_from_getter(items, flagname, opt)
+                    opt_.getter = getter
+                    self:_add_items_from_getter(items, flagname, opt_)
                 end
             elseif flagscope == "target" and target and target:type() == "target" then
-                self:_add_items_from_target(items, flagname, opt)
+                self:_add_items_from_target(items, flagname, opt_)
             elseif flagscope == "target" and target and target:type() == "option" then
-                self:_add_items_from_option(items, flagname, opt)
+                self:_add_items_from_option(items, flagname, opt_)
             elseif flagscope == "config" then
-                self:_add_items_from_config(items, flagname, opt)
+                self:_add_items_from_config(items, flagname, opt_)
             elseif flagscope == "toolchain" then
-                self:_add_items_from_toolchain(items, flagname, opt)
+                self:_add_items_from_toolchain(items, flagname, opt_)
             end
         end
+
     end
 
     -- sort links
     local kind = self:kind()
-    if (kind == "ld" or kind == "sh") and target and target:type() == "target" then
-        self:_sort_links_of_items(target, items)
+    if kind == "ld" or kind == "sh" then
+        local linkorders = table.wrap(opt.linkorders)
+        local linkgroups = table.wrap(opt.linkgroups)
+        if target and target:type() == "target" then
+            local values = target:get_from("linkorders", "*")
+            if values then
+                for _, value in ipairs(values) do
+                    table.join2(linkorders, value)
+                end
+            end
+            values = target:get_from("linkgroups", "*")
+            if values then
+                for _, value in ipairs(values) do
+                    table.join2(linkgroups, value)
+                end
+            end
+        end
+        if #linkorders > 0 or #linkgroups > 0 then
+            self:_sort_links_of_items(items, {linkorders = linkorders, linkgroups = linkgroups})
+        end
     end
 
     -- get flags from the items
     for _, item in ipairs(items) do
         local check = item.check
         local mapper = item.mapper
+        local extras = item.extras
         if item.multival then
-            local results = mapper(self:_tool(), item.values, target, self:_targetkind())
+            local extra = self:_extraconf(extras, item.values)
+            local results = mapper(self:_tool(), item.values, {target = target, targetkind = self:_targetkind(), extra = extra})
             for _, flag in ipairs(table.wrap(results)) do
                 if flag and flag ~= "" and (not check or self:has_flags(flag)) then
                     table.insert(flags, flag)
@@ -429,7 +503,8 @@ function builder:_add_flags_from_language(flags, target, getters)
             end
         else
             for _, flagvalue in ipairs(item.values) do
-                local flag = mapper(self:_tool(), flagvalue, target, self:_targetkind())
+                local extra = self:_extraconf(extras, flagvalue)
+                local flag = mapper(self:_tool(), flagvalue, {target = target, targetkind = self:_targetkind(), extra = extra})
                 if flag and flag ~= "" and (not check or self:has_flags(flag)) then
                     table.insert(flags, flag)
                 end
@@ -439,14 +514,15 @@ function builder:_add_flags_from_language(flags, target, getters)
 end
 
 -- sort links of items
-function builder:_sort_links_of_items(target, items)
+function builder:_sort_links_of_items(items, opt)
+    opt = opt or {}
     local sortlinks = false
     local makegroups = false
-    local linkorders = table.wrap(target:get("linkorders"))
+    local linkorders = table.wrap(opt.linkorders)
     if #linkorders > 0 then
         sortlinks = true
     end
-    local linkgroups = table.wrap(target:get("linkgroups"))
+    local linkgroups = table.wrap(opt.linkgroups)
     local linkgroups_set = hashset.new()
     if #linkgroups > 0 then
         makegroups = true
@@ -460,34 +536,77 @@ function builder:_sort_links_of_items(target, items)
     -- get all links
     local links = {}
     local linkgroups_map = {}
+    local extras_map = {}
     local link_mapper
     local framework_mapper
     local linkgroup_mapper
     if sortlinks or makegroups then
+        local linkitems = {}
         table.remove_if(items, function (_, item)
             local name = item.name
             local removed = false
+            if name == "links" or name == "syslinks" then
+                link_mapper = item.mapper
+                removed = true
+                table.insert(linkitems, item)
+            elseif name == "frameworks" then
+                framework_mapper = item.mapper
+                removed = true
+                table.insert(linkitems, item)
+            elseif name == "linkgroups" then
+                linkgroup_mapper = item.mapper
+                removed = true
+                table.insert(linkitems, item)
+            end
+            return removed
+        end)
+
+        -- @note table.remove_if will traverse backwards,
+        -- we need to fix the initial link order first to make sure the syslinks are in the correct order
+        linkitems = table.reverse(linkitems)
+        for _, item in ipairs(linkitems) do
+            local name = item.name
             for _, value in ipairs(item.values) do
                 if name == "links" or name == "syslinks" then
                     if not linkgroups_set:has(value) then
                         table.insert(links, value)
                     end
-                    link_mapper = item.mapper
-                    removed = true
                 elseif name == "frameworks" then
                     table.insert(links, "framework::" .. value)
-                    framework_mapper = item.mapper
-                    removed = true
                 elseif name == "linkgroups" then
-                    local key = target:extraconf("linkgroups", value, "name") or tostring(value)
+                    local extras = item.extras
+                    local extra = self:_extraconf(extras, value)
+                    local key = extra and extra.name or tostring(value)
                     table.insert(links, "linkgroup::" .. key)
-                    linkgroups_map[key] = value
-                    linkgroup_mapper = item.mapper
-                    removed = true
+                    extras_map[key] = extras
+                    local oldvalue = linkgroups_map[key]
+                    if oldvalue == nil then
+                        linkgroups_map[key] = value
+                    else
+                        -- merge linkgroups if multiple groups have same group name
+                        -- @see https://github.com/xmake-io/xmake/issues/5806
+                        local oldvalue_wrap_unlock = table.clone(oldvalue)
+                        table.wrap_unlock(oldvalue_wrap_unlock)
+                        local value_wrap_unlock = table.clone(value)
+                        table.wrap_unlock(value_wrap_unlock)
+                        local newvalue = table.join(oldvalue_wrap_unlock, value_wrap_unlock)
+                        table.wrap_lock(newvalue)
+                        linkgroups_map[key] = newvalue
+
+                        -- merge linkgroups extras
+                        local extra_merged = {}
+                        local group_name = extra.name
+                        for k, v in pairs(extras) do
+                            if v.name == group_name then
+                                table.join2(extra_merged, v)
+                            end
+                        end
+                        local newgroup_name = table.concat(newvalue, "_")
+                        extras[newgroup_name] = extra_merged
+                    end
                 end
             end
-            return removed
-        end)
+        end
         links = table.reverse_unique(links)
     end
 
@@ -505,12 +624,24 @@ function builder:_sort_links_of_items(target, items)
         end
         -- we need remove cycle in original links
         -- e.g.
+        --
+        -- case1:
         -- original_deps: a -> b -> c -> d -> e
         -- new deps: e -> b
-        -- graph: a -> b -> c -> d    e  (remove d -> e)
-        --            /\              |
-        --             |              |
+        -- graph: a -> b -> c -> d    e  (remove d -> e, add d -> nil)
+        --            /|\             |
         --              --------------
+        --
+        -- case2:
+        -- original_deps: a -> b -> c -> d -> e
+        -- new deps: b -> a
+        --
+        --         ---------
+        --        |        \|/
+        -- graph: a    b -> c -> d -> e  (remove a -> b, add a -> c)
+        --       /|\   |
+        --         ----
+        --
         local function remove_cycle_in_original_deps(f, t)
             local k
             local v = t
@@ -522,7 +653,11 @@ function builder:_sort_links_of_items(target, items)
                 end
             end
             if v == f and k ~= nil then
-                original_deps[k] = nil
+                -- break the original from node, link to next node
+                -- e.g.
+                -- case1: d -x-> e, d -> nil, k: d, f: e
+                -- case2: a -x-> b, a -> c, k: a, f: b
+                original_deps[k] = original_deps[f]
             end
         end
         local links_set = hashset.from(links)
@@ -543,24 +678,29 @@ function builder:_sort_links_of_items(target, items)
             gh:add_edge(k, v)
         end
         if not gh:empty() then
-            local cycle = gh:find_cycle()
-            if cycle then
-                utils.warning("cycle links found in add_linkorders(): %s", table.concat(cycle, " -> "))
+            local has_cycle
+            links, has_cycle = gh:topo_sort()
+            if has_cycle then
+                local cycle = gh:find_cycle()
+                if cycle then
+                    utils.warning("cycle links found in add_linkorders(): %s", table.concat(cycle, " -> "))
+                end
             end
-            links = gh:topological_sort()
         end
     end
 
     -- re-generate links to items list
     if sortlinks or makegroups then
         for _, link in ipairs(links) do
+            local link = link
             if link:startswith("framework::") then
                 link = link:sub(12)
                 table.insert(items, {name = "frameworks", values = table.wrap(link), check = false, multival = false, mapper = framework_mapper})
             elseif link:startswith("linkgroup::") then
                 local key = link:sub(12)
-                local value = linkgroups_map[key]
-                table.insert(items, {name = "linkgroups", values = table.wrap(value), check = false, multival = false, mapper = linkgroup_mapper})
+                local values = linkgroups_map[key]
+                local extras = extras_map[key]
+                table.insert(items, {name = "linkgroups", values = table.wrap(values), extras = extras, check = false, multival = false, mapper = linkgroup_mapper})
             else
                 table.insert(items, {name = "links", values = table.wrap(link), check = false, multival = false, mapper = link_mapper})
             end
@@ -615,56 +755,110 @@ function builder:_preprocess_flags(flags)
     return results
 end
 
--- get the target
+-- get the associated target
+--
+-- @return      the target instance
+--
 function builder:target()
     return self._TARGET
 end
 
--- get tool name
+-- get the tool name, e.g. "gcc", "clang", "cl"
+--
+-- @return      the tool name string
+--
 function builder:name()
     return self:_tool():name()
 end
 
--- get tool kind
+-- get the tool kind, e.g. "cc", "cxx", "ld", "ar"
+--
+-- @return      the tool kind string
+--
 function builder:kind()
     return self:_tool():kind()
 end
 
--- get tool program
+-- get the tool program path
+--
+-- @return      the program path string
+--
 function builder:program()
     return self:_tool():program()
 end
 
--- get toolchain of this tool
+-- get the toolchain of this tool
+--
+-- @return      the toolchain instance
+--
 function builder:toolchain()
     return self:_tool():toolchain()
 end
 
--- get the run environments
+-- get the run environments for this tool
+--
+-- @return      the environments table
+--
 function builder:runenvs()
     return self:_tool():runenvs()
 end
 
 -- get properties of the tool
+--
+-- @param name  the property name
+-- @return      the property value
+--
 function builder:get(name)
     return self:_tool():get(name)
 end
 
--- has flags?
+-- check if the tool supports the given flags
+--
+-- @param flags     the flags to check
+-- @param flagkind  the flag kind (optional)
+-- @param opt       the options (optional)
+-- @return          true if supported
+--
 function builder:has_flags(flags, flagkind, opt)
     return self:_tool():has_flags(flags, flagkind, opt)
 end
 
--- map flags from name and values, e.g. linkdirs, links, defines
+-- map abstract flags to tool-specific flags
+--
+-- @param name      the flag category, e.g. "links", "defines", "includedirs"
+-- @param values    the values to map
+-- @param opt       the options (optional)
+-- @return          the mapped flags array
+--
 function builder:map_flags(name, values, opt)
     local flags  = {}
     local mapper = self:_tool()["nf_" .. name]
+    local multival = false
+    if name:endswith("s") then
+        multival = true
+    elseif not mapper then
+        mapper = self:_tool()["nf_" .. name .. "s"]
+        if mapper then
+            multival = true
+        end
+    end
     if mapper then
         opt = opt or {}
-        for _, value in ipairs(table.wrap(values)) do
-            local flag = mapper(self:_tool(), value, opt.target, opt.targetkind)
-            if flag and flag ~= "" and (not opt.check or self:has_flags(flag)) then
-                table.join2(flags, flag)
+        if multival then
+            local extra = self:_extraconf(opt.extras, values)
+            local results = mapper(self:_tool(), values, {target = opt.target, targetkind = opt.targetkind, extra = extra})
+            for _, flag in ipairs(table.wrap(results)) do
+                if flag and flag ~= "" and (not opt.check or self:has_flags(flag)) then
+                    table.insert(flags, flag)
+                end
+            end
+        else
+            for _, value in ipairs(table.wrap(values)) do
+                local extra = self:_extraconf(opt.extras, value)
+                local flag = mapper(self:_tool(), value, {target = opt.target, targetkind = opt.targetkind, extra = extra})
+                if flag and flag ~= "" and (not opt.check or self:has_flags(flag)) then
+                    table.join2(flags, flag)
+                end
             end
         end
     end

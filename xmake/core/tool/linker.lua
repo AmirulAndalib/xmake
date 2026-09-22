@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        linker.lua
@@ -60,13 +60,10 @@ end
 
 -- add flags from the linker
 function linker:_add_flags_from_linker(flags)
-
-    -- add flags
     local toolkind = self:kind()
     for _, flagkind in ipairs(self:_flagkinds()) do
-
         -- attempt to add special lanugage flags first, e.g. gcldflags, dcarflags
-        table.join2(flags, self:get(toolkind .. 'flags') or self:get(flagkind))
+        table.join2(flags, self:get(toolkind .. "flags") or self:get(flagkind))
     end
 end
 
@@ -91,8 +88,18 @@ function linker._load_tool(targetkind, sourcekinds, target)
             program, toolname, toolchain_info = target:tool(_linkerinfo.linkerkind)
         end
 
+        -- is host?
+        local is_host
+        if target and target.is_host then
+            is_host = target:is_host()
+        end
+
         -- load the linker tool from the linker kind (with cache)
-        linkertool, errors = tool.load(_linkerinfo.linkerkind, {program = program, toolname = toolname, toolchain_info = toolchain_info})
+        linkertool, errors = tool.load(_linkerinfo.linkerkind, {
+            host = is_host,
+            program = program,
+            toolname = toolname,
+            toolchain_info = toolchain_info})
         if linkertool then
             linkerinfo = _linkerinfo
             linkerinfo.program = program
@@ -108,6 +115,12 @@ function linker._load_tool(targetkind, sourcekinds, target)
 end
 
 -- load the linker from the given target kind
+--
+-- @param targetkind    the target kind, e.g. "binary", "shared", "static"
+-- @param sourcekinds   the source kinds table, e.g. {"cc", "cxx"}
+-- @param target        the target instance
+-- @return              the linker instance, or nil and error info
+--
 function linker.load(targetkind, sourcekinds, target)
     assert(sourcekinds)
 
@@ -123,7 +136,8 @@ function linker.load(targetkind, sourcekinds, target)
         end
     end
 
-    -- load linker tool first (with cache)
+    -- load linker tool first, we need to get the correct plat/arch
+    -- @NOTE We cannot cache the tool, otherwise it may cause duplicate toolchain flags to be added
     local linkertool, linkerinfo_or_errors = linker._load_tool(targetkind, sourcekinds, target)
     if not linkertool then
         return nil, linkerinfo_or_errors
@@ -136,6 +150,10 @@ function linker.load(targetkind, sourcekinds, target)
     local plat = linkertool:plat() or config.plat() or os.host()
     local arch = linkertool:arch() or config.arch() or os.arch()
     local cachekey = targetkind .. "_" .. linkerinfo.linkerkind .. (linkerinfo.program or "") .. plat .. arch
+    cachekey = cachekey .. table.concat(sourcekinds, "") -- @see https://github.com/xmake-io/xmake/issues/5360
+    if target then
+        cachekey = cachekey .. tostring(target)
+    end
 
     -- get it directly from cache dirst
     builder._INSTANCES = builder._INSTANCES or {}
@@ -207,7 +225,7 @@ function linker.load(targetkind, sourcekinds, target)
 
     -- we need to load it at the end because in tool.load().
     -- because we may need to call has_flags, which requires the full platform toolchain flags
-    local ok, errors = linkertool:_load_once()
+    local ok, errors = instance:_tool():_load_once()
     if not ok then
         return nil, errors
     end
@@ -215,20 +233,28 @@ function linker.load(targetkind, sourcekinds, target)
 end
 
 -- link the target file
+--
+-- @param objectfiles   the object file paths
+-- @param targetfile    the target file path
+-- @param opt           the options, e.g. {target = target, linkflags = {}}
+--
 function linker:link(objectfiles, targetfile, opt)
     opt = opt or {}
     local linkflags = opt.linkflags or self:linkflags(opt)
-    opt = table.copy(opt)
-    opt.target = self:target()
     profiler:enter(self:name(), "link", targetfile)
-    local ok, errors = sandbox.load(self:_tool().link, self:_tool(), table.wrap(objectfiles), self:_targetkind(), targetfile, linkflags, opt)
+    local ok, errors = sandbox.call(self:_tool().link, self:_tool(),
+        table.wrap(objectfiles), self:_targetkind(), targetfile, linkflags,
+        table.join(opt, {target = self:target()}))
     profiler:leave(self:name(), "link", targetfile)
     return ok, errors
 end
 
 -- get the link arguments list
 function linker:linkargv(objectfiles, targetfile, opt)
-    return self:_tool():linkargv(table.wrap(objectfiles), self:_targetkind(), targetfile, opt.linkflags or self:linkflags(opt), opt)
+    opt = opt or {}
+    return self:_tool():linkargv(table.wrap(objectfiles),
+        self:_targetkind(), targetfile, opt.linkflags or self:linkflags(opt),
+        table.join(opt, {target = self:target()}))
 end
 
 -- get the link command
@@ -242,14 +268,10 @@ end
 --              e.g. {target = ..., targetkind = "static", configs = {ldflags = "", links = "", linkdirs = "", ...}}
 --
 function linker:linkflags(opt)
-
-    -- init options
     opt = opt or {}
 
     -- get target
-    local target = opt.target
-
-    -- get target kind
+    local target = opt.target or self:target()
     local targetkind = opt.targetkind
     if not targetkind and target and target:type() == "target" then
         targetkind = target:kind()
@@ -266,9 +288,6 @@ function linker:linkflags(opt)
     self:_add_flags_from_linker(flags)
     self:_add_flags_from_toolchains(flags, targetkind, target)
 
-    -- add flags from user configuration
-    self:_add_flags_from_config(flags)
-
     -- add flags from target
     self:_add_flags_from_target(flags, target)
 
@@ -277,6 +296,9 @@ function linker:linkflags(opt)
     if configs then
         self:_add_flags_from_argument(flags, target, configs)
     end
+
+    -- add flags from user configuration
+    self:_add_flags_from_config(flags)
 
     -- preprocess flags
     return self:_preprocess_flags(flags)

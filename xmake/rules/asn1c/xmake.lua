@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -31,18 +31,22 @@ rule("asn1c")
         batchcmds:show_progress(opt.progress, "${color.build.object}compiling.asn1c %s", sourcefile_asn1)
         batchcmds:mkdir(sourcefile_dir)
         batchcmds:vrunv(asn1c.program, {path(sourcefile_asn1):absolute()}, {curdir = sourcefile_dir})
-
-        -- compile *.c
-        for _, sourcefile in ipairs(os.files(path.join(sourcefile_dir, "*.c|converter-*.c"))) do
-            local objectfile = target:objectfile(sourcefile)
-            batchcmds:compile(sourcefile, objectfile, {configs = {includedirs = sourcefile_dir}})
-            table.insert(target:objectfiles(), objectfile)
-        end
-
-        -- add includedirs
-        target:add("includedirs", sourcefile_dir)
-
-        -- add deps
         batchcmds:add_depfiles(sourcefile_asn1)
         batchcmds:set_depcache(target:dependfile(sourcefile_asn1))
+
+        -- add sysincludedirs
+        target:add("sysincludedirs", sourcefile_dir)
+    end)
+
+    on_buildcmd_file(function (target, batchcmds, sourcefile_asn1, opt)
+
+        -- compile *.c
+        local sourcefile_dir = path.join(target:autogendir(), "rules", "asn1c")
+        for _, sourcefile in ipairs(os.files(path.join(sourcefile_dir, "*.c|converter-*.c"))) do
+            local objectfile = target:objectfile(sourcefile)
+            batchcmds:compile(sourcefile, objectfile, {configs = {sysincludedirs = sourcefile_dir}})
+            table.insert(target:objectfiles(), objectfile)
+            batchcmds:add_depfiles(sourcefile)
+        end
+        batchcmds:set_depcache(target:dependfile(sourcefile_asn1 .. ".c"))
     end)

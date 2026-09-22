@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        cmake.lua
@@ -28,13 +28,13 @@ import("lib.detect.find_tool")
 import("private.utils.toolchain", {alias = "toolchain_utils"})
 
 -- get build directory
-function _get_buildir()
-    return config.buildir() or "build"
+function _get_builddir()
+    return config.builddir() or "build"
 end
 
 -- get artifacts directory
 function _get_artifacts_dir()
-    return path.absolute(path.join(_get_buildir(), "artifacts"))
+    return path.absolute(path.join(_get_builddir(), "artifacts"))
 end
 
 -- get the build environment
@@ -47,6 +47,17 @@ function _get_buildenv(key)
         value = platform.tool(key, config.plat())
     end
     return value
+end
+
+-- get vs arch
+function _get_vsarch()
+    local arch = get_config("arch") or os.arch()
+    if arch == "x86" or arch == "i386" then return "Win32" end
+    if arch == "x86_64" then return "x64" end
+    if arch == "arm64ec" then return "ARM64EC" end
+    if arch:startswith("arm64") then return "ARM64" end
+    if arch:startswith("arm") then return "ARM" end
+    return arch
 end
 
 -- get msvc
@@ -101,19 +112,70 @@ function _is_cross_compilation()
     return false
 end
 
+function _get_cmake_system_processor()
+    -- on Windows, CMAKE_SYSTEM_PROCESSOR comes from PROCESSOR_ARCHITECTURE
+    -- on other systems it's the output of uname -m
+    if is_plat("windows") then
+        local archs = {
+            x86 = "x86",
+            x64 = "AMD64",
+            x86_64 = "AMD64",
+            arm = "ARM",
+            arm64 = "ARM64",
+            arm64ec = "ARM64EC"
+        }
+        return archs[os.subarch()] or os.subarch()
+    end
+    return os.subarch()
+end
+
+-- insert configs from envs
+function _insert_configs_from_envs(configs, envs, opt)
+    opt = opt or {}
+    for k, v in pairs(envs) do
+        table.insert(configs, "-D" .. k .. "=" .. v)
+    end
+end
+
 -- get configs for windows
 function _get_configs_for_windows(configs, opt)
+    local envs = {}
     opt = opt or {}
     local cmake_generator = opt.cmake_generator
-    if cmake_generator and not cmake_generator:find("Visual Studio", 1, true) then
-        return
+    if not cmake_generator or cmake_generator:find("Visual Studio", 1, true) then
+        table.insert(configs, "-A")
+        if is_arch("x86", "i386") then
+            table.insert(configs, "Win32")
+        elseif is_arch("arm64") then
+            table.insert(configs, "ARM64")
+        elseif is_arch("arm64ec") then
+            table.insert(configs, "ARM64EC")
+        elseif is_arch("arm.*") then
+            table.insert(configs, "ARM")
+        else
+            table.insert(configs, "x64")
+        end
+
+        local vs_toolset = config.get("vs_toolset")
+        if vs_toolset then
+            vs_toolset = toolchain_utils.get_vs_toolset_ver(vs_toolset)
+            if vs_toolset then
+                envs.CMAKE_GENERATOR_TOOLSET = vs_toolset
+            end
+        end
     end
-    table.insert(configs, "-A")
-    if is_arch("x86", "i386") then
-        table.insert(configs, "Win32")
-    else
-        table.insert(configs, "x64")
+
+    -- use clang/clang-cl
+    local cc = _get_buildenv("cc")
+    if cc and path.basename(cc):find("clang", 1, true) then
+        envs.CMAKE_C_COMPILER = _translate_bin_path(cc)
     end
+    local cxx = _get_buildenv("cxx")
+    if cxx and path.basename(cxx):find("clang", 1, true) then
+        envs.CMAKE_CXX_COMPILER = _translate_bin_path(cxx)
+    end
+
+    _insert_configs_from_envs(configs, envs, opt)
 end
 
 -- get configs for android
@@ -134,6 +196,13 @@ function _get_configs_for_android(configs)
         if ndk_cxxstl then
             table.insert(configs, "-DANDROID_STL=" .. ndk_cxxstl)
         end
+
+        -- avoid find and add system include/library path
+        -- @see https://github.com/xmake-io/xmake/issues/2037
+        table.insert(configs, "-DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH")
+        table.insert(configs, "-DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH")
+        table.insert(configs, "-DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH")
+        table.insert(configs, "-DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER")
     end
 end
 
@@ -159,8 +228,9 @@ function _get_configs_for_appleos(configs)
         if is_arch("x86_64", "i386") then
             envs.CMAKE_OSX_SYSROOT = "iphonesimulator"
         end
-    elseif is_plat("macosx") then
+    elseif _is_cross_compilation() then
         envs.CMAKE_SYSTEM_NAME = "Darwin"
+        envs.CMAKE_SYSTEM_PROCESSOR = _get_cmake_system_processor()
     end
     envs.CMAKE_FIND_ROOT_PATH_MODE_LIBRARY   = "BOTH"
     envs.CMAKE_FIND_ROOT_PATH_MODE_INCLUDE   = "BOTH"
@@ -192,11 +262,13 @@ function _get_configs_for_mingw(configs)
     envs.CMAKE_EXE_LINKER_FLAGS    = table.concat(table.wrap(_get_buildenv("ldflags")), ' ')
     envs.CMAKE_SHARED_LINKER_FLAGS = table.concat(table.wrap(_get_buildenv("shflags")), ' ')
     envs.CMAKE_SYSTEM_NAME         = "Windows"
+    envs.CMAKE_SYSTEM_PROCESSOR    = _get_cmake_system_processor()
     -- avoid find and add system include/library path
     envs.CMAKE_FIND_ROOT_PATH      = sdkdir
     envs.CMAKE_SYSROOT             = sdkdir
-    envs.CMAKE_FIND_ROOT_PATH_MODE_LIBRARY = "ONLY"
-    envs.CMAKE_FIND_ROOT_PATH_MODE_INCLUDE = "ONLY"
+    envs.CMAKE_FIND_ROOT_PATH_MODE_PACKAGE = "BOTH"
+    envs.CMAKE_FIND_ROOT_PATH_MODE_LIBRARY = "BOTH"
+    envs.CMAKE_FIND_ROOT_PATH_MODE_INCLUDE = "BOTH"
     envs.CMAKE_FIND_ROOT_PATH_MODE_PROGRAM = "NEVER"
     -- avoid add -isysroot on macOS
     envs.CMAKE_OSX_SYSROOT = ""
@@ -209,6 +281,10 @@ end
 
 -- get configs for wasm
 function _get_configs_for_wasm(configs)
+    if config.get("toolchain") == "wasi" then
+        _get_configs_for_cross(configs)
+        return
+    end
     local emsdk = find_emsdk()
     assert(emsdk and emsdk.emscripten, "emscripten not found!")
     local emscripten_cmakefile = find_file("Emscripten.cmake", path.join(emsdk.emscripten, "cmake/Modules/Platform"))
@@ -260,8 +336,9 @@ function _get_configs_for_cross(configs)
     -- avoid find and add system include/library path
     envs.CMAKE_FIND_ROOT_PATH      = sdkdir
     envs.CMAKE_SYSROOT             = sdkdir
-    envs.CMAKE_FIND_ROOT_PATH_MODE_LIBRARY = "ONLY"
-    envs.CMAKE_FIND_ROOT_PATH_MODE_INCLUDE = "ONLY"
+    envs.CMAKE_FIND_ROOT_PATH_MODE_PACKAGE = "BOTH"
+    envs.CMAKE_FIND_ROOT_PATH_MODE_LIBRARY = "BOTH"
+    envs.CMAKE_FIND_ROOT_PATH_MODE_INCLUDE = "BOTH"
     envs.CMAKE_FIND_ROOT_PATH_MODE_PROGRAM = "NEVER"
     -- avoid add -isysroot on macOS
     envs.CMAKE_OSX_SYSROOT = ""
@@ -312,8 +389,8 @@ function _get_configs_for_host_toolchain(configs)
     envs.CMAKE_SHARED_LINKER_FLAGS = table.concat(table.wrap(_get_buildenv("shflags")), ' ')
     -- we don't need to set it as cross compilation if we just pass toolchain
     -- https://github.com/xmake-io/xmake/issues/2170
-    if not is_plat(os.subhost()) then
-        envs.CMAKE_SYSTEM_NAME     = "Linux"
+    if _is_cross_compilation() then
+        envs.CMAKE_SYSTEM_NAME = "Linux"
     end
     for k, v in pairs(envs) do
         table.insert(configs, "-D" .. k .. "=" .. v)
@@ -322,20 +399,8 @@ end
 
 -- get cmake generator for msvc
 function _get_cmake_generator_for_msvc()
-    local vsvers =
-    {
-        ["2022"] = "17",
-        ["2019"] = "16",
-        ["2017"] = "15",
-        ["2015"] = "14",
-        ["2013"] = "12",
-        ["2012"] = "11",
-        ["2010"] = "10",
-        ["2008"] = "9"
-    }
     local vs = _get_msvc():config("vs") or config.get("vs")
-    assert(vsvers[vs], "Unknown Visual Studio version: '" .. tostring(vs) .. "' set in project.")
-    return "Visual Studio " .. vsvers[vs] .. " " .. vs
+    return "Visual Studio " .. toolchain_utils.get_vsver(vs) .. " " .. vs
 end
 
 -- get configs for cmake generator
@@ -427,8 +492,10 @@ end
 function _build_for_msvc(opt)
     local runenvs = _get_msvc_runenvs()
     local msbuild = find_tool("msbuild", {envs = runenvs})
-    local slnfile = assert(find_file("*.sln", os.curdir()), "*.sln file not found!")
-    os.vexecv(msbuild.program, {slnfile, "-nologo", "-t:Build", "-m", "-p:Configuration=" .. (is_mode("debug") and "Debug" or "Release"), "-p:Platform=" .. (is_arch("x64") and "x64" or "Win32")}, {envs = runenvs})
+    local slnfile = assert(find_file("*.sln", os.curdir()) or find_file("*.slnx", os.curdir()), "*.sln/slnx file not found!")
+    os.vexecv(msbuild.program, {slnfile, "-nologo", "-t:Build", "-m",
+        "-p:Configuration=" .. (is_mode("debug") and "Debug" or "Release"),
+        "-p:Platform=" .. _get_vsarch()}, {envs = runenvs})
     local projfile = os.isfile("INSTALL.vcxproj") and "INSTALL.vcxproj" or "INSTALL.vcproj"
     if os.isfile(projfile) then
         os.vexecv(msbuild.program, {projfile, "/property:configuration=" .. (is_mode("debug") and "Debug" or "Release")}, {envs = runenvs})
@@ -474,11 +541,11 @@ end
 
 -- do clean
 function clean()
-    local buildir = _get_buildir()
-    if os.isdir(buildir) then
-        local configfile = find_file("[mM]akefile", buildir) or (is_plat("windows") and find_file("*.sln", buildir))
+    local builddir = _get_builddir()
+    if os.isdir(builddir) then
+        local configfile = find_file("[mM]akefile", builddir) or (is_plat("windows") and find_file("*.sln", builddir))
         if configfile then
-            local oldir = os.cd(buildir)
+            local oldir = os.cd(builddir)
             if is_plat("windows") then
                 local runenvs = _get_msvc_runenvs()
                 local msbuild = find_tool("msbuild", {envs = runenvs})
@@ -503,7 +570,7 @@ function build()
     if not os.isdir(artifacts_dir) then
         os.mkdir(artifacts_dir)
     end
-    os.cd(_get_buildir())
+    os.cd(_get_builddir())
     opt.artifacts_dir = artifacts_dir
 
     -- exists $CMAKE_GENERATOR? use it

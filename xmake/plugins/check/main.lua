@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        main.lua
@@ -53,6 +53,13 @@ function _show_info(name)
     end
 end
 
+-- run a single checker
+function _run_checker(name, arguments)
+    checker.start(name)
+    import("private.check.checkers." .. name, {anonymous = true})(arguments)
+    checker.stop(name)
+end
+
 -- do check
 function _check(group_or_name, arguments)
 
@@ -80,7 +87,7 @@ function _check(group_or_name, arguments)
         if showstats == nil and info and info.showstats ~= nil then
             showstats = info.showstats
         end
-        import("private.check.checkers." .. name, {anonymous = true})(arguments)
+        _run_checker(name, arguments)
     end
     if showstats ~= false then
         checker.show_stats()

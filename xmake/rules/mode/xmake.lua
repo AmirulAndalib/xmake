@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -34,6 +34,9 @@ rule("mode.debug")
             if not target:get("optimize") then
                 target:set("optimize", "none")
             end
+
+            -- #5777: '--device-debug (-G)' overrides '--generate-line-info (-lineinfo)' in nvcc
+            target:add("cuflags", "-G")
         end
     end)
 
@@ -59,12 +62,13 @@ rule("mode.release")
             end
 
             -- strip all symbols
-            if not target:get("strip") then
+            if target:policy("build.release.strip") and not target:get("strip") then
                 target:set("strip", "all")
             end
 
             -- enable NDEBUG macros to disables standard-C assertions
             target:add("cxflags", "-DNDEBUG")
+            target:add("cuflags", "-DNDEBUG")
         end
     end)
 
@@ -90,12 +94,16 @@ rule("mode.releasedbg")
             end
 
             -- strip all symbols, but it will generate debug symbol file because debug/symbols is setted
-            if not target:get("strip") then
+            if target:policy("build.release.strip") and not target:get("strip") then
                 target:set("strip", "all")
             end
 
             -- enable NDEBUG macros to disables standard-C assertions
             target:add("cxflags", "-DNDEBUG")
+            target:add("cuflags", "-DNDEBUG")
+
+            -- #5777: '--device-debug (-G)' overrides '--generate-line-info (-lineinfo)' in nvcc
+            target:add("cuflags", "-lineinfo")
         end
     end)
 
@@ -123,6 +131,7 @@ rule("mode.minsizerel")
 
             -- enable NDEBUG macros to disables standard-C assertions
             target:add("cxflags", "-DNDEBUG")
+            target:add("cuflags", "-DNDEBUG")
         end
     end)
 
@@ -147,13 +156,22 @@ rule("mode.profile")
                 end
             end
 
-            -- enable gprof
-            target:add("cxflags", "-pg")
-            target:add("mxflags", "-pg")
-            target:add("ldflags", "-pg")
+            if target:is_plat("windows") then
+                -- enable vs profile
+                target:add("ldflags", "/profile")
+            else
+                -- enable gprof
+                target:add("cxflags", "-pg")
+                target:add("mxflags", "-pg")
+                target:add("ldflags", "-pg")
+            end
 
             -- enable NDEBUG macros to disables standard-C assertions
             target:add("cxflags", "-DNDEBUG")
+            target:add("cuflags", "-DNDEBUG")
+
+            -- #5777: '--device-debug (-G)' overrides '--generate-line-info (-lineinfo)' in nvcc
+            target:add("cuflags", "-lineinfo")
         end
     end)
 
@@ -179,6 +197,10 @@ rule("mode.coverage")
             target:add("mxflags", "--coverage")
             target:add("ldflags", "--coverage")
             target:add("shflags", "--coverage")
+
+            -- disable build cache, it does not support to cache coverage files
+            -- https://github.com/xmake-io/xmake/issues/6664
+            target:set("policy", "build.ccache", false)
         end
     end)
 

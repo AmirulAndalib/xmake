@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        info.lua
@@ -21,6 +21,7 @@
 -- imports
 import("core.base.task")
 import("core.base.option")
+import("core.base.json")
 import("core.base.hashset")
 import("core.project.project")
 import("core.package.package", {alias = "core_package"})
@@ -63,6 +64,386 @@ function _info(instance)
     return info
 end
 
+-- collect package info as table for json output
+function _collect_package_info(instance)
+    local info = {}
+    local requireinfo = instance:requireinfo() or {}
+    info.require = requireinfo.originstr
+    info.description = instance:get("description")
+    info.version = instance:version_str()
+    info.license = instance:get("license")
+
+    -- urls
+    local urls = instance:urls()
+    if urls and #urls > 0 then
+        info.urls = {}
+        json.mark_as_array(info.urls)
+        local schemes = instance:schemes_orderlist()
+        if schemes then
+            for _, scheme in ipairs(schemes) do
+                if not scheme:is_precompiled() then
+                    local surls = scheme:urls()
+                    if surls and #surls > 0 then
+                        local scheme_name = scheme:is_default() and "default" or scheme:name()
+                        local scheme_info = {name = scheme_name, urls = {}}
+                        json.mark_as_array(scheme_info.urls)
+                        for _, url in ipairs(surls) do
+                            local url_entry = {url = filter.handle(url, instance)}
+                            if git.asgiturl(url) then
+                                local url_alias = scheme:url_alias(url)
+                                url_entry.revision = scheme:revision(url_alias) or scheme:tag() or scheme:version_str()
+                            else
+                                url_entry.sourcehash = scheme:sourcehash(scheme:url_alias(url))
+                            end
+                            table.insert(scheme_info.urls, url_entry)
+                        end
+                        table.insert(info.urls, scheme_info)
+                    end
+                end
+            end
+        end
+    end
+
+    -- repository
+    local repo = instance:repo()
+    if repo then
+        info.repo = {name = repo:name(), url = repo:url(), branch = repo:branch()}
+    end
+
+    -- deps
+    local deps = instance:orderdeps()
+    if deps and #deps > 0 then
+        info.deps = {}
+        json.mark_as_array(info.deps)
+        for _, dep in ipairs(deps) do
+            local dep_requireinfo = dep:requireinfo() or {}
+            table.insert(info.deps, dep_requireinfo.originstr)
+        end
+    end
+
+    info.cachedir = instance:cachedir()
+    info.installdir = instance:installdir()
+    info.searchdirs = table.wrap(core_package.searchdirs())
+    json.mark_as_array(info.searchdirs)
+
+    -- fetch info
+    local fetchinfo = instance:fetch()
+    if fetchinfo then
+        info.fetchinfo = {}
+        for name, finfo in pairs(fetchinfo) do
+            info.fetchinfo[name] = table.wrap(table.unwrap(finfo))
+        end
+    end
+
+    -- platforms
+    local platforms = {}
+    local on_install = instance:get("install")
+    if type(on_install) == "table" then
+        for plat, _ in pairs(on_install) do
+            table.insert(platforms, plat)
+        end
+    else
+        table.insert(platforms, "all")
+    end
+    json.mark_as_array(platforms)
+    info.platforms = platforms
+
+    -- requires
+    info.requires = {plat = instance:plat(), arch = instance:arch()}
+    local configs_required = instance:configs()
+    if configs_required then
+        info.requires.configs = configs_required
+    end
+
+    -- user configs
+    local configs_defined = instance:get("configs")
+    if configs_defined then
+        local configs = {}
+        local builtin_configs = {}
+        for _, conf in ipairs(configs_defined) do
+            local configs_extra = instance:extraconf("configs", conf)
+            if configs_extra then
+                local entry = {name = conf}
+                if configs_extra.description then
+                    entry.description = configs_extra.description
+                end
+                if configs_extra.default ~= nil then
+                    entry.default = configs_extra.default
+                end
+                if configs_extra.type then
+                    entry.type = configs_extra.type
+                end
+                if configs_extra.values then
+                    entry.values = configs_extra.values
+                end
+                if configs_extra.readonly then
+                    entry.readonly = true
+                end
+                if configs_extra.builtin then
+                    table.insert(builtin_configs, entry)
+                else
+                    table.insert(configs, entry)
+                end
+            end
+        end
+        if #configs > 0 then
+            json.mark_as_array(configs)
+            info.configs = configs
+        end
+        if #builtin_configs > 0 then
+            json.mark_as_array(builtin_configs)
+            info.builtin_configs = builtin_configs
+        end
+    end
+
+    -- components
+    local components = instance:get("components")
+    if components then
+        info.components = {}
+        json.mark_as_array(info.components)
+        for _, comp in ipairs(components) do
+            local comp_info = {name = comp}
+            local plaindeps = instance:extraconf("components", comp, "deps")
+            if plaindeps then
+                comp_info.deps = table.wrap(plaindeps)
+                json.mark_as_array(comp_info.deps)
+            end
+            table.insert(info.components, comp_info)
+        end
+    end
+
+    -- references
+    local references = instance:references()
+    if references then
+        info.references = {}
+        json.mark_as_array(info.references)
+        for projectdir, refdate in pairs(references) do
+            table.insert(info.references, {dir = projectdir, date = refdate, exists = os.isdir(projectdir)})
+        end
+    end
+    return info
+end
+
+-- print the given package info
+function _print_package_info(instance)
+
+    -- show package name
+    local requireinfo = instance:requireinfo() or {}
+    cprint("    ${color.dump.string_quote}require${clear}(%s): ", requireinfo.originstr)
+
+    -- show description
+    local description = instance:get("description")
+    if description then
+        cprint("      -> ${color.dump.string_quote}description${clear}: %s", description)
+    end
+
+    -- show version
+    local version = instance:version_str()
+    if version then
+        cprint("      -> ${color.dump.string_quote}version${clear}: %s", version)
+    end
+
+    -- show license
+    local license = instance:get("license")
+    if license then
+        cprint("      -> ${color.dump.string_quote}license${clear}: %s", license)
+    end
+
+    -- show urls
+    local urls = instance:urls()
+    if urls and #urls > 0 then
+        cprint("      -> ${color.dump.string_quote}urls${clear}:")
+        local schemes = instance:schemes_orderlist()
+        if schemes then
+            for _, scheme in ipairs(schemes) do
+                if not scheme:is_precompiled() then
+                    local urls = scheme:urls()
+                    if urls and #urls > 0 then
+                        local scheme_name = scheme:is_default() and "default" or scheme:name()
+                        cprint("         -> ${magenta}%s${clear}:", scheme_name)
+                        for _, url in ipairs(urls) do
+                            print("            -> %s", filter.handle(url, instance))
+                            if git.asgiturl(url) then
+                                local url_alias = scheme:url_alias(url)
+                                cprint("               -> ${yellow}%s", scheme:revision(url_alias) or scheme:tag() or scheme:version_str())
+                            else
+                                local sourcehash = scheme:sourcehash(scheme:url_alias(url))
+                                if sourcehash then
+                                    cprint("               -> ${yellow}%s", sourcehash)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- show repository
+    local repo = instance:repo()
+    if repo then
+        cprint("      -> ${color.dump.string_quote}repo${clear}: %s %s %s", repo:name(), repo:url(), repo:branch() or "")
+    end
+
+    -- show deps
+    local deps = instance:orderdeps()
+    if deps and #deps > 0 then
+        cprint("      -> ${color.dump.string_quote}deps${clear}:")
+        for _, dep in ipairs(deps) do
+            requireinfo = dep:requireinfo() or {}
+            cprint("         -> %s", requireinfo.originstr)
+        end
+    end
+
+    -- show cache directory
+    cprint("      -> ${color.dump.string_quote}cachedir${clear}: %s", instance:cachedir())
+
+    -- show install directory
+    cprint("      -> ${color.dump.string_quote}installdir${clear}: %s", instance:installdir())
+
+    -- show search directories and search names
+    cprint("      -> ${color.dump.string_quote}searchdirs${clear}: %s", table.concat(table.wrap(core_package.searchdirs()), path.envsep()))
+    local searchnames = hashset.new()
+    for _, url in ipairs(urls) do
+        local url = filter.handle(url, instance)
+        if git.checkurl(url) then
+            searchnames:insert(instance:name() .. archive.extension(url) .. " ${dim}(git)${clear}")
+            searchnames:insert(path.basename(url_filename(url)) .. " ${dim}(git)${clear}")
+        else
+            local extension = archive.extension(url)
+            if extension then
+                searchnames:insert(instance:name() .. "-" .. instance:version_str() .. extension)
+            end
+            searchnames:insert(url_filename(url))
+
+            -- match github name mangling https://github.com/xmake-io/xmake/issues/1343
+            local github_name = url_filename.github_filename(url)
+            if github_name then
+                searchnames:insert(github_name)
+            end
+        end
+    end
+    cprint("      -> ${color.dump.string_quote}searchnames${clear}:")
+    for _, searchname in searchnames:keys() do
+        cprint("         -> %s", searchname)
+    end
+
+    -- show fetch info
+    cprint("      -> ${color.dump.string_quote}fetchinfo${clear}: %s", _info(instance))
+    local fetchinfo = instance:fetch()
+    if fetchinfo then
+        for name, info in pairs(fetchinfo) do
+            local info = table.unwrap(info)
+            if type(info) ~= "table" then
+                info = tostring(info)
+            end
+            cprint("          -> ${color.dump.string_quote}%s${clear}: %s", name, table.concat(table.wrap(info), " "))
+        end
+    end
+
+    -- show supported platforms
+    local platforms = {}
+    local on_install = instance:get("install")
+    if type(on_install) == "table" then
+        for plat, _ in pairs(on_install) do
+            table.insert(platforms, plat)
+        end
+    else
+        table.insert(platforms, "all")
+    end
+    cprint("      -> ${color.dump.string_quote}platforms${clear}: %s", table.concat(platforms, ", "))
+
+    -- show requires
+    cprint("      -> ${color.dump.string_quote}requires${clear}:")
+    cprint("         -> ${cyan}plat${clear}: %s", instance:plat())
+    cprint("         -> ${cyan}arch${clear}: %s", instance:arch())
+    local configs_required = instance:configs()
+    if configs_required then
+        cprint("         -> ${cyan}configs${clear}:")
+        for name, value in pairs(configs_required) do
+            cprint("            -> %s: %s", name, value)
+        end
+    end
+
+    -- show user configs
+    local configs_defined = instance:get("configs")
+    if configs_defined then
+        cprint("      -> ${color.dump.string_quote}configs${clear}:")
+        for _, conf in ipairs(configs_defined) do
+            local configs_extra = instance:extraconf("configs", conf)
+            if configs_extra and not configs_extra.builtin then
+                cprintf("         -> ${cyan}%s${clear}: ", conf)
+                if configs_extra.description then
+                    printf(configs_extra.description)
+                end
+                if configs_extra.default ~= nil then
+                    printf(" (default: %s)", configs_extra.default)
+                elseif configs_extra.type ~= nil and configs_extra.type ~= "string" then
+                    printf(" (type: %s)", configs_extra.type)
+                end
+                if configs_extra.readonly then
+                    printf(" (readonly)")
+                end
+                print("")
+                if configs_extra.values then
+                    cprint("            -> values: %s", string.serialize(configs_extra.values, true))
+                end
+            end
+        end
+    end
+
+    -- show builtin configs
+    local configs_defined = instance:get("configs")
+    if configs_defined then
+        cprint("      -> ${color.dump.string_quote}configs (builtin)${clear}:")
+        for _, conf in ipairs(configs_defined) do
+            local configs_extra = instance:extraconf("configs", conf)
+            if configs_extra and configs_extra.builtin then
+                cprintf("         -> ${cyan}%s${clear}: ", conf)
+                if configs_extra.description then
+                    printf(configs_extra.description)
+                end
+                if configs_extra.default ~= nil then
+                    printf(" (default: %s)", configs_extra.default)
+                elseif configs_extra.type ~= nil and configs_extra.type ~= "string" then
+                    printf(" (type: %s)", configs_extra.type)
+                end
+                print("")
+                if configs_extra.values then
+                    cprint("            -> values: %s", string.serialize(configs_extra.values, true))
+                end
+            end
+        end
+    end
+
+    -- show components
+    local components = instance:get("components")
+    if components then
+        cprint("      -> ${color.dump.string_quote}components${clear}: ")
+        for _, comp in ipairs(components) do
+            cprintf("         -> ${cyan}%s${clear}: ", comp)
+            local plaindeps = instance:extraconf("components", comp, "deps")
+            if plaindeps then
+                print("%s", table.concat(table.wrap(plaindeps), ", "))
+            else
+                print("")
+            end
+        end
+    end
+
+    -- show references
+    local references = instance:references()
+    if references then
+        cprint("      -> ${color.dump.string_quote}references${clear}:")
+        for projectdir, refdate in pairs(references) do
+            cprint("         -> %s: %s%s", refdate, projectdir, os.isdir(projectdir) and "" or " ${red}(not found)${clear}")
+        end
+    end
+
+    -- end
+    print("")
+end
+
 -- show the given package info
 function main(requires_raw)
 
@@ -81,224 +462,23 @@ function main(requires_raw)
         task.run("repo", {update = true})
     end
 
-    -- show title
-    print("The package info of project:")
-
     -- list all packages
-    for _, instance in ipairs(package.load_packages(requires, {requires_extra = requires_extra})) do
-
-        -- show package name
-        local requireinfo = instance:requireinfo() or {}
-        cprint("    ${color.dump.string_quote}require${clear}(%s): ", requireinfo.originstr)
-
-        -- show description
-        local description = instance:get("description")
-        if description then
-            cprint("      -> ${color.dump.string_quote}description${clear}: %s", description)
+    local instances = package.load_packages(requires, {requires_extra = requires_extra})
+    local format = option.get("format")
+    if format == "json" then
+        local results = {}
+        json.mark_as_array(results)
+        for _, instance in ipairs(instances) do
+            table.insert(results, _collect_package_info(instance))
         end
-
-        -- show version
-        local version = instance:version_str()
-        if version then
-            cprint("      -> ${color.dump.string_quote}version${clear}: %s", version)
+        print(json.encode(results, {pretty = true, orderkeys = true}))
+    else
+        print("The package info of project:")
+        for _, instance in ipairs(instances) do
+            _print_package_info(instance)
         end
-
-        -- show license
-        local license = instance:get("license")
-        if license then
-            cprint("      -> ${color.dump.string_quote}license${clear}: %s", license)
-        end
-
-        -- show urls
-        local urls = instance:urls()
-        if instance:is_precompiled() then
-            instance:fallback_build()
-            local urls_raw = instance:urls()
-            if urls_raw then
-                urls = table.join(urls, urls_raw)
-            end
-        end
-        if urls and #urls > 0 then
-            cprint("      -> ${color.dump.string_quote}urls${clear}:")
-            for _, url in ipairs(urls) do
-                print("         -> %s", filter.handle(url, instance))
-                if git.asgiturl(url) then
-                    local url_alias = instance:url_alias(url)
-                    cprint("            -> ${yellow}%s", instance:revision(url_alias) or instance:tag() or instance:version_str())
-                else
-                    local sourcehash = instance:sourcehash(instance:url_alias(url))
-                    if sourcehash then
-                        cprint("            -> ${yellow}%s", sourcehash)
-                    end
-                end
-            end
-        end
-
-        -- show repository
-        local repo = instance:repo()
-        if repo then
-            cprint("      -> ${color.dump.string_quote}repo${clear}: %s %s %s", repo:name(), repo:url(), repo:branch() or "")
-        end
-
-        -- show deps
-        local deps = instance:orderdeps()
-        if deps and #deps > 0 then
-            cprint("      -> ${color.dump.string_quote}deps${clear}:")
-            for _, dep in ipairs(deps) do
-                requireinfo = dep:requireinfo() or {}
-                cprint("         -> %s", requireinfo.originstr)
-            end
-        end
-
-        -- show cache directory
-        cprint("      -> ${color.dump.string_quote}cachedir${clear}: %s", instance:cachedir())
-
-        -- show install directory
-        cprint("      -> ${color.dump.string_quote}installdir${clear}: %s", instance:installdir())
-
-        -- show search directories and search names
-        cprint("      -> ${color.dump.string_quote}searchdirs${clear}: %s", table.concat(table.wrap(core_package.searchdirs()), path.envsep()))
-        local searchnames = hashset.new()
-        for _, url in ipairs(urls) do
-            url = filter.handle(url, instance)
-            if git.checkurl(url) then
-                searchnames:insert(instance:name() .. archive.extension(url) .. " ${dim}(git)${clear}")
-                searchnames:insert(path.basename(url_filename(url)) .. " ${dim}(git)${clear}")
-            else
-                local extension = archive.extension(url)
-                if extension then
-                    searchnames:insert(instance:name() .. "-" .. instance:version_str() .. extension)
-                end
-                searchnames:insert(url_filename(url))
-
-                -- match github name mangling https://github.com/xmake-io/xmake/issues/1343
-                local github_name = url_filename.github_filename(url)
-                if github_name then
-                    searchnames:insert(github_name)
-                end
-            end
-        end
-        cprint("      -> ${color.dump.string_quote}searchnames${clear}:")
-        for _, searchname in searchnames:keys() do
-            cprint("         -> %s", searchname)
-        end
-
-        -- show fetch info
-        cprint("      -> ${color.dump.string_quote}fetchinfo${clear}: %s", _info(instance))
-        local fetchinfo = instance:fetch()
-        if fetchinfo then
-            for name, info in pairs(fetchinfo) do
-                if type(info) ~= "table" then
-                    info = tostring(info)
-                end
-                cprint("          -> ${color.dump.string_quote}%s${clear}: %s", name, table.concat(table.wrap(info), " "))
-            end
-        end
-
-        -- show supported platforms
-        local platforms = {}
-        local on_install = instance:get("install")
-        if type(on_install) == "table" then
-            for plat, _ in pairs(on_install) do
-                table.insert(platforms, plat)
-            end
-        else
-            table.insert(platforms, "all")
-        end
-        cprint("      -> ${color.dump.string_quote}platforms${clear}: %s", table.concat(platforms, ", "))
-
-        -- show requires
-        cprint("      -> ${color.dump.string_quote}requires${clear}:")
-        cprint("         -> ${cyan}plat${clear}: %s", instance:plat())
-        cprint("         -> ${cyan}arch${clear}: %s", instance:arch())
-        local configs_required = instance:configs()
-        if configs_required then
-            cprint("         -> ${cyan}configs${clear}:")
-            for name, value in pairs(configs_required) do
-                cprint("            -> %s: %s", name, value)
-            end
-        end
-
-        -- show user configs
-        local configs_defined = instance:get("configs")
-        if configs_defined then
-            cprint("      -> ${color.dump.string_quote}configs${clear}:")
-            for _, conf in ipairs(configs_defined) do
-                local configs_extra = instance:extraconf("configs", conf)
-                if configs_extra and not configs_extra.builtin then
-                    cprintf("         -> ${cyan}%s${clear}: ", conf)
-                    if configs_extra.description then
-                        printf(configs_extra.description)
-                    end
-                    if configs_extra.default ~= nil then
-                        printf(" (default: %s)", configs_extra.default)
-                    elseif configs_extra.type ~= nil and configs_extra.type ~= "string" then
-                        printf(" (type: %s)", configs_extra.type)
-                    end
-                    if configs_extra.readonly then
-                        printf(" (readonly)")
-                    end
-                    print("")
-                    if configs_extra.values then
-                        cprint("            -> values: %s", string.serialize(configs_extra.values, true))
-                    end
-                end
-            end
-        end
-
-        -- show builtin configs
-        local configs_defined = instance:get("configs")
-        if configs_defined then
-            cprint("      -> ${color.dump.string_quote}configs (builtin)${clear}:")
-            for _, conf in ipairs(configs_defined) do
-                local configs_extra = instance:extraconf("configs", conf)
-                if configs_extra and configs_extra.builtin then
-                    cprintf("         -> ${cyan}%s${clear}: ", conf)
-                    if configs_extra.description then
-                        printf(configs_extra.description)
-                    end
-                    if configs_extra.default ~= nil then
-                        printf(" (default: %s)", configs_extra.default)
-                    elseif configs_extra.type ~= nil and configs_extra.type ~= "string" then
-                        printf(" (type: %s)", configs_extra.type)
-                    end
-                    print("")
-                    if configs_extra.values then
-                        cprint("            -> values: %s", string.serialize(configs_extra.values, true))
-                    end
-                end
-            end
-        end
-
-        -- show components
-        local components = instance:get("components")
-        if components then
-            cprint("      -> ${color.dump.string_quote}components${clear}: ")
-            for _, comp in ipairs(components) do
-                cprintf("         -> ${cyan}%s${clear}: ", comp)
-                local plaindeps = instance:extraconf("components", comp, "deps")
-                if plaindeps then
-                    print("%s", table.concat(table.wrap(plaindeps), ", "))
-                else
-                    print("")
-                end
-            end
-        end
-
-        -- show references
-        local references = instance:references()
-        if references then
-            cprint("      -> ${color.dump.string_quote}references${clear}:")
-            for projectdir, refdate in pairs(references) do
-                cprint("         -> %s: %s%s", refdate, projectdir, os.isdir(projectdir) and "" or " ${red}(not found)${clear}")
-            end
-        end
-
-        -- end
-        print("")
     end
 
     -- leave environment
     environment.leave()
 end
-

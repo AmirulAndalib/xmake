@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        check.lua
@@ -28,20 +28,25 @@ function main(toolchain)
     for _, package in ipairs(toolchain:packages()) do
         local installdir = package:installdir()
         if installdir and os.isdir(installdir) then
-            mingw = find_mingw(installdir, {verbose = true, cross = toolchain:cross()})
+            mingw = find_mingw(installdir, {verbose = true, cross = toolchain:cross(), arch = toolchain:arch()})
             if mingw then
                 break
             end
         end
     end
     if not mingw then
-        mingw = find_mingw(toolchain:config("mingw") or config.get("mingw"), {verbose = true, bindir = toolchain:bindir(), cross = toolchain:cross()})
+        mingw = find_mingw(toolchain:config("mingw") or config.get("mingw"), {
+            verbose = true,
+            bindir = toolchain:bindir(),
+            cross = toolchain:cross(),
+            msystem = toolchain:config("msystem"),
+            arch = toolchain:arch()
+        })
     end
     if mingw then
         toolchain:config_set("mingw", mingw.sdkdir)
         toolchain:config_set("cross", mingw.cross)
         toolchain:config_set("bindir", mingw.bindir)
-        toolchain:configs_save()
         return true
     end
 end

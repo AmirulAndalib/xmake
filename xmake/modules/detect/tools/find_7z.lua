@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_7z.lua
@@ -45,7 +45,7 @@ function main(opt)
 
     -- find 7z from builtin xmake/winenv
     if is_host("windows") then
-        opt.paths = opt.paths or {}
+        opt.paths = table.wrap(opt.paths)
         table.insert(opt.paths, path.join(os.programdir(), "winenv", "bin"))
     end
 

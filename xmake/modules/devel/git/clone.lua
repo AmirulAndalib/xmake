@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        clone.lua
@@ -23,34 +23,7 @@ import("core.base.option")
 import("core.base.semver")
 import("lib.detect.find_tool")
 import("net.proxy")
-
--- can clone tag?
--- @see https://github.com/xmake-io/xmake/issues/4151
-function can_clone_tag()
-    local can = _g.can_clone_tag
-    if can == nil then
-        local git = assert(find_tool("git", {version = true}), "git not found!")
-        if git.version and semver.compare(git.version, "1.7.10") >= 0 then
-            can = true
-        end
-        _g.can_clone_tag = can or false
-    end
-    return can or false
-end
-
--- can clone with --shallow-submodules?
--- @see https://github.com/xmake-io/xmake/issues/4151
-function can_shallow_submodules()
-    local can = _g.can_shallow_submodules
-    if can == nil then
-        local git = assert(find_tool("git", {version = true}), "git not found!")
-        if git.version and semver.compare(git.version, "2.9.0") >= 0 then
-            can = true
-        end
-        _g.can_shallow_submodules = can or false
-    end
-    return can or false
-end
+import("devel.git.support")
 
 -- clone url
 --
@@ -62,7 +35,7 @@ end
 -- import("devel.git")
 --
 -- git.clone("git@github.com:xmake-io/xmake.git")
--- git.clone("git@github.com:xmake-io/xmake.git", {depth = 1, branch = "master", outputdir = "/tmp/xmake", longpaths = true})
+-- git.clone("git@github.com:xmake-io/xmake.git", {depth = 1, treeless = true, branch = "master", outputdir = "/tmp/xmake", longpaths = true})
 --
 -- @endcode
 --
@@ -87,6 +60,17 @@ function main(url, opt)
         table.insert(argv, type(opt.depth) == "number" and tostring(opt.depth) or opt.depth)
     end
 
+    -- treeless?
+    -- @see https://github.com/xmake-io/xmake/issues/5507
+    if opt.treeless and support.can_treeless() then
+        table.insert(argv, "--filter=tree:0")
+    end
+
+    -- no checkout
+    if opt.checkout == false then
+        table.insert(argv, "--no-checkout")
+    end
+
     -- recursive?
     if opt.recursive then
         table.insert(argv, "--recursive")
@@ -96,7 +80,7 @@ function main(url, opt)
     if opt.recurse_submodules then
         table.insert(argv, "--recurse-submodules")
     end
-    if opt.shallow_submodules and can_shallow_submodules() then
+    if opt.shallow_submodules and support.can_shallow_submodules() then
         table.insert(argv, "--shallow-submodules")
     end
 
@@ -115,6 +99,15 @@ function main(url, opt)
         table.insert(argv, "core.fsmonitor=false")
     end
 
+    -- set core.autocrlf
+    if opt.autocrlf then
+        table.insert(argv, "-c")
+        table.insert(argv, "core.autocrlf=true")
+    elseif opt.autocrlf == false then
+        table.insert(argv, "-c")
+        table.insert(argv, "core.autocrlf=false")
+    end
+
     -- set outputdir
     if opt.outputdir then
         table.insert(argv, path.translate(opt.outputdir))
@@ -128,5 +121,9 @@ function main(url, opt)
     end
 
     -- clone it
-    os.vrunv(git.program, argv, {envs = envs})
+    if opt.verbose then
+        os.execv(git.program, argv, {envs = envs})
+    else
+        os.vrunv(git.program, argv, {envs = envs})
+    end
 end

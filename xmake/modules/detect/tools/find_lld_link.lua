@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_lld_link.lua
@@ -21,6 +21,7 @@
 -- imports
 import("core.tool.compiler")
 import("lib.detect.find_program")
+import("lib.detect.find_programver")
 
 -- find ar
 --
@@ -37,7 +38,7 @@ import("lib.detect.find_program")
 --
 function main(opt)
     opt = opt or {}
-    local program = find_program(opt.program or "lld.link", opt)
+    local program = find_program(opt.program or "lld-link", opt)
     local version = nil
     if program and opt and opt.version then
         version = find_programver(program, opt)

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_gzip.lua
@@ -39,6 +39,18 @@ function main(opt)
 
     -- init options
     opt = opt or {}
+
+    opt.check = opt.check or function (program)
+        local ok = try { function () os.runv(program, {"--version"}, {envs = opt.envs, shell = opt.shell}) end }
+        if not ok then
+            -- some gzip do not support `--version`, so we fall back to compressing a temporary file to check it
+            local tmpfile = os.tmpfile()
+            io.writefile(tmpfile, "")
+            os.runv(program, {"-f", tmpfile}, {envs = opt.envs, shell = opt.shell})
+            os.rm(tmpfile .. ".gz")
+            os.rm(tmpfile)
+        end
+    end
 
     -- find program
     local program = find_program(opt.program or "gzip", opt)

@@ -149,3 +149,72 @@ function test_args(t)
     t:are_equal(os.args({'-DTEST="hello world"', '-DTEST2="hello world2"'}), '"-DTEST=\\\"hello world\\\"" "-DTEST2=\\\"hello world2\\\""')
 end
 
+function test_async(t)
+    local tmpdir = os.tmpfile() .. ".dir"
+    local tmpdir2 = os.tmpfile() .. ".dir"
+    io.writefile(path.join(tmpdir, "foo.txt"), "foo")
+    io.writefile(path.join(tmpdir, "bar.txt"), "bar")
+    local files = os.files(path.join(tmpdir, "*.txt"), {async = true})
+    t:require(files and #files == 2)
+
+    os.cp(tmpdir, tmpdir2, {async = true, detach = true})
+
+    os.cp(tmpdir, tmpdir2, {async = true})
+    t:require(os.isdir(tmpdir2))
+
+    t:require(os.isdir(tmpdir))
+    os.rm(tmpdir, {async = true})
+    t:require(not os.isdir(tmpdir))
+
+    t:require(os.isdir(tmpdir2))
+    os.rm(tmpdir2, {async = true, detach = true})
+end
+
+function test_isexec(t)
+    local tempdir = "temp/isexec"
+    os.tryrm(tempdir)
+    os.mkdir(tempdir)
+
+    local programfile = os.programfile()
+    if programfile then
+        t:require(os.isexec(programfile))
+    end
+
+    local filepath = path.join(tempdir, "script")
+    io.writefile(filepath, "echo test\n")
+
+    if is_host("windows") then
+        local batfile = path.join(tempdir, "a.bat")
+        io.writefile(batfile, "echo test\r\n")
+        t:require(os.isexec(batfile))
+
+        local comfile = path.join(tempdir, "a.com")
+        io.writefile(comfile, "12345678")
+        t:require(os.isexec(comfile))
+
+        local suffix = path.join(tempdir, "prog")
+        io.writefile(suffix .. ".exe", "")
+        t:require(os.isexec(suffix))
+
+        local suffix2 = path.join(tempdir, "prog2")
+        io.writefile(suffix2 .. ".com", "")
+        t:require(os.isexec(suffix2))
+    else
+        os.vrunv("chmod", {"-x", filepath})
+        t:require_not(os.isexec(filepath))
+        os.vrunv("chmod", {"+x", filepath})
+        t:require(os.isexec(filepath))
+    end
+
+    os.tryrm(tempdir)
+end
+
+function test_files_with_brackets(t)
+    local tmpdir = os.tmpfile() .. ".dir"
+    io.writefile(path.join(tmpdir, "a[1].lua"), "x")
+    io.writefile(path.join(tmpdir, "a1.lua"), "x")
+    -- a wildcard is required, a plain existing file is matched without converting the pattern
+    local files = os.files(path.join(tmpdir, "a[1]*.lua"))
+    t:are_equal(files, {path.join(tmpdir, "a[1].lua")})
+    os.tryrm(tmpdir)
+end

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      PucklaMotzer09
 -- @file        scons.lua
@@ -100,10 +100,13 @@ end
 -- build package
 function build(package, configs, opt)
     opt = opt or {}
-    local buildir = opt.buildir or os.curdir()
+    local builddir = opt.builddir or opt.buildir or os.curdir()
+    if opt.buildir then
+        wprint("{buildir = } has been deprecated, please use {builddir = } in scons.install")
+    end
     local njob = opt.jobs or option.get("jobs") or tostring(os.default_njob())
     local scons = assert(find_tool("scons"), "scons not found!")
-    local argv = {"-C", buildir, "-j", njob}
+    local argv = {"-C", builddir, "-j", njob}
     configs = _get_configs(package, configs)
     if configs then
         table.join2(argv, configs)

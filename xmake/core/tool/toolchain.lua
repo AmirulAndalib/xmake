@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        toolchain.lua
@@ -29,8 +29,11 @@ local utils          = require("base/utils")
 local table          = require("base/table")
 local global         = require("base/global")
 local option         = require("base/option")
+local hashset        = require("base/hashset")
 local scopeinfo      = require("base/scopeinfo")
 local interpreter    = require("base/interpreter")
+local is_cross       = require("base/private/is_cross")
+local addon          = require("package/addon")
 local config         = require("project/config")
 local memcache       = require("cache/memcache")
 local localcache     = require("cache/localcache")
@@ -39,16 +42,30 @@ local sandbox        = require("sandbox/sandbox")
 local sandbox_module = require("sandbox/modules/import/core/sandbox/module")
 
 -- new an instance
-function _instance.new(name, info, cachekey, is_builtin, configs)
-    local instance       = table.inherit(_instance)
-    instance._NAME       = name
-    instance._INFO       = info
-    instance._IS_BUILTIN = is_builtin
-    instance._CACHE      = toolchain._localcache()
-    instance._CACHEKEY   = cachekey
-    instance._CONFIGS    = instance._CACHE:get(cachekey) or {}
+function _instance.new(name, info, opt)
+    opt = opt or {}
+    local cachekey = opt.cachekey
+    local configs = opt.configs
+    local instance = table.inherit(_instance)
+    local parts = name:split("::", {plain = true})
+    instance._NAME = parts[#parts]
+    table.remove(parts)
+    if #parts > 0 then
+        instance._NAMESPACE = table.concat(parts, "::")
+    end
+    instance._INFO          = info
+    instance._REQUIRESTR    = opt.requirestr
+    instance._IS_BUILTIN    = opt.is_builtin
+    instance._CACHE         = toolchain._localcache()
+    instance._CACHEKEY      = cachekey
+    local toolchain_configs = instance._CACHE:get(cachekey)
+    if toolchain_configs == nil then
+        toolchain_configs = {}
+        instance._CACHE:set(cachekey, toolchain_configs)
+    end
+    instance._CONFIGS = toolchain_configs
     for k, v in pairs(configs) do
-        instance._CONFIGS[k] = v
+        toolchain_configs[k] = v
     end
     -- is global toolchain for the whole platform?
     configs.plat = nil
@@ -57,17 +74,49 @@ function _instance.new(name, info, cachekey, is_builtin, configs)
     local plat = config.get("plat") or os.host()
     local arch = config.get("arch") or os.arch()
     if instance:is_plat(plat) and instance:is_arch(arch) and #table.keys(configs) == 0 then
-        instance._CONFIGS.__global = true
+        toolchain_configs.__global = true
     end
     return instance
 end
 
 -- get toolchain name
+--
+-- @return      the toolchain name string
+--
 function _instance:name()
     return self._NAME
 end
 
--- get toolchain platform
+-- get the namespace
+function _instance:namespace()
+    return self._NAMESPACE
+end
+
+-- get the full name
+function _instance:fullname()
+    local namespace = self:namespace()
+    local name = self:name()
+    local requirestr = self._REQUIRESTR
+    if requirestr then
+        name = name .. "[" .. requirestr .. "]"
+    end
+    return namespace and namespace .. "::" .. name or name
+end
+
+-- get memcache
+function _instance:memcache()
+    local cache = self._MEMCACHE
+    if not cache then
+        cache = memcache.cache("core.tool.toolchain." .. self:cachekey())
+        self._MEMCACHE = cache
+    end
+    return cache
+end
+
+-- get toolchain platform, e.g. "windows", "linux", "macosx"
+--
+-- @return      the platform name
+--
 function _instance:plat()
     return self._PLAT or self:config("plat")
 end
@@ -77,7 +126,10 @@ function _instance:plat_set(plat)
     self._PLAT = plat
 end
 
--- get toolchain architecture
+-- get toolchain architecture, e.g. "x86_64", "arm64"
+--
+-- @return      the architecture name
+--
 function _instance:arch()
     return self._ARCH or self:config("arch")
 end
@@ -135,7 +187,8 @@ function _instance:add(name, ...)
 end
 
 -- get the toolchain configuration
-function _instance:get(name)
+function _instance:get(name, opt)
+    opt = opt or {}
 
     -- attempt to get the static configure value
     local value = self:info():get(name)
@@ -144,10 +197,10 @@ function _instance:get(name)
     end
 
     -- lazy loading toolchain
-    self:_load()
-
-    -- get other platform info
-    return self:info():get(name)
+    if opt.load ~= false then
+        self:_load()
+        return self:info():get(name)
+    end
 end
 
 -- get toolchain kind
@@ -155,11 +208,22 @@ function _instance:kind()
     return self:info():get("kind")
 end
 
--- is cross-compilation toolchain?
+-- get toolchain formats, we must set it in description scope
+-- @see https://github.com/xmake-io/xmake/issues/4769
+function _instance:formats()
+    return self:info():get("formats")
+end
+
+-- is cross-compilation?
 function _instance:is_cross()
+    return is_cross(self:plat(), self:arch()) or self:is_cross_toolchain()
+end
+
+-- is cross-compilation toolchain?
+function _instance:is_cross_toolchain()
     if self:kind() == "cross" then
         return true
-    elseif self:kind() == "standalone" and (self:cross() or self:sdkdir()) then
+    elseif self:kind() == "standalone" and (self:cross() or self:config("sdkdir") or self:info():get("sdkdir")) then
         return true
     end
 end
@@ -180,6 +244,9 @@ function _instance:is_builtin()
 end
 
 -- get the run environments
+--
+-- @return      the run environments table {PATH = "...", ...}
+--
 function _instance:runenvs()
     local runenvs = self._RUNENVS
     if runenvs == nil then
@@ -187,6 +254,7 @@ function _instance:runenvs()
         if toolchain_runenvs then
             runenvs = {}
             for name, values in pairs(toolchain_runenvs) do
+                local values = values
                 if type(values) == "table" then
                     values = path.joinenv(values)
                 end
@@ -200,7 +268,14 @@ function _instance:runenvs()
 end
 
 -- get the program and name of the given tool kind
+--
+-- @param toolkind   the tool kind, e.g. "cc", "cxx", "ld", "ar"
+-- @return          the program path, the tool name
+--
 function _instance:tool(toolkind)
+    if not self:_is_checked() then
+        utils.warning("we cannot get tool(%s) in toolchain(%s) with %s/%s, because it has been not checked yet!", toolkind, self:name(), self:plat(), self:arch())
+    end
     -- ensure to do load for initializing toolset first
     -- @note we cannot call self:check() here, because it can only be called on config
     self:_load()
@@ -225,16 +300,22 @@ function _instance:cross()
     return self:config("cross") or config.get("cross") or self:info():get("cross")
 end
 
--- get the bin directory
+-- get the toolchain bin directory
+--
+-- @return      the bin directory path
+--
 function _instance:bindir()
     local bindir = self:config("bindir") or config.get("bin") or self:info():get("bindir")
-    if not bindir and self:is_cross() and self:sdkdir() and os.isdir(path.join(self:sdkdir(), "bin")) then
+    if not bindir and self:sdkdir() and os.isdir(path.join(self:sdkdir(), "bin")) then
         bindir = path.join(self:sdkdir(), "bin")
     end
     return bindir
 end
 
--- get the sdk directory
+-- get the toolchain sdk directory
+--
+-- @return      the sdk directory path
+--
 function _instance:sdkdir()
     return self:config("sdkdir") or config.get("sdk") or self:info():get("sdkdir")
 end
@@ -244,38 +325,52 @@ function _instance:cachekey()
     return self._CACHEKEY
 end
 
--- get user config from `set_toolchains("", {configs = {vs = "2018"}})`
+-- get toolchain config value
+--
+-- @param name  the config name, e.g. "sdkver", "vs"
+-- @return      the config value
+--
 function _instance:config(name)
     return self._CONFIGS[name]
 end
 
--- set user config
+-- set toolchain config value
+--
+-- @param name  the config name
+-- @param data  the config value
+--
 function _instance:config_set(name, data)
     self._CONFIGS[name] = data
 end
 
--- save user configs
+-- save user config (deprecated)
 function _instance:configs_save()
-    self._CACHE:set(self:cachekey(), self._CONFIGS)
-    self._CACHE:save()
+    utils.warning("toolchain:configs_save() is deprecated, please remove it.")
 end
 
 -- do check, we only check it once for all architectures
+--
+-- @return      true if the toolchain is available
+--
 function _instance:check()
-    local checkok = true
-    if not self._CHECKED then
+    local checked = self:config("__checked")
+    if checked == nil then
         local on_check = self:_on_check()
         if on_check then
-            local ok, results_or_errors = sandbox.load(on_check, self)
+            local ok, results_or_errors = sandbox.call(on_check, self)
             if ok then
-                checkok = results_or_errors
+                checked = results_or_errors
             else
                 os.raise(results_or_errors)
             end
+        else
+            checked = true
         end
-        self._CHECKED = true
+        -- we need to persist this state
+        checked = checked or false
+        self:config_set("__checked", checked)
     end
-    return checkok
+    return checked
 end
 
 -- do load manually, it will call on_load()
@@ -347,12 +442,15 @@ end
 
 -- do load, @note we need to load it repeatly for each architectures
 function _instance:_load()
+    if not self:_is_checked() then
+        utils.warning("we cannot load toolchain(%s), because it has been not checked yet!", self:name(), self:plat(), self:arch())
+    end
     local info = self:info()
     if not info:get("__loaded") and not info:get("__loading") then
         local on_load = self:_on_load()
         if on_load then
             info:set("__loading", true)
-            local ok, errors = sandbox.load(on_load, self)
+            local ok, errors = sandbox.call(on_load, self)
             info:set("__loading", false)
             if not ok then
                 os.raise(errors)
@@ -365,6 +463,11 @@ end
 -- is loaded?
 function _instance:_is_loaded()
     return self:info():get("__loaded")
+end
+
+-- is checked?
+function _instance:_is_checked()
+    return self:config("__checked") ~= nil or self:_on_check() == nil
 end
 
 -- get the tool description from the tool kind
@@ -381,6 +484,8 @@ function _instance:_description(toolkind)
             ar         = "the static library archiver",
             mrc        = "the windows resource compiler",
             strip      = "the symbols stripper",
+            ranlib     = "the archive index generator",
+            objcopy    = "the GNU objcopy utility",
             dsymutil   = "the symbols generator",
             mm         = "the objc compiler",
             mxx        = "the objc++ compiler",
@@ -388,6 +493,7 @@ function _instance:_description(toolkind)
             sc         = "the swift compiler",
             scld       = "the swift linker",
             scsh       = "the swift shared library linker",
+            scar       = "the swift static library archiver",
             gc         = "the golang compiler",
             gcld       = "the golang linker",
             gcar       = "the golang static library archiver",
@@ -409,10 +515,18 @@ function _instance:_description(toolkind)
             cu         = "the cuda compiler",
             culd       = "the cuda linker",
             cuccbin    = "the cuda host c++ compiler",
+            asc        = "the ascend c compiler",
+            aicpu      = "the ascend c ai-cpu compiler",
+            ascld      = "the ascend c linker",
+            ascsh      = "the ascend c shared library linker",
             nc         = "the nim compiler",
             ncld       = "the nim linker",
             ncsh       = "the nim shared library linker",
-            ncar       = "the nim static library archiver"
+            ncar       = "the nim static library archiver",
+            kc         = "the kotlin native compiler",
+            kcld       = "the kotlin native linker",
+            kcsh       = "the kotlin native shared library linker",
+            kcar       = "the kotlin native static library archiver",
         }
         self._DESCRIPTIONS = descriptions
     end
@@ -423,8 +537,7 @@ end
 function _instance:_checktool(toolkind, toolpath)
 
     -- get result from cache first
-    local cachekey = self:cachekey() .. "_checktool" .. toolkind
-    local result = toolchain._memcache():get3(cachekey, toolkind, toolpath)
+    local result = self:memcache():get2("checktool_" .. toolkind, toolpath)
     if result then
         return result[1], result[2]
     end
@@ -467,6 +580,7 @@ function _instance:_checktool(toolkind, toolpath)
     end
 
     -- find tool program
+    local cachekey = self:cachekey() .. "_checktool" .. toolkind
     local tool = find_tool(toolpath, {toolchain = self,
         cachekey = cachekey,
         program = program or toolpath,
@@ -475,6 +589,11 @@ function _instance:_checktool(toolkind, toolpath)
     if tool then
         program = tool.program
         toolname = toolname or tool.name
+    else
+        -- we need reset result if not found
+        -- https://github.com/xmake-io/xmake/discussions/6415#discussioncomment-13099816
+        program = nil
+        toolname = nil
     end
 
     -- get tool description from the tool kind
@@ -488,7 +607,7 @@ function _instance:_checktool(toolkind, toolpath)
             utils.cprint("${dim}checking for %s (%s: ${bright}%s${clear}) ... ${color.nothing}${text.nothing}", description, toolkind, toolpath)
         end
     end
-    toolchain._memcache():set3(cachekey, toolkind, toolpath, {program, toolname})
+    self:memcache():set2("checktool_" .. toolkind, toolpath, {program, toolname})
     return program, toolname
 end
 
@@ -538,12 +657,42 @@ function toolchain._cachekey(name, opt)
     return cachekey
 end
 
--- parse toolchain and package name
+-- parse toolchain, configs and package name
 --
--- format: toolchain@package
+-- formats:
+--
+-- 1. only toolchain name
+-- e.g. clang, gcc
+--
+-- 2. toolchain@package
 -- e.g. "clang@llvm-10", "@muslcc", zig
 --
+-- 3. toolchain[configs]@package
+-- e.g. "mingw[clang]@llvm-mingw", "msvc[vs=2025,..]"
+--
 function toolchain.parsename(name)
+
+    -- the toolchain of an addon?
+    -- e.g. set_toolchains("@addon/esp32/xtensa"), set_toolchains("@addon/esp32/clang@llvm"), set_toolchains("@self/xtensa")
+    --
+    -- @note we need to parse it first, because `@` is also used for the toolchain packages, e.g. "@zig"
+    --
+    -- @note we only strip the `@addon/<addon>/` prefix here, the rest is parsed as usual,
+    -- so the addon toolchains can also be bound to packages, e.g. "@addon/esp32/clang@llvm"
+    --
+    local addon_prefix
+    if name:startswith("@addon/") then
+        local rest = name:sub(#"@addon/" + 1)
+        local pos = rest:find("/", 1, true)
+        if pos then
+            addon_prefix = "@addon/" .. rest:sub(1, pos - 1) .. "/"
+            name = rest:sub(pos + 1)
+        end
+    elseif name:startswith("@self/") then
+        addon_prefix = "@self/"
+        name = name:sub(#"@self/" + 1)
+    end
+
     local splitinfo = name:split('@', {plain = true, strict = true})
     local toolchain_name = splitinfo[1]
     if toolchain_name == "" then
@@ -553,7 +702,36 @@ function toolchain.parsename(name)
     if packages == "" then
         packages = nil
     end
-    return toolchain_name or packages, packages
+    local requireconfs, requirestr
+    if toolchain_name then
+        local toolchain_name_raw, configs_str = toolchain_name:match("(.-)%[(.*)%]")
+        if toolchain_name_raw and configs_str then
+            configs_str = configs_str:gsub("%[(.*)%]", function (w)
+                return w:replace(",", ":")
+            end)
+            requirestr = configs_str
+            toolchain_name = toolchain_name_raw
+            local splitinfo = configs_str:split(",", {plain = true})
+            for _, v in ipairs(splitinfo) do
+                local v = v
+                local parts = v:split("=", {plain = true})
+                local k = parts[1]
+                v = parts[2]
+                requireconfs = requireconfs or {}
+                if v then
+                    if v:find(":", 1 ,true) then
+                        requireconfs[k] = v:split(":", {plain = true})
+                    else
+                        requireconfs[k] = option.boolean(v)
+                    end
+                else
+                    requireconfs[k] = true
+                end
+            end
+        end
+    end
+    return {name = toolchain_name or packages, packages = packages, addon_prefix = addon_prefix,
+            requireconfs = requireconfs, requirestr = requirestr}
 end
 
 -- get toolchain apis
@@ -567,6 +745,7 @@ function toolchain.apis()
         ,   "toolchain.set_bindir"
         ,   "toolchain.set_sdkdir"
         ,   "toolchain.set_archs"
+        ,   "toolchain.set_runtimes"
         ,   "toolchain.set_homepage"
         ,   "toolchain.set_description"
         }
@@ -597,20 +776,56 @@ function toolchain.directories()
     return dirs
 end
 
--- load toolchain
-function toolchain.load(name, opt)
+-- add toolchain directories
+function toolchain.add_directories(...)
+    local dirs = toolchain.directories()
+    for _, dir in ipairs({...}) do
+        table.insert(dirs, 1, dir)
+    end
+    toolchain._DIRS = table.unique(dirs)
+end
 
-    -- get toolchain name and packages
+-- load toolchain by name
+--
+-- @param name  the toolchain name, e.g. "gcc", "clang", "msvc", "dotnet"
+-- @param opt   the options, e.g. {plat = "linux", arch = "x86_64"}
+-- @return      the toolchain instance, or nil and error info
+--
+function toolchain.load(name, opt)
     opt = opt or {}
-    local packages
-    name, packages = toolchain.parsename(name)
-    opt.packages = opt.packages or packages
+
+    -- parse toolchain name
+    local parseinfo = toolchain.parsename(name)
+    name = parseinfo.name
+
+    -- init configs
+    local configs = parseinfo.requireconfs or {}
+    table.join2(configs, opt)
+    configs.packages = opt.packages or parseinfo.packages
+    configs.plat = opt.plat or config.get("plat") or os.host()
+    configs.arch = opt.arch or config.get("arch") or os.arch()
+
+    -- find the toolchain script path
+    --
+    -- @note we need to resolve the addon reference before the cache, `@self/` depends on
+    -- the addon which owns the caller script, and the different addons may provide
+    -- the same toolchain name
+    --
+    local scriptpath, addon_prefix
+    if parseinfo.addon_prefix then
+        -- e.g. set_toolchains("@addon/esp32/xtensa"), set_toolchains("@self/xtensa")
+        local referenceinfo, errors = addon.resolve_reference(parseinfo.addon_prefix .. name, "/", "toolchains",
+            {scriptdir = opt.scriptdir})
+        if not referenceinfo then
+            return nil, errors
+        end
+        addon_prefix = "@addon/" .. referenceinfo.addon .. "/"
+        scriptpath = path.join(referenceinfo.dir, referenceinfo.name, "xmake.lua")
+    end
 
     -- get cache
-    opt.plat = opt.plat or config.get("plat") or os.host()
-    opt.arch = opt.arch or config.get("arch") or os.arch()
     local cache = toolchain._memcache()
-    local cachekey = toolchain._cachekey(name, opt)
+    local cachekey = toolchain._cachekey((addon_prefix or "") .. name, configs)
 
     -- get it directly from cache dirst
     local instance = cache:get(cachekey)
@@ -618,16 +833,16 @@ function toolchain.load(name, opt)
         return instance
     end
 
-    -- find the toolchain script path
-    local scriptpath = nil
-    for _, dir in ipairs(toolchain.directories()) do
-        scriptpath = path.join(dir, name, "xmake.lua")
-        if os.isfile(scriptpath) then
-            break
+    if not addon_prefix then
+        for _, dir in ipairs(toolchain.directories()) do
+            scriptpath = path.join(dir, name, "xmake.lua")
+            if os.isfile(scriptpath) then
+                break
+            end
         end
     end
     if not scriptpath or not os.isfile(scriptpath) then
-        return nil, string.format("the toolchain %s not found!", name)
+        return nil, string.format("the toolchain %s%s not found!", addon_prefix or "", name)
     end
 
     -- get interpreter
@@ -645,32 +860,37 @@ function toolchain.load(name, opt)
         return nil, errors
     end
 
-    -- check the toolchain name
-    local result = results[name]
-    if not result then
+    -- get toolchain info
+    local info = results[name]
+    if not info then
         return nil, string.format("the toolchain %s not found!", name)
     end
 
     -- save instance to the cache
-    instance = _instance.new(name, result, cachekey, true, opt)
+    instance = _instance.new(name, info, {cachekey = cachekey,
+        is_builtin = true, configs = configs, requirestr = parseinfo.requirestr})
     cache:set(cachekey, instance)
     return instance
 end
 
 -- load toolchain from the give toolchain info
 function toolchain.load_withinfo(name, info, opt)
-
-    -- get toolchain name and packages
     opt = opt or {}
-    local packages
-    name, packages = toolchain.parsename(name)
-    opt.packages = opt.packages or packages
+
+    -- parse toolchain name
+    local parseinfo = toolchain.parsename(name)
+    name = parseinfo.name
+
+    -- init configs
+    local configs = parseinfo.requireconfs or {}
+    table.join2(configs, opt)
+    configs.packages = opt.packages or parseinfo.packages
+    configs.plat = opt.plat or config.get("plat") or os.host()
+    configs.arch = opt.arch or config.get("arch") or os.arch()
 
     -- get cache key
-    opt.plat = opt.plat or config.get("plat") or os.host()
-    opt.arch = opt.arch or config.get("arch") or os.arch()
     local cache = toolchain._memcache()
-    local cachekey = toolchain._cachekey(name, opt)
+    local cachekey = toolchain._cachekey(name, configs)
 
     -- get it directly from cache dirst
     local instance = cache:get(cachekey)
@@ -679,7 +899,8 @@ function toolchain.load_withinfo(name, info, opt)
     end
 
     -- save instance to the cache
-    instance = _instance.new(name, info, cachekey, false, opt)
+    instance = _instance.new(name, info, {cachekey = cachekey,
+        is_builtin = false, configs = configs, requirestr = parseinfo.requirestr})
     cache:set(cachekey, instance)
     return instance
 end
@@ -698,8 +919,6 @@ function toolchain.load_fromfile(filepath, opt)
     local scope_opt = {interpreter = toolchain._interpreter(), deduplicate = true, enable_filter = true}
     local info = scopeinfo.new("toolchain", fileinfo.info, scope_opt)
     local instance = toolchain.load_withinfo(fileinfo.name, info, opt)
-    -- we need to skip check
-    instance._CHECKED = true
     return instance
 end
 
@@ -769,7 +988,6 @@ function toolchain.tool(toolchains, toolkind, opt)
         cache:set2(cachekey, "program", program)
         cache:set2(cachekey, "toolname", toolname)
         cache:set2(cachekey, "toolchain_info", toolchain_info)
-        cache:save()
     end
     return program, toolname, toolchain_info
 end
@@ -790,6 +1008,9 @@ function toolchain.toolconfig(toolchains, name, opt)
     local toolconfig = cache:get2(cachekey, name)
     if toolconfig == nil then
         for _, toolchain_inst in ipairs(toolchains) do
+            if not toolchain_inst:_is_checked() then
+                utils.warning("we cannot get toolconfig(%s) in toolchain(%s) with %s/%s, because it has been not checked yet!", name, toolchain_inst:name(), toolchain_inst:plat(), toolchain_inst:arch())
+            end
             local values = toolchain_inst:get(name)
             if values then
                 toolconfig = toolconfig or {}
@@ -807,6 +1028,14 @@ function toolchain.toolconfig(toolchains, name, opt)
         cache:set2(cachekey, name, toolconfig or false)
     end
     return toolconfig or nil
+end
+
+-- save all configs to the local cache
+--
+-- @see flushing localcache for each test is too slow,
+-- so we only flush the toolchain configuration cache once after the configuration is completed.
+function toolchain.save()
+    toolchain._localcache():save()
 end
 
 -- return module

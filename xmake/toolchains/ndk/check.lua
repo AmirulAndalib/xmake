@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        check.lua
@@ -43,6 +43,7 @@ function _check_ndk(toolchain)
         ndk = find_ndk(toolchain:config("ndk") or config.get("ndk"), {force = true, verbose = true,
                                                                       plat = toolchain:plat(),
                                                                       arch = toolchain:arch(),
+                                                                      compiler = toolchain:config("gcc") and "gcc" or "clang",
                                                                       sdkver = toolchain:config("sdkver")})
     end
     if ndk then
@@ -55,7 +56,6 @@ function _check_ndk(toolchain)
         toolchain:config_set("ndk_sdkver", ndk.sdkver)
         toolchain:config_set("ndk_toolchains_ver", ndk.toolchains_ver)
         toolchain:config_set("ndk_sysroot", ndk.sysroot)
-        toolchain:configs_save()
         return true
     else
         --[[TODO we also need to add this tips when use remote ndk toolchain
@@ -73,7 +73,6 @@ function _check_android_sdk(toolchain)
     if sdk then
         toolchain:config_set("android_sdk", sdk.sdkdir)
         toolchain:config_set("build_toolver", sdk.build_toolver)
-        toolchain:configs_save()
     end
 end
 

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -26,7 +26,7 @@ rule("zig.build")
         os.mkdir(cachedir)
         target:add("zcflags", "--cache-dir " .. cachedir)
     end)
-    on_build_files("private.action.build.object", {batch = true})
+    on_build_files("private.action.build.object", {jobgraph = true, batch = true})
 
 -- define rule: zig
 rule("zig")

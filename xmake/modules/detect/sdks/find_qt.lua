@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_qt.lua
@@ -119,8 +119,9 @@ function _find_sdkdir(sdkdir, sdkver)
             end
         end
     else
-        table.insert(paths, "~/Qt")
-        table.insert(paths, "~/Qt*")
+        for _, dir in ipairs(os.dirs("~/Qt*")) do
+            table.insert(paths, dir)
+        end
     end
 
     -- special case for android on windows, where qmake is a .bat from version 6.3
@@ -133,7 +134,25 @@ function _find_sdkdir(sdkdir, sdkver)
     end
 
     -- attempt to find qmake
-    local qmake = find_file(is_host("windows") and "qmake.exe" or "qmake", paths, {suffixes = subdirs})
+    local qmake
+    if is_host("windows") then
+        qmake = find_file("qmake.exe", paths, {suffixes = subdirs})
+    else
+        -- @see https://github.com/xmake-io/xmake/issues/4881
+        if sdkver then
+            local major = sdkver:sub(1, 1)
+            local suffixes = {major, "-" .. major, "-qt" .. major, ""}
+            for _, suffix in ipairs(suffixes) do
+                qmake = find_file("qmake" .. suffix, paths, {suffixes = subdirs})
+                if qmake then
+                    break
+                end
+            end
+        end
+        if not qmake then
+            qmake = find_file("qmake", paths, {suffixes = subdirs})
+        end
+    end
     if qmake then
         return path.directory(path.directory(qmake)), qmake
     end
@@ -154,16 +173,25 @@ function _find_qmake(sdkdir, sdkver)
     if sdkver then
         sdkver = semver.try_parse(sdkver)
         if sdkver then
-            qmake = find_tool("qmake", {program = "qmake" .. sdkver:major(), paths = sdkdir and path.join(sdkdir, "bin")})
+            local major = sdkver:major()
+            local suffixes = {major, "-" .. major, "-qt" .. major}
+            for _, suffix in ipairs(suffixes) do
+                local cachekey = "qmake" .. suffix
+                qmake = find_tool("qmake", {program = cachekey, cachekey = cachekey, paths = sdkdir and path.join(sdkdir, "bin")})
+                if qmake then
+                    break
+                end
+            end
         end
     end
 
     -- we need to find the default qmake in current system
     -- maybe we only installed qmake6
     if not qmake then
-        local suffixes = {"", "6", "-qt5"}
+        local suffixes = {"", "6", "-6", "-qt6", "5", "-5", "-qt5"}
         for _, suffix in ipairs(suffixes) do
-            qmake = find_tool("qmake", {program = "qmake" .. suffix, paths = sdkdir and path.join(sdkdir, "bin")})
+            local cachekey = "qmake" .. suffix
+            qmake = find_tool("qmake", {program = cachekey, cachekey = cachekey, paths = sdkdir and path.join(sdkdir, "bin")})
             if qmake then
                 break
             end
@@ -175,9 +203,34 @@ function _find_qmake(sdkdir, sdkver)
 end
 
 -- get qt environment
-function _get_qtenvs(qmake)
+function _get_qtenvs(qmake, sdkdir)
     local envs = {}
-    local results = try {function () return os.iorunv(qmake, {"-query"}) end}
+    local results
+
+    -- Try with -qtconf first if sdkdir is provided
+    if sdkdir then
+        local conf_paths = {path.join(sdkdir, "bin", "target_qt.conf"), path.join(sdkdir, "bin", "qt.conf"), path.join(sdkdir, "qt.conf")}
+        for _, conf_path in ipairs(conf_paths) do
+            if os.isfile(conf_path) then
+                results = try {function () return os.iorunv(qmake, {"-query", "-qtconf", conf_path}) end}
+                break
+            end
+        end
+    end
+
+    -- Fallback to normal query if sdkdir is not specified or -qtconf not applicable
+    results = results or try {
+        function ()
+            return os.iorunv(qmake, {"-query"})
+        end,
+        catch {
+            function (errors)
+                if errors then
+                    dprint(tostring(errors))
+                end
+            end
+        }
+    }
     if results then
         for _, qtenv in ipairs(results:split('\n', {plain = true})) do
             local kv = qtenv:split(':', {plain = true, limit = 2}) -- @note set limit = 2 for supporting value with win-style path, e.g. `key:C:\xxx`
@@ -185,35 +238,69 @@ function _get_qtenvs(qmake)
                 envs[kv[1]] = kv[2]:trim()
             end
         end
+        return envs
     end
-    return envs
+end
+
+-- Verify and correct the Qt SDK version for cross-compiling.
+-- qmake reports its own version (QT_VERSION), not the version specified in the SDK's configuration files.
+function _tryfix_sdkver_for_cross(sdkdir, sdkver)
+    local qconfig_path = sdkdir and path.join(sdkdir, "mkspecs", "qconfig.pri")
+    if not sdkver or not os.isfile(qconfig_path) then
+        return sdkver
+    end
+    -- Extract the actual SDK version from qconfig.pri
+    local qconfig = io.readfile(qconfig_path)
+    local actual_sdkver = qconfig and qconfig:match("QT_VERSION%s*=%s*(%S+)") -- Expected format: QT_VERSION = x.y.z
+    if not actual_sdkver then
+        return sdkver
+    end
+    if sdkver ~= actual_sdkver then
+        wprint("Host Qt SDK version (%s) differs from Target Qt SDK version (%s). To prevent build issues, please ensure both use the same version.", sdkver, actual_sdkver);
+    end
+    return actual_sdkver
 end
 
 -- find qt sdk toolchains
-function _find_qt(sdkdir, sdkver)
+function _find_qt(sdkdir, sdkver, sdkdir_host)
 
     -- find qmake
-    local qmake = _find_qmake(sdkdir, sdkver)
+    local qmake = _find_qmake(sdkdir_host or sdkdir, sdkver)
     if not qmake then
         return
     end
 
     -- get qt environments
-    local qtenvs = _get_qtenvs(qmake)
+    local located_sdkdir = sdkdir and _find_sdkdir(sdkdir, sdkver)
+    local qtenvs = _get_qtenvs(qmake, located_sdkdir or sdkdir)
     if not qtenvs then
         return
     end
 
     -- get qt toolchains
     sdkdir = qtenvs.QT_INSTALL_PREFIX
-    local sdkver = qtenvs.QT_VERSION
+    local sdkver = _tryfix_sdkver_for_cross(sdkdir, qtenvs.QT_VERSION)
     local bindir = qtenvs.QT_INSTALL_BINS
     local libexecdir = qtenvs.QT_INSTALL_LIBEXECS
     local qmldir = qtenvs.QT_INSTALL_QML
     local libdir = qtenvs.QT_INSTALL_LIBS
     local pluginsdir = qtenvs.QT_INSTALL_PLUGINS
     local includedir = qtenvs.QT_INSTALL_HEADERS
-    local mkspecsdir = qtenvs.QMAKE_MKSPECS or path.join(qtenvs.QT_INSTALL_ARCHDATA, "mkspecs")
+    local mkspecsdir = qtenvs.QMAKE_MKSPECS or path.join(qtenvs.QT_HOST_DATA, "mkspecs")
+    local mkspec = qtenvs.QMAKE_XSPEC or qtenvs.QMAKE_SPEC
+
+    -- handle qt sysroot
+    local qt_sysroot = qtenvs.QT_SYSROOT or ""
+    if #qt_sysroot > 0 and os.isdir(qt_sysroot) then
+        sdkdir = path.join(qt_sysroot, sdkdir)
+        bindir = path.join(qt_sysroot, bindir)
+        libexecdir = path.join(qt_sysroot, libexecdir)
+        qmldir = path.join(qt_sysroot, qmldir)
+        libdir = path.join(qt_sysroot, libdir)
+        pluginsdir = path.join(qt_sysroot, pluginsdir)
+        includedir = path.join(qt_sysroot, includedir)
+    end
+
     -- for 6.2
     local bindir_host = qtenvs.QT_HOST_BINS
     if not bindir_host and libexecdir and is_plat("android", "iphoneos") then
@@ -233,7 +320,17 @@ function _find_qt(sdkdir, sdkver)
             -- TODO
         end
     end
-    return {sdkdir = sdkdir, bindir = bindir, bindir_host = bindir_host, libexecdir = libexecdir, libexecdir_host = libexecdir_host, libdir = libdir, includedir = includedir, qmldir = qmldir, pluginsdir = pluginsdir, mkspecsdir = mkspecsdir, sdkver = sdkver}
+
+    if sdkdir_host then
+        local located_sdkdir_host = _find_sdkdir(sdkdir_host, sdkver)
+        local qtenvs_host = _get_qtenvs(qmake, located_sdkdir_host or sdkdir_host)
+        if qtenvs_host then
+            bindir_host = qtenvs_host.QT_HOST_BINS or qtenvs_host.QT_INSTALL_BINS or bindir_host
+            libexecdir_host = qtenvs_host.QT_HOST_LIBEXECS or qtenvs_host.QT_INSTALL_LIBEXECS or libexecdir_host
+        end
+    end
+
+    return {sdkdir = sdkdir, bindir = bindir, bindir_host = bindir_host, libexecdir = libexecdir, libexecdir_host = libexecdir_host, libdir = libdir, includedir = includedir, qmldir = qmldir, pluginsdir = pluginsdir, mkspecsdir = mkspecsdir, mkspec = mkspec, sdkver = sdkver}
 end
 
 -- find qt sdk toolchains
@@ -249,6 +346,12 @@ end
 --
 -- @endcode
 --
+-- find Qt SDK
+--
+-- @param sdkdir the Qt SDK directory (optional)
+-- @param opt    the options, e.g. {verbose = true, force = false}
+-- @return       the SDK info table {sdkdir, bindir, libdir, includedir, ...}
+--
 function main(sdkdir, opt)
 
     -- init arguments
@@ -256,39 +359,39 @@ function main(sdkdir, opt)
 
     -- attempt to load cache first
     local key = "detect.sdks.find_qt"
-    local cacheinfo = detectcache:get(key) or {}
+    local cacheinfo = (sdkdir and detectcache:get2(key, sdkdir)) or detectcache:get(key) or {}
     if not opt.force and cacheinfo.qt and cacheinfo.qt.sdkdir and os.isdir(cacheinfo.qt.sdkdir) then
         return cacheinfo.qt
     end
 
     -- find qt
-    local qt = _find_qt(sdkdir or config.get("qt") or global.get("qt") or config.get("sdk"), opt.version or config.get("qt_sdkver"))
+    local real_sdkdir = sdkdir or config.get("qt") or global.get("qt") or config.get("sdk")
+    local sdkver = opt.version or config.get("qt_sdkver")
+    local sdkdir_host = opt.sdkdir_host or config.get("qt_host") or global.get("qt_host")
+    local qt = _find_qt(real_sdkdir, sdkver, sdkdir_host)
     if qt then
-
-        -- save to config
         config.set("qt", qt.sdkdir, {force = true, readonly = true})
         config.set("qt_sdkver", qt.sdkver, {force = true, readonly = true})
 
-        -- trace
         if opt.verbose or option.get("verbose") then
-            cprint("checking for Qt SDK directory ... ${color.success}%s", qt.sdkdir)
+            local extra = ""
             if qt.sdkver then
-                cprint("checking for Qt SDK version ... ${color.success}%s", qt.sdkver)
-            else
-                cprint("checking for Qt SDK version ... ${color.nothing}${text.nothing}")
+                extra = " (" .. qt.sdkver .. ")"
             end
+            cprint("checking for Qt SDK ... ${color.success}%s%s", qt.sdkdir, extra)
         end
     else
-
-        -- trace
         if opt.verbose or option.get("verbose") then
-            cprint("checking for Qt SDK directory ... ${color.nothing}${text.nothing}")
+            cprint("checking for Qt SDK ... ${color.nothing}${text.nothing}")
         end
     end
 
     -- save to cache
     cacheinfo.qt = qt or false
-    detectcache:set(key, cacheinfo)
-    detectcache:save()
+    if sdkdir then
+        detectcache:set2(key, sdkdir, cacheinfo)
+    else
+        detectcache:set(key, cacheinfo)
+    end
     return qt
 end

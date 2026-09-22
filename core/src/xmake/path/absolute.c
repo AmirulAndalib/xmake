@@ -12,7 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Copyright (C) 2015-present, TBOOX Open Source Group.
+ * Copyright (C) 2015-present, Xmake Open Source Community.
  *
  * @author      ruki
  * @file        absolute.c
@@ -22,8 +22,8 @@
 /* //////////////////////////////////////////////////////////////////////////////////////
  * trace
  */
-#define TB_TRACE_MODULE_NAME                "absolute"
-#define TB_TRACE_MODULE_DEBUG               (0)
+#define TB_TRACE_MODULE_NAME "absolute"
+#define TB_TRACE_MODULE_DEBUG (0)
 
 /* //////////////////////////////////////////////////////////////////////////////////////
  * includes
@@ -33,17 +33,15 @@
 /* //////////////////////////////////////////////////////////////////////////////////////
  * implementation
  */
-tb_int_t xm_path_absolute(lua_State* lua)
-{
-    // check
+tb_int_t xm_path_absolute(lua_State *lua) {
     tb_assert_and_check_return_val(lua, 0);
 
     // get the path
-    tb_char_t const* path = luaL_checkstring(lua, 1);
+    tb_char_t const *path = luaL_checkstring(lua, 1);
     tb_check_return_val(path, 0);
 
     // get the root
-    tb_char_t const* root = luaL_optstring(lua, 2, tb_null);
+    tb_char_t const *root = luaL_optstring(lua, 2, tb_null);
 
     // do path:absolute(root)
     tb_char_t data[TB_PATH_MAXN];

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -25,40 +25,64 @@ toolchain("emcc")
 
     set_kind("standalone")
 
-    local suffix = is_host("windows") and ".bat" or ""
-    set_toolset("cc", "emcc" .. suffix)
-    set_toolset("cxx", "emcc" .. suffix, "em++" .. suffix)
-    set_toolset("ld", "em++" .. suffix, "emcc" .. suffix)
-    set_toolset("sh", "em++" .. suffix, "emcc" .. suffix)
-    set_toolset("ar", "emar" .. suffix)
-    set_toolset("as", "emcc" .. suffix)
-    set_toolset("ranlib", "emranlib" .. suffix)
+    local function toolnames(...)
+        local result = {}
+        for _, basename in ipairs({...}) do
+            if is_host("windows") then
+                table.insert(result, basename .. ".exe")
+                table.insert(result, basename .. ".bat")
+            else
+                table.insert(result, basename)
+            end
+        end
+        return table.unpack(result)
+    end
+    set_toolset("cc", toolnames("emcc"))
+    set_toolset("cxx", toolnames("emcc", "em++"))
+    set_toolset("ld", toolnames("em++", "emcc"))
+    set_toolset("sh", toolnames("em++", "emcc"))
+    set_toolset("ar", toolnames("emar"))
+    set_toolset("as", toolnames("emcc"))
+    set_toolset("ranlib", toolnames("emranlib"))
 
     on_check(function (toolchain)
         import("lib.detect.find_tool")
         import("detect.sdks.find_emsdk")
+        local emsdk
         for _, package in ipairs(toolchain:packages()) do
             local installdir = package:installdir()
             if installdir and os.isdir(installdir) then
-                local emsdk = find_emsdk(installdir)
+                emsdk = find_emsdk(installdir)
                 if emsdk then
-                    toolchain:config_set("bindir", emsdk.emscripten)
-                    toolchain:config_set("sdkdir", emsdk.sdkdir)
-                    toolchain:configs_save()
-                    return emsdk
+                    break
                 end
             end
+        end
+        if not emsdk then
+            emsdk = find_emsdk()
+        end
+        if emsdk then
+            toolchain:config_set("bindir", emsdk.emscripten)
+            toolchain:config_set("sdkdir", emsdk.sdkdir)
+            return emsdk
         end
         return find_tool("emcc")
     end)
 
     on_load(function (toolchain)
-        toolchain:add("cxflags", "")
-        toolchain:add("asflags", "")
-        toolchain:add("ldflags", "")
-        toolchain:add("shflags", "")
+        if toolchain:is_arch("wasm64") then
+            toolchain:add("cxflags", "-sMEMORY64=1")
+            toolchain:add("asflags", "-sMEMORY64=1")
+            toolchain:add("ldflags", "-sMEMORY64=1")
+            toolchain:add("shflags", "-sMEMORY64=1")
+        else
+            toolchain:add("cxflags", "")
+            toolchain:add("asflags", "")
+            toolchain:add("ldflags", "")
+            toolchain:add("shflags", "")
+        end
         for _, package in ipairs(toolchain:packages()) do
-            local envs = package:get("envs")
+            local envs = package:envs()
             if envs then
                 for _, name in ipairs({"EMSDK", "EMSDK_NODE", "EMSDK_PYTHON", "JAVA_HOME"}) do
                     local values = envs[name]
@@ -69,4 +93,3 @@ toolchain("emcc")
             end
         end
     end)
-

@@ -12,7 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Copyright (C) 2015-present, TBOOX Open Source Group.
+ * Copyright (C) 2015-present, Xmake Open Source Community.
  *
  * @author      ruki
  * @file        compress_stream_open.c
@@ -22,8 +22,8 @@
 /* //////////////////////////////////////////////////////////////////////////////////////
  * trace
  */
-#define TB_TRACE_MODULE_NAME                "compress_stream_open"
-#define TB_TRACE_MODULE_DEBUG               (0)
+#define TB_TRACE_MODULE_NAME "compress_stream_open"
+#define TB_TRACE_MODULE_DEBUG (0)
 
 /* //////////////////////////////////////////////////////////////////////////////////////
  * includes
@@ -33,14 +33,14 @@
 /* //////////////////////////////////////////////////////////////////////////////////////
  * implementation
  */
-tb_int_t xm_lz4_compress_stream_open(lua_State* lua)
-{
-    // check
+tb_int_t xm_lz4_compress_stream_open(lua_State *lua) {
     tb_assert_and_check_return_val(lua, 0);
 
-    xm_lz4_cstream_t* stream = xm_lz4_cstream_init();
-    if (stream) xm_lua_pushpointer(lua, (tb_pointer_t)stream);
-    else lua_pushnil(lua);
+    xm_lz4_cstream_t *stream = xm_lz4_cstream_init();
+    if (stream) {
+        xm_lua_pushpointer(lua, (tb_pointer_t)stream);
+    } else {
+        lua_pushnil(lua);
+    }
     return 1;
 }
-

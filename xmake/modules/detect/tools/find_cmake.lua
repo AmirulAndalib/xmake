@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_cmake.lua
@@ -40,6 +40,7 @@ function main(opt)
 
     -- init options
     opt = opt or {}
+    opt.norunfile = true
     if is_host("windows") then
         opt.paths = "$(reg HKEY_LOCAL_MACHINE\\SOFTWARE\\Kitware\\CMake;InstallDir)\\bin"
     end

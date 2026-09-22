@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -49,18 +49,19 @@ language("objc++")
     on_check_main("check_main")
 
     -- set name flags
-    set_nameflags
-    {
-        object =
-        {
+    set_nameflags {
+        object = {
             "config.includedirs"
         ,   "config.frameworkdirs"
         ,   "config.frameworks"
+        ,   "target.runtimes"
         ,   "target.symbols"
         ,   "target.warnings"
         ,   "target.optimize:check"
         ,   "target.vectorexts:check"
         ,   "target.languages"
+        ,   "target.pmheader"
+        ,   "target.pmxxheader"
         ,   "target.includedirs"
         ,   "target.defines"
         ,   "target.undefines"
@@ -68,8 +69,6 @@ language("objc++")
         ,   "target.frameworks"
         ,   "target.exceptions"
         ,   "target.encodings"
-        ,   "target.pmheader"
-        ,   "target.pmxxheader"
         ,   "target.forceincludes"
         ,   "toolchain.includedirs"
         ,   "toolchain.defines"
@@ -79,9 +78,9 @@ language("objc++")
         ,   "target.sysincludedirs"
         ,   "toolchain.sysincludedirs"
         }
-    ,   binary =
-        {
-            "config.linkdirs"
+    ,   binary = {
+            "target.runtimes"
+        ,   "config.linkdirs"
         ,   "config.frameworkdirs"
         ,   "target.linkdirs"
         ,   "target.rpathdirs"
@@ -102,9 +101,9 @@ language("objc++")
         ,   "target.syslinks"
         ,   "toolchain.syslinks"
         }
-    ,   shared =
-        {
-            "config.linkdirs"
+    ,   shared = {
+            "target.runtimes"
+        ,   "config.linkdirs"
         ,   "config.frameworkdirs"
         ,   "target.linkdirs"
         ,   "target.frameworkdirs"
@@ -123,8 +122,7 @@ language("objc++")
         ,   "target.syslinks"
         ,   "toolchain.syslinks"
         }
-    ,   static =
-        {
+    ,   static = {
             "target.strip"
         ,   "target.symbols"
         }
@@ -134,26 +132,26 @@ language("objc++")
     set_menu {
                 config =
                 {
-                    {category = "Cross Complation Configuration/Compiler Configuration"                             }
+                    {category = "Cross Compilation Configuration/Compiler Configuration"                             }
                 ,   {nil, "mm",            "kv", nil,          "The Objc Compiler"                                  }
                 ,   {nil, "mxx",           "kv", nil,          "The Objc++ Compiler"                                }
 
-                ,   {category = "Cross Complation Configuration/Linker Configuration"                               }
+                ,   {category = "Cross Compilation Configuration/Linker Configuration"                               }
                 ,   {nil, "ld",            "kv", nil,          "The Linker"                                         }
                 ,   {nil, "ar",            "kv", nil,          "The Static Library Linker"                          }
                 ,   {nil, "sh",            "kv", nil,          "The Shared Library Linker"                          }
 
-                ,   {category = "Cross Complation Configuration/Compiler Flags Configuration"                       }
+                ,   {category = "Cross Compilation Configuration/Compiler Flags Configuration"                       }
                 ,   {nil, "mflags",        "kv", nil,          "The Objc Compiler Flags"                            }
                 ,   {nil, "mxflags",       "kv", nil,          "The Objc/c++ Compiler Flags"                        }
                 ,   {nil, "mxxflags",      "kv", nil,          "The Objc++ Compiler Flags"                          }
 
-                ,   {category = "Cross Complation Configuration/Linker Flags Configuration"                         }
+                ,   {category = "Cross Compilation Configuration/Linker Flags Configuration"                         }
                 ,   {nil, "ldflags",       "kv", nil,          "The Binary Linker Flags"                            }
                 ,   {nil, "arflags",       "kv", nil,          "The Static Library Linker Flags"                    }
                 ,   {nil, "shflags",       "kv", nil,          "The Shared Library Linker Flags"                    }
 
-                ,   {category = "Cross Complation Configuration/Builtin Flags Configuration"                        }
+                ,   {category = "Cross Compilation Configuration/Builtin Flags Configuration"                        }
                 ,   {nil, "links",         "kv", nil,          "The Link Libraries"                                 }
                 ,   {nil, "syslinks",      "kv", nil,          "The System Link Libraries"                          }
                 ,   {nil, "linkdirs",      "kv", nil,          "The Link Search Directories"                        }

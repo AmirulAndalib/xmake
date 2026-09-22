@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_dxc.lua
@@ -43,6 +43,7 @@ function main(opt)
         "$(env VK_SDK_PATH)/Bin",
         "$(env PATH)"
     }
+    opt.paths = table.wrap(opt.paths)
     local program = find_program(opt.program or "dxc.exe", opt)
     local version = nil
     if program and opt and opt.version then

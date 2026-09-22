@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        server_session.lua
@@ -53,20 +53,15 @@ end
 
 -- open server session
 function server_session:open(respmsg)
-    if self:is_connected() then
-        return
-    end
-
-    -- get server info
     local body = respmsg:body()
     body.ncpu = os.cpuinfo().ncpu
     body.njob = os.default_njob()
-
-    -- update status
-    local status = self:status()
-    status.connected = true
-    status.session_id = self:id()
-    self:status_save()
+    if not self:is_connected() then
+        local status = self:status()
+        status.connected = true
+        status.session_id = self:id()
+        self:status_save()
+    end
 end
 
 -- close server session
@@ -85,7 +80,7 @@ end
 -- do clean
 function server_session:clean()
     vprint("%s: clean files in %s ..", self, self:workdir())
-    os.tryrm(self:buildir())
+    os.tryrm(self:builddir())
     os.tryrm(self:cachedir())
     vprint("%s: clean files ok", self)
 end
@@ -98,7 +93,7 @@ function server_session:compile(respmsg)
     local stream = self:stream()
     local cachekey = body.cachekey
     local sourcename = body.sourcename
-    local sourcedir = path.join(self:buildir(), (hash.uuid4():gsub("-", "")))
+    local sourcedir = path.join(self:builddir(), (hash.uuid4():gsub("-", "")))
     local sourcefile = path.join(sourcedir, sourcename)
     local objectfile = (cachekey and path.join(self:cachedir(), cachekey:sub(1, 2), cachekey) or sourcefile) .. ".o"
     local objectfile_infofile = objectfile .. ".txt"
@@ -197,7 +192,7 @@ function server_session:workdir()
 end
 
 -- get build directory
-function server_session:buildir()
+function server_session:builddir()
     return path.join(self:workdir(), "build")
 end
 

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki, BarrOff
 -- @file        ldc2.lua
@@ -48,8 +48,18 @@ function nf_optimize(self, level)
     return maps[level]
 end
 
+-- make the linkdir flag
+-- ldc2 on windows uses msvc link.exe which requires /libpath: (not -libpath:)
+function nf_linkdir(self, dir)
+    if self:is_plat("windows") then
+        return {"-L/libpath:" .. dir}
+    else
+        return {"-L-L" .. dir}
+    end
+end
+
 -- make the symbol flag
-function nf_symbol(self, level, target)
+function nf_symbol(self, level)
     local kind = self:kind()
     if language.sourcekinds()[kind] then
         local maps = _g.symbol_maps
@@ -61,7 +71,7 @@ function nf_symbol(self, level, target)
             _g.symbol_maps = maps
         end
         return maps[level .. '_' .. kind] or maps[level]
-    elseif (kind == "dcld" or kind == "dcsh") and target:is_plat("windows") and level == "debug" then
+    elseif (kind == "dcld" or kind == "dcsh") and self:is_plat("windows") and level == "debug" then
         return "-g"
     end
 end

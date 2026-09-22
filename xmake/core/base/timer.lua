@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        timer.lua
@@ -35,7 +35,13 @@ function timer:_tasks()
     return self._TASKS
 end
 
--- post timer task after delay and will be auto-remove it after be expired
+-- post a timer task after delay (auto-removed after expiration)
+--
+-- @param func  the callback function
+-- @param delay the delay in milliseconds
+-- @param opt   the options, e.g. {continuous = true}
+-- @return      the task handle (set task.cancel = true to cancel)
+--
 function timer:post(func, delay, opt)
     return self:post_at(func, os.mclock() + delay, delay, opt)
 end
@@ -51,12 +57,22 @@ function timer:post_at(func, when, period, opt)
     return task
 end
 
--- post timer task after the relative time and will be auto-remove it after be expired
+-- post a timer task after the relative time with optional repeat period
+--
+-- @param func    the callback function
+-- @param after   the initial delay in milliseconds
+-- @param period  the repeat period in milliseconds (0 for one-shot)
+-- @param opt     the options, e.g. {continuous = true}
+-- @return        the task handle
+--
 function timer:post_after(func, after, period, opt)
     return self:post_at(func, os.mclock() + after, period, opt)
 end
 
--- get the delay of next task
+-- get the delay until the next task fires
+--
+-- @return      the delay in milliseconds, or -1 if no tasks
+--
 function timer:delay()
     local delay = nil
     local tasks = self:_tasks()
@@ -70,7 +86,7 @@ function timer:delay()
     return delay
 end
 
--- run the timer next loop
+-- run the next timer loop, executing expired tasks
 function timer:next()
     local tasks = self:_tasks()
     while tasks:length() > 0 do
@@ -101,7 +117,7 @@ function timer:next()
     return true
 end
 
--- kill all timer tasks
+-- kill all pending timer tasks
 function timer:kill()
     local tasks = self:_tasks()
     while tasks:length() > 0 do
@@ -129,7 +145,11 @@ function timer:init(name)
     end}
 end
 
--- new timer
+-- create a new timer
+--
+-- @param name  the timer name for debugging
+-- @return      the timer instance
+--
 function timer:new(name)
     self = self()
     self:init(name)

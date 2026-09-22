@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -30,16 +30,10 @@
 -- @endcode
 --
 toolchain("msvc")
-
-    -- set homepage
+    set_kind("standalone")
     set_homepage("https://visualstudio.microsoft.com")
     set_description("Microsoft Visual C/C++ Compiler")
+    set_runtimes("MT", "MTd", "MD", "MDd")
 
-    -- mark as standalone toolchain
-    set_kind("standalone")
-
-    -- check toolchain
     on_check("check")
-
-    -- load toolchain
     on_load("load")

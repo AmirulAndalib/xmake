@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        winos.lua
@@ -33,7 +33,10 @@ sandbox_winos.console_cp              = winos.console_cp
 sandbox_winos.console_output_cp       = winos.console_output_cp
 sandbox_winos.logical_drives          = winos.logical_drives
 sandbox_winos.cmdargv                 = winos.cmdargv
+sandbox_winos.processes               = winos.processes
 sandbox_winos.inherit_handles_safely  = winos.inherit_handles_safely
+sandbox_winos.set_error_mode          = winos.set_error_mode
+sandbox_winos.file_signature          = winos.file_signature
 
 -- get windows system version
 function sandbox_winos.version()

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_clang_format.lua
@@ -41,7 +41,7 @@ function main(opt)
     if not program and is_host("macosx") then
         local llvm = try {function () return os.iorunv("brew", {"--prefix", "llvm"}) end}
         if llvm then
-            opt.paths = opt.paths or {}
+            opt.paths = table.wrap(opt.paths)
             opt.force = true
             table.insert(opt.paths, path.join(llvm:trim(), "bin"))
             program = find_program(opt.program or "clang-format", opt)

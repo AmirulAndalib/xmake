@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        main.lua
@@ -25,7 +25,6 @@ import("core.project.config")
 import("make.makefile")
 import("make.xmakefile")
 import("cmake.cmakelists")
-import("xcode.xcodeproj")
 import("ninja.build_ninja")
 import("vstudio.vs")
 import("vsxmake.vsxmake")
@@ -33,6 +32,7 @@ import("clang.compile_flags")
 import("clang.compile_commands")
 import("private.utils.statistics")
 import("private.service.remote_build.action", {alias = "remote_build_action"})
+import("xcode.xcodeproj")
 
 function makers()
     return {
@@ -54,6 +54,7 @@ function makers()
     ,   vs2017           = vs.make(2017)
     ,   vs2019           = vs.make(2019)
     ,   vs2022           = vs.make(2022)
+    ,   vs2026           = vs.make(2026)
     ,   vs               = vs.make()
     ,   vsxmake2010      = vsxmake.make(2010)
     ,   vsxmake2012      = vsxmake.make(2012)
@@ -62,6 +63,7 @@ function makers()
     ,   vsxmake2017      = vsxmake.make(2017)
     ,   vsxmake2019      = vsxmake.make(2019)
     ,   vsxmake2022      = vsxmake.make(2022)
+    ,   vsxmake2026      = vsxmake.make(2026)
     ,   vsxmake          = vsxmake.make()
     ,   compile_flags    = compile_flags.make
     ,   compile_commands = compile_commands.make
@@ -85,8 +87,9 @@ function main()
     -- in project generator?
     os.setenv("XMAKE_IN_PROJECT_GENERATOR", "true")
 
-    -- config it first
-    task.run("config")
+    -- load config first
+    -- @note When generating project configuration files, we should not modify the configuration and cache.
+    task.run("config", {}, {loadonly = true})
 
     -- post statistics
     statistics.post()

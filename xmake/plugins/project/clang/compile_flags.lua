@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      luzhlon
 -- @file        compile_flags.lua
@@ -22,6 +22,8 @@
 import("core.tool.compiler")
 import("core.project.project")
 import("core.language.language")
+import("private.utils.target", {alias = "target_utils"})
+import("plugins.project.utils.target_cmds", {rootdir = os.programdir()})
 
 -- make the object
 function _make_object(target, flags, sourcefile, objectfile)
@@ -71,7 +73,8 @@ end
 -- make all
 function _make_all(flags)
     _g.firstline = true
-    for _, target in pairs(project.targets()) do
+    local project_targets = target_utils.get_project_targets()
+    for _, target in pairs(project_targets) do
         if not target:is_phony() and target:is_default() then
             _make_target(target, flags)
         end
@@ -85,9 +88,10 @@ end
 --  - https://clang.llvm.org/docs/JSONCompilationDatabase.html
 --
 function make(outputdir)
-
-    -- enter project directory
     local oldir = os.cd(os.projectdir())
+
+    -- prepare targets
+    target_cmds.prepare_targets()
 
     -- make all
     local flags = {}
@@ -100,6 +104,5 @@ function make(outputdir)
     end
     flagfile:close()
 
-    -- leave project directory
     os.cd(oldir)
 end

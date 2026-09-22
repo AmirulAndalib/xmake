@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        ar.lua
@@ -30,8 +30,7 @@ end
 
 -- make the strip flag
 function strip(self, level)
-    local maps =
-    {
+    local maps = {
         debug = "-S"
     ,   all   = "-s"
     }
@@ -49,15 +48,16 @@ function linkargv(self, objectfiles, targetkind, targetfile, flags, opt)
 end
 
 -- link the library file
-function link(self, objectfiles, targetkind, targetfile, flags)
+function link(self, objectfiles, targetkind, targetfile, flags, opt)
+    opt = opt or {}
     os.mkdir(path.directory(targetfile))
 
     -- @note remove the previous archived file first to force recreating a new file
     os.tryrm(targetfile)
 
     -- link it
-    local program, argv = linkargv(self, objectfiles, targetkind, targetfile, flags)
-    os.runv(program, argv, {envs = self:runenvs()})
+    local program, argv = linkargv(self, objectfiles, targetkind, targetfile, flags, opt)
+    os.runv(program, argv, {envs = self:runenvs(), shell = opt.shell})
 end
 
 

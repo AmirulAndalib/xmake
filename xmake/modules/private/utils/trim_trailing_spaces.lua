@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        trim_trailing_spaces.lua
@@ -24,7 +24,7 @@ function main(pattern)
         if filedata then
             local filedata2 = {}
             for _, line in ipairs(filedata:split('\n', {strict = true})) do
-                line = line:rtrim()
+                local line = line:rtrim()
                 table.insert(filedata2, line)
             end
             io.writefile(filepath, table.concat(filedata2, "\n"))

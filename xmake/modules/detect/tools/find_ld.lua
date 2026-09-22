@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_ld.lua
@@ -36,11 +36,7 @@ import("lib.detect.find_program")
 -- @endcode
 --
 function main(opt)
-
-    -- init options
-    opt       = opt or {}
+    opt = opt or {}
     opt.norun = true
-
-    -- find program
     return find_program(opt.program or "ld", opt)
 end

@@ -12,34 +12,24 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
 --
 
--- define platform
 platform("cygwin")
-
-    -- set os
     set_os("windows")
-
-    -- set hosts
     set_hosts("windows")
-
-    -- set archs
     set_archs("i386", "x86_64")
 
-    -- set formats
     set_formats("static", "lib$(name).a")
     set_formats("object", "$(name).o")
     set_formats("shared", "$(name).dll")
     set_formats("binary", "$(name).exe")
     set_formats("symbol", "$(name).sym")
 
-    -- set install directory
     set_installdir("/usr/local")
 
-    -- set toolchains
     set_toolchains("envs", "cross", "gcc", "clang", "yasm", "gfortran")
 

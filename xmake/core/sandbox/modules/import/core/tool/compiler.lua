@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        compiler.lua
@@ -89,7 +89,7 @@ end
 --
 -- @param sourcefiles   the source files
 -- @param opt           the argument options (contain all the compiler attributes of target),
---                      e.g. {target = ..., targetkind = "static", config = {cxflags = "", defines = "", includedirs = "", ...}}
+--                      e.g. {target = ..., targetkind = "static", configs = {cxflags = "", defines = "", includedirs = "", ...}}
 --
 -- @return              the flags list
 --
@@ -207,7 +207,7 @@ function sandbox_core_tool_compiler.features(langkind, opt)
         local flags = instance:compflags(opt)
 
         -- get features
-        local ok, results_or_errors = sandbox.load(sandbox_core_tool_compiler._features, instance:name(), {flags = flags, program = instance:program(), envs = instance:runenvs()})
+        local ok, results_or_errors = sandbox.call(sandbox_core_tool_compiler._features, instance:name(), {flags = flags, program = instance:program(), envs = instance:runenvs()})
         if not ok then
             raise(results_or_errors)
         end
@@ -259,7 +259,7 @@ function sandbox_core_tool_compiler.has_features(features, opt)
     for sourcekind, features in pairs(features_by_kind) do
         local instance = sandbox_core_tool_compiler.load(sourcekind, opt)
         local flags = instance:compflags(opt)
-        local ok, results_or_errors = sandbox.load(sandbox_core_tool_compiler._has_features, instance:name(), features, {flags = flags, program = instance:program(), envs = instance:runenvs()})
+        local ok, results_or_errors = sandbox.call(sandbox_core_tool_compiler._has_features, instance:name(), features, {flags = flags, program = instance:program(), envs = instance:runenvs()})
         if not ok then
             raise(results_or_errors)
         end

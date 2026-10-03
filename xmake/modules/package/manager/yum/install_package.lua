@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        install_package.lua
@@ -43,9 +43,6 @@ function main(name, opt)
 
     -- init argv
     local argv = {"install", "-y", opt.yum or name}
-    if opt.verbose or option.get("verbose") then
-        table.insert(argv, "--verbose")
-    end
 
     -- install package directly if the current user is root
     if os.isroot() then

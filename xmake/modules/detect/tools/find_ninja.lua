@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_ninja.lua
@@ -40,6 +40,7 @@ function main(opt)
 
     -- find program
     opt = opt or {}
+    opt.norunfile = true
     local program = find_program(opt.program or "ninja", opt)
     if not program and is_host("windows") then
         local msvc = toolchain.load("msvc", {plat = os.host(), arch = os.arch()})

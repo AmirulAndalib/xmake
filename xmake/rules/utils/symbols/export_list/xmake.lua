@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -37,7 +37,8 @@
 rule("utils.symbols.export_list")
     set_extensions(".export.txt")
     on_config(function (target)
-        assert(target:is_shared(), 'rule("utils.symbols.export_list"): only for shared target(%s)!', target:name())
+        assert(target:is_shared() or (target:is_plat("windows") and target:is_binary()),
+            'rule("utils.symbols.export_list"): only for binary/shared target(%s)!', target:fullname())
         local exportfile
         local exportkind
         local exportsymbols = target:extraconf("rules", "utils.symbols.export_list", "symbols")
@@ -60,10 +61,14 @@ rule("utils.symbols.export_list")
                 exportkind = "def"
                 exportfile = path.join(target:autogendir(), "rules", "symbols", "export_list.def")
                 target:add("shflags", "-L/def:" .. exportfile, {force = true})
+                target:add("ldflags", "-L/def:" .. exportfile, {force = true})
             elseif target:is_plat("macosx", "iphoneos", "watchos", "appletvos") then
                 exportkind = "apple"
                 exportfile = path.join(target:autogendir(), "rules", "symbols", "export_list.exp")
                 target:add("shflags", {"-L-exported_symbols_list", "-L" .. exportfile}, {force = true, expand = false})
+            elseif target:is_plat("solaris") then
+                -- Solaris linker does not support --version-script
+                return
             else
                 exportkind = "ver"
                 exportfile = path.join(target:autogendir(), "rules", "symbols", "export_list.map")
@@ -73,10 +78,19 @@ rule("utils.symbols.export_list")
             exportkind = "def"
             exportfile = path.join(target:autogendir(), "rules", "symbols", "export_list.def")
             target:add("shflags", "/def:" .. exportfile, {force = true})
+            target:add("ldflags", "/def:" .. exportfile, {force = true})
+        elseif target:is_plat("windows") and target:has_tool("ld", "clangxx") then
+            exportkind = "def"
+            exportfile = path.join(target:autogendir(), "rules", "symbols", "export_list.def")
+            target:add("shflags", "-Wl,/def:" .. exportfile, {force = true})
+            target:add("ldflags", "-Wl,/def:" .. exportfile, {force = true})
         elseif target:is_plat("macosx", "iphoneos", "watchos", "appletvos") then
             exportkind = "apple"
             exportfile = path.join(target:autogendir(), "rules", "symbols", "export_list.exp")
             target:add("shflags", {"-Wl,-exported_symbols_list", exportfile}, {force = true, expand = false})
+        elseif target:is_plat("solaris") then
+            -- Solaris linker does not support --version-script
+            return
         elseif target:has_tool("ld", "gcc", "gxx", "clang", "clangxx") or
                target:has_tool("sh", "gcc", "gxx", "clang", "clangxx") then
             exportkind = "ver"
@@ -88,8 +102,10 @@ rule("utils.symbols.export_list")
             target:add("shflags", "--version-script=" .. exportfile, {force = true})
         end
         if exportfile and exportkind then
+            local exportfile_tmp = os.tmpfile(exportfile)
+            os.tryrm(exportfile_tmp)
             if exportkind == "ver" then
-                io.writefile(exportfile, ([[{
+                io.writefile(exportfile_tmp, ([[{
     global:
         %s
 
@@ -97,8 +113,9 @@ rule("utils.symbols.export_list")
         *;
 };]]):format(table.concat(exportsymbols, ";\n        ") .. ";"))
             elseif exportkind == "apple" then
-                local file = io.open(exportfile, 'w')
+                local file = io.open(exportfile_tmp, 'w')
                 for _, symbol in ipairs(exportsymbols) do
+                    local symbol = symbol
                     if not symbol:startswith("_") then
                         symbol = "_" .. symbol
                     end
@@ -106,12 +123,18 @@ rule("utils.symbols.export_list")
                 end
                 file:close()
             elseif exportkind == "def" then
-                local file = io.open(exportfile, 'w')
+                local file = io.open(exportfile_tmp, 'w')
                 file:print("EXPORTS")
                 for _, symbol in ipairs(exportsymbols) do
                     file:print("%s", symbol)
                 end
                 file:close()
+            end
+
+            -- update file if the content is changed
+            target:data_add("linkdepfiles", exportfile)
+            if os.isfile(exportfile_tmp) then
+                os.cp(exportfile_tmp, exportfile, {copy_if_different = true})
             end
         end
     end)

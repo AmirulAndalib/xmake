@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_emar.lua
@@ -60,7 +60,7 @@ function main(opt)
         local libraryfile   = os.tmpfile() .. ".a"
         local objectfile    = os.tmpfile() .. ".o"
         local sourcefile    = os.tmpfile() .. ".c"
-        io.writefile(sourcefile, "int test(void)\n{return 0;}")
+        io.writefile(sourcefile, "int test(void)\n{return 0;}\n")
 
         -- compile it
         os.runv(emcc.program, {"-c", "-o" .. objectfile, sourcefile}, {envs = opt.envs})
@@ -83,5 +83,24 @@ function main(opt)
     end
 
     -- find program
-    return find_program(opt.program or (is_host("windows") and "emar.bat" or "emar"), opt)
+    -- emsdk 6.0.0+ ships .exe on windows, older releases ship .bat
+    local program
+    if opt.program then
+        program = find_program(opt.program, opt)
+    else
+        local candidate_names
+        if is_host("windows") then
+            candidate_names = {"emar.exe", "emar.bat"}
+        else
+            candidate_names = {"emar"}
+        end
+        for _, name in ipairs(candidate_names) do
+            program = find_program(name, opt)
+            if program then
+                break
+            end
+        end
+    end
+
+    return program
 end

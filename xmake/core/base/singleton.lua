@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        singleton.lua
@@ -44,6 +44,10 @@ local singleton = singleton or {}
 --     instance.xxx = 1
 --     return instance
 -- end
+--
+-- @param key   the singleton key (string or function)
+-- @param init  the initializer function (optional)
+-- @return      the singleton instance, inited (true if already initialized)
 --
 function singleton.get(key, init)
 

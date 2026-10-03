@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        os.lua
@@ -39,12 +39,14 @@ os._mkdir    = os._mkdir or os.mkdir
 os._rmdir    = os._rmdir or os.rmdir
 os._touch    = os._touch or os.touch
 os._tmpdir   = os._tmpdir or os.tmpdir
+os._curdir   = os._curdir or os.curdir
 os._fscase   = os._fscase or os.fscase
 os._setenv   = os._setenv or os.setenv
 os._getenvs  = os._getenvs or os.getenvs
 os._cpuinfo  = os._cpuinfo or os.cpuinfo
 os._meminfo  = os._meminfo or os.meminfo
 os._readlink = os._readlink or os.readlink
+os._access   = os._access or os.access
 
 -- syserror code
 os.SYSERR_UNKNOWN     = -1
@@ -52,6 +54,16 @@ os.SYSERR_NONE        = 0
 os.SYSERR_NOT_PERM    = 1
 os.SYSERR_NOT_FILEDIR = 2
 os.SYSERR_NOT_ACCESS  = 3
+
+-- get the async task
+function os._async_task()
+    local async_task = os._ASYNC_TASK
+    if async_task == nil then
+        async_task = require("base/private/async_task")
+        os._ASYNC_TASK = async_task
+    end
+    return async_task
+end
 
 -- copy single file or directory
 function os._cp(src, dst, rootdir, opt)
@@ -70,6 +82,8 @@ function os._cp(src, dst, rootdir, opt)
 
     -- is file or link?
     local symlink = opt.symlink
+    local writeable = opt.writeable
+    local copy_if_different = opt.copy_if_different
     if os.isfile(src) or (symlink and os.islink(src)) then
 
         -- the destination is directory? append the filename
@@ -85,7 +99,7 @@ function os._cp(src, dst, rootdir, opt)
         if opt.force and os.isfile(dst) then
             os.rmfile(dst)
         end
-        if not os.cpfile(src, dst, symlink) then
+        if not os.cpfile(src, dst, symlink, writeable, copy_if_different) then
             local errors = os.strerror()
             if symlink and os.islink(src) then
                 local reallink = os.readlink(src)
@@ -107,7 +121,7 @@ function os._cp(src, dst, rootdir, opt)
         end
 
         -- copy directory
-        if not os.cpdir(src, dst, symlink) then
+        if not os.cpdir(src, dst, symlink, copy_if_different) then
             return false, string.format("cannot copy directory %s to %s,  %s", src, dst, os.strerror())
         end
     else
@@ -159,6 +173,19 @@ function os._rm(filedir)
     return true
 end
 
+-- remove empty parent directories of this file path
+function os._rm_empty_parentdirs(filepath)
+    local parentdir = path.directory(filepath)
+    while parentdir and os.isdir(parentdir) and os.emptydir(parentdir) do
+        local ok, errors = os._rm(parentdir)
+        if not ok then
+            return false, errors
+        end
+        parentdir = path.directory(parentdir)
+    end
+    return true
+end
+
 -- get the ramdisk root directory
 -- https://github.com/xmake-io/xmake/issues/3408
 function os._ramdir()
@@ -173,6 +200,21 @@ function os._ramdir()
     return ramdir_root or nil
 end
 
+-- if tmpdir_root is a symbolic link, os.tmpdir() may return a path that differs
+-- from the path style returned by os.curdir() (e.g. on Haiku).
+--
+-- Using a consistent root path can avoid errors in relative path resolution.
+--
+-- e.g.
+-- tmpdir: /tmp/.xmake0/260217/ -> /boot/system/cache/tmp/.xmake0/260217
+-- curdir: /boot/system/cache/tmp/.xmake0/260217
+function os._resolve_tmpdir(tmpdir_root)
+    if os.islink(tmpdir_root) then
+        tmpdir_root = os.readlink(tmpdir_root) or tmpdir_root
+    end
+    return tmpdir_root
+end
+
 -- set on change environments callback for scheduler
 function os._sched_chenvs_set(envs)
     os._SCHED_CHENVS = envs
@@ -181,6 +223,14 @@ end
 -- set on change directory callback for scheduler
 function os._sched_chdir_set(chdir)
     os._SCHED_CHDIR = chdir
+end
+
+-- notify the current directory have been changed
+function os._notify_curdir_changed()
+    os._CURDIR = nil
+    if os._SCHED_CHDIR then
+        os._SCHED_CHDIR(os.curdir())
+    end
 end
 
 -- notify envs have been changed
@@ -265,12 +315,82 @@ function os._is_tracing_process()
     return is_tracing
 end
 
+-- profile process performance?
+function os._is_profiling_process_perf()
+    local is_profiling = os._IS_PROFILING_PROCESS_PERF
+    if is_profiling == nil then
+        local profile = os.getenv("XMAKE_PROFILE")
+        if profile then
+            profile = profile:trim()
+            if profile == "perf:process" then
+                is_profiling = true
+            end
+        end
+        is_profiling = is_profiling or false
+        os._IS_PROFILING_PROCESS_PERF = is_profiling
+    end
+    return is_profiling
+end
+
 -- run all exit callback
 function os._run_exit_cbs(ok, errors)
+
+    -- show process performance reports
+    local profileperf = os._is_profiling_process_perf()
+    if profileperf then
+        if os._PROCESS_PROFILEINFO then
+            local perfinfo = {}
+            local totaltime = 0
+            for runcmd, profileinfo in pairs(os._PROCESS_PROFILEINFO) do
+                profileinfo.runcmd = runcmd
+                totaltime = totaltime + profileinfo.totaltime
+                table.insert(perfinfo, profileinfo)
+            end
+            table.sort(perfinfo, function (a, b) return a.totaltime > b.totaltime end)
+            for _, profileinfo in ipairs(perfinfo) do
+                local percent = (profileinfo.totaltime / totaltime) * 100
+                if percent < 1 then
+                    break
+                end
+                utils.print("%6.3f, %6.2f%%, %7d, %s", profileinfo.totaltime, percent, profileinfo.runcount, profileinfo.runcmd)
+            end
+        end
+    end
+
     local exit_callbacks = os._EXIT_CALLBACKS
     if exit_callbacks then
         for _, cb in ipairs(exit_callbacks) do
             cb(ok, errors)
+        end
+    end
+end
+
+-- get shell path, e.g. sh, bash
+function os._get_shell_path(opt)
+    opt = opt or {}
+    local setenvs = opt.setenvs or opt.envs or {}
+    local addenvs = opt.addenvs or {}
+    local paths = {}
+    local p = setenvs.PATH
+    if type(p) == "string" then
+        p = path.splitenv(p)
+    end
+    if p then
+        table.join2(paths, p)
+    end
+    p = addenvs.PATH
+    if type(p) == "string" then
+        p = path.splitenv(p)
+    end
+    if p then
+        table.join2(paths, p)
+    end
+    for _, p in ipairs(paths) do
+        for _, name in ipairs({"sh", "bash"}) do
+            local filepath = path.join(p, name)
+            if os.isexec(filepath) then
+                return filepath
+            end
         end
     end
 end
@@ -296,7 +416,21 @@ end
 --              end)
 -- @endcode
 --
-function os.match(pattern, mode, callback)
+function os.match(pattern, mode, opt)
+
+    -- do it in the asynchronous task
+    if type(opt) == "table" and opt.async and xmake.in_main_thread() then
+        return os._async_task().match(pattern, mode)
+    end
+
+    -- extract callback and the maximum recursion level
+    local callback, maxrecursion
+    if type(opt) == "function" then
+        callback = opt
+    elseif type(opt) == "table" then
+        callback = opt.callback
+        maxrecursion = opt.recursion
+    end
 
     -- support path instance
     pattern = tostring(pattern)
@@ -309,7 +443,7 @@ function os.match(pattern, mode, callback)
     if excludes then
         local _excludes = {}
         for _, exclude in ipairs(excludes) do
-            exclude = path.translate(exclude)
+            local exclude = path.translate(exclude)
             exclude = path.pattern(exclude)
             table.insert(_excludes, exclude)
         end
@@ -317,7 +451,7 @@ function os.match(pattern, mode, callback)
     end
 
     -- translate path and remove some repeat separators
-    pattern = path.translate(pattern:gsub("|.*$", ""))
+    pattern = path.translate((pattern:gsub("|.*$", "")))
 
     -- translate mode
     if type(mode) == "string" then
@@ -365,7 +499,9 @@ function os.match(pattern, mode, callback)
     -- limit recursion level: src/*/*.c
     local recursion = 0
     if pattern:find("**", 1, true) then
-        recursion = -1
+        -- we can also limit the recursion level of `**`, it may be very slow
+        -- in a deep directory tree, e.g. os.files("src/**.c", {recursion = 2})
+        recursion = maxrecursion or -1
     else
         -- "src/*/*.c" -> "*/" -> recursion level: 1
         -- "src/*/main.c" -> "*/" -> recursion level: 1
@@ -375,6 +511,9 @@ function os.match(pattern, mode, callback)
             if seps > 0 then
                 recursion = seps
             end
+        end
+        if maxrecursion and recursion > maxrecursion then
+            recursion = maxrecursion
         end
     end
 
@@ -389,27 +528,37 @@ end
 --
 -- @note only return {} without count to simplify code, e.g. table.unpack(os.dirs(""))
 --
-function os.dirs(pattern, callback)
-    return (os.match(pattern, 'd', callback))
+function os.dirs(pattern, opt)
+    return (os.match(pattern, 'd', opt))
 end
 
 -- match files
-function os.files(pattern, callback)
-    return (os.match(pattern, 'f', callback))
+function os.files(pattern, opt)
+    return (os.match(pattern, 'f', opt))
 end
 
 -- match files and directories
-function os.filedirs(pattern, callback)
-    return (os.match(pattern, 'a', callback))
+function os.filedirs(pattern, opt)
+    return (os.match(pattern, 'a', opt))
 end
 
 -- copy files or directories and we can reserve the source directory structure
+--
+-- @param srcpath   the source file path
+-- @param dstpath   the destination file path
+-- @param opt       the copy option. e.g. {rootdir, symlink, writeable, force, copy_if_different}
+--
 -- e.g. os.cp("src/**.h", "/tmp/", {rootdir = "src", symlink = true})
 function os.cp(srcpath, dstpath, opt)
 
     -- check arguments
     if not srcpath or not dstpath then
         return false, string.format("invalid arguments!")
+    end
+
+    -- do it in the asynchronous task
+    if opt and opt.async and xmake.in_main_thread() then
+        return os._async_task().cp(srcpath, dstpath, {detach = opt.detach})
     end
 
     -- reserve the source directory structure if opt.rootdir is given
@@ -439,6 +588,12 @@ function os.cp(srcpath, dstpath, opt)
 end
 
 -- move files or directories
+--
+-- @param srcpath   the source file/directory path, pattern is supported, e.g. "src/**.h"
+-- @param dstpath   the destination file/directory path
+-- @param opt       the options, e.g. {rootdir = "src"}
+-- @return          true on success, or false and error info
+--
 function os.mv(srcpath, dstpath, opt)
 
     -- check arguments
@@ -464,23 +619,46 @@ function os.mv(srcpath, dstpath, opt)
 end
 
 -- remove files or directories
-function os.rm(filepath)
+--
+-- @param filepath   the file/directory path, pattern is supported, e.g. "src/**.o"
+-- @param opt        the options, e.g. {emptydirs = true}
+-- @return           true on success, or false and error info
+--
+function os.rm(filepath, opt)
+    opt = opt or {}
 
     -- check arguments
     if not filepath then
         return false, string.format("invalid arguments!")
     end
 
+    -- do it in the asynchronous task
+    if opt.async and xmake.in_main_thread() then
+       return os._async_task().rm(filepath, {detach = opt.detach})
+    end
+
     -- remove file or directories
     filepath = tostring(filepath)
     local filepathes = os._match_wildcard_pathes(filepath)
     if type(filepathes) == "string" then
-        return os._rm(filepathes)
+        local ok, errors = os._rm(filepathes)
+        if not ok then
+            return false, errors
+        end
+        if opt.emptydirs then
+            return os._rm_empty_parentdirs(filepathes)
+        end
     else
         for _, _filepath in ipairs(filepathes) do
             local ok, errors = os._rm(_filepath)
             if not ok then
                 return false, errors
+            end
+            if opt.emptydirs then
+                ok, errors = os._rm_empty_parentdirs(_filepath)
+                if not ok then
+                    return false, errors
+                end
             end
         end
     end
@@ -502,47 +680,49 @@ function os.ln(srcpath, dstpath, opt)
 end
 
 -- change to directory
+--
+-- @param dir       the directory path
+-- @return          the previous directory
+--
 function os.cd(dir)
     assert(dir)
+
+    -- we can only change directory in main thread
+    if not xmake.in_main_thread() then
+        local thread = require("base/thread")
+        os.raise("we cannot change directory in non-main thread(%s)", thread.running() or "unknown")
+    end
 
     -- support path instance
     dir = tostring(dir)
 
-    -- the previous directory
-    local oldir = os.curdir()
-
     -- change to the previous directory?
+    local oldir = os.curdir()
     if dir == "-" then
-        -- exists the previous directory?
         if os._PREDIR then
             dir = os._PREDIR
             os._PREDIR = nil
         else
-            -- error
             return nil, string.format("not found the previous directory %s", os.strerror())
         end
     end
 
-    -- is directory?
-    if os.isdir(dir) then
+    -- no changed?
+    if dir == oldir then
+        return oldir
+    end
 
-        -- change to directory
+    -- do change directory
+    if os.isdir(dir) then
         if not os.chdir(dir) then
             return nil, string.format("cannot change directory %s %s", dir, os.strerror())
         end
-
-        -- save the previous directory
         os._PREDIR = oldir
-
-    -- not exists?
     else
         return nil, string.format("cannot change directory %s, not found this directory %s", dir, os.strerror())
     end
 
-    -- do chdir callback for scheduler
-    if os._SCHED_CHDIR then
-        os._SCHED_CHDIR(os.curdir())
-    end
+    os._notify_curdir_changed()
     return oldir
 end
 
@@ -557,6 +737,10 @@ function os.touch(filepath, opt)
 end
 
 -- create directories
+--
+-- @param dir       the directory path, will create parent directories automatically
+-- @return          true on success, or false and error info
+--
 function os.mkdir(dir)
 
     -- check arguments
@@ -578,11 +762,21 @@ function os.mkdir(dir)
 end
 
 -- remove directories
-function os.rmdir(dir)
+--
+-- @param dir       the directory path
+-- @param opt       the options, e.g. {emptydirs = true}
+-- @return          true on success, or false and error info
+--
+function os.rmdir(dir, opt)
 
     -- check arguments
     if not dir then
         return false, string.format("invalid arguments!")
+    end
+
+    -- do it in the asynchronous task
+    if opt and opt.async and xmake.in_main_thread() then
+        return os._async_task().rmdir(dir, {detach = opt.detach})
     end
 
     -- support path instance
@@ -598,7 +792,24 @@ function os.rmdir(dir)
     return true
 end
 
+-- get the current directory
+--
+-- @return          the current working directory
+--
+function os.curdir()
+    local curdir = os._CURDIR
+    if curdir == nil then
+        curdir = os._curdir()
+        os._CURDIR = curdir
+    end
+    return curdir
+end
+
 -- get the temporary directory
+--
+-- @param opt       the options, e.g. {ramdisk = false}
+-- @return          the temporary directory path
+--
 function os.tmpdir(opt)
 
     -- is in fakeroot? @note: uid always be 0 in root and fakeroot
@@ -614,15 +825,19 @@ function os.tmpdir(opt)
     -- get root tmpdir
     local tmpdir_root = nil
     if opt and opt.ramdisk == false then
-        if os._ROOT_TMPDIR == nil then
-            os._ROOT_TMPDIR = (os.getenv("XMAKE_TMPDIR") or os.getenv("TMPDIR") or os._tmpdir()):trim()
-        end
         tmpdir_root = os._ROOT_TMPDIR
-    else
-        if os._ROOT_TMPDIR_RAM == nil then
-            os._ROOT_TMPDIR_RAM = (os.getenv("XMAKE_TMPDIR") or os._ramdir() or os.getenv("TMPDIR") or os._tmpdir()):trim()
+        if os._ROOT_TMPDIR == nil then
+            tmpdir_root = (os.getenv("XMAKE_TMPDIR") or os.getenv("TMPDIR") or os._tmpdir()):trim()
+            tmpdir_root = os._resolve_tmpdir(tmpdir_root)
+            os._ROOT_TMPDIR = tmpdir_root
         end
+    else
         tmpdir_root = os._ROOT_TMPDIR_RAM
+        if os._ROOT_TMPDIR_RAM == nil then
+            tmpdir_root = (os.getenv("XMAKE_TMPDIR") or os._ramdir() or os.getenv("TMPDIR") or os._tmpdir()):trim()
+            tmpdir_root = os._resolve_tmpdir(tmpdir_root)
+            os._ROOT_TMPDIR_RAM = tmpdir_root
+        end
     end
 
     -- make sub-directory name
@@ -654,7 +869,8 @@ function os.tmpfile(opt_or_key)
         key = opt_or_key.key
         opt = opt_or_key
     end
-    return path.join(os.tmpdir(opt), "_" .. (hash.uuid4(key):gsub("-", "")))
+    local filename = "_" .. (key and hash.strhash128(key) or (hash.rand128()))
+    return path.join(os.tmpdir(opt), filename)
 end
 
 -- exit program
@@ -692,6 +908,11 @@ function os.run(cmd)
 end
 
 -- run command with arguments list
+--
+-- @param program   the program path or name
+-- @param argv      the arguments list
+-- @param opt       the options, e.g. {envs = {}, curdir = "", detach = false}
+--
 function os.runv(program, argv, opt)
 
     -- init options
@@ -701,7 +922,7 @@ function os.runv(program, argv, opt)
     local logfile = os.tmpfile()
 
     -- execute it
-    local ok, errors = os.execv(program, argv, table.join(opt, {stdout = logfile, stderr = logfile}))
+    local ok, errors = os.execv(program, argv, table.join(opt, {stdout = opt.stdout or logfile, stderr = opt.stderr or logfile}))
     if ok ~= 0 then
 
         -- get command
@@ -720,17 +941,10 @@ function os.runv(program, argv, opt)
             errors = string.format("cannot runv(%s), %s", cmd, errors and errors or "unknown reason")
         end
 
-        -- remove the temporary log file
         os.rm(logfile)
-
-        -- failed
         return false, errors
     end
-
-    -- remove the temporary log file
     os.rm(logfile)
-
-    -- ok
     return true
 end
 
@@ -778,16 +992,16 @@ function os.execv(program, argv, opt)
         local file = io.open(filename, 'r')
         for line in file:lines() do
             if line and line:startswith("#!") then
-                -- we cannot run `/bin/sh` directly on msys2/cygwin
+                -- we cannot run `/bin/sh` directly on windows
                 -- because `/bin/sh` is not real file path, maybe we need to convert it.
-                local subhost = os.subhost()
-                if subhost == "msys" or subhost == "cygwin" then
-                    filename = "sh"
+                local host = os.host()
+                if host == "windows" then
+                    filename = os._get_shell_path(opt) or "sh"
                     argv = table.join(shellfile, argv)
                 else
-                    line = line:sub(3)
+                    local shebang = line:sub(3)
                     local shellargv = {}
-                    local splitinfo = line:split("%s")
+                    local splitinfo = shebang:split("%s")
                     filename = splitinfo[1]
                     if #splitinfo > 1 then
                         shellargv = table.slice(splitinfo, 2)
@@ -804,20 +1018,39 @@ function os.execv(program, argv, opt)
 
     -- uses the given environments?
     local envs = nil
-    if opt.envs then
+    local setenvs = opt.setenvs or opt.envs
+    local addenvs = opt.addenvs
+    if setenvs or addenvs then
         local envars = os.getenvs()
-        for k, v in pairs(opt.envs) do
-            if type(v) == "table" then
-                v = path.joinenv(v)
+        if setenvs then
+            for k, v in pairs(setenvs) do
+                local v = v
+                if type(v) == "table" then
+                    v = path.joinenv(v)
+                end
+                envars[k] = v
             end
+        end
+        if addenvs then
+            for k, v in pairs(addenvs) do
+                local v = v
+                if type(v) == "table" then
+                    v = path.joinenv(v)
+                end
+                local o = envars[k]
+                if o then
+                    v = v .. path.envsep() .. o
+                end
+                envars[k] = v
+            end
+        end
+        envs = {}
+        for k, v in pairs(envars) do
+            local v = v
             -- we try to fix too long value before running process
             if type(v) == "string" and #v > 4096 and os.host() == "windows" then
                 v = os._deduplicate_pathenv(v)
             end
-            envars[k] = v
-        end
-        envs = {}
-        for k, v in pairs(envars) do
             table.insert(envs, k .. '=' .. v)
         end
     end
@@ -832,8 +1065,16 @@ function os.execv(program, argv, opt)
         detach = opt.detach,
         exclusive = opt.exclusive}
 
+    -- profile process performance
+    local runtime
+    local profileperf = os._is_profiling_process_perf()
+    if profileperf then
+        runtime = os.mclock()
+    end
+
     -- open command
     local ok = -1
+    local errors
     local proc = process.openv(filename, argv or {}, openopt)
     if proc ~= nil then
 
@@ -845,9 +1086,19 @@ function os.execv(program, argv, opt)
 
         -- wait process
         if not opt.detach then
-            local waitok, status = proc:wait(-1)
+            local waitok, status = proc:wait(opt.timeout or -1)
             if waitok > 0 then
                 ok = status
+                if ok and ok ~= 0 then
+                    errors = process.get_exit_errors(filename, ok)
+                end
+            elseif waitok == 0 and opt.timeout then
+                proc:kill()
+                waitok, status = proc:wait(-1)
+                if waitok > 0 then
+                    ok = status
+                end
+                errors = "wait process timeout"
             end
         else
             ok = 0
@@ -855,11 +1106,35 @@ function os.execv(program, argv, opt)
 
         -- close process
         proc:close()
+
+        -- save profile info
+        if profileperf then
+            runtime = os.mclock() - runtime
+
+            local profileinfo = os._PROCESS_PROFILEINFO
+            if profileinfo == nil then
+                profileinfo = {}
+                os._PROCESS_PROFILEINFO = profileinfo
+            end
+
+            local runcmd
+            runcmd = filename
+            if argv and #argv > 0 then
+                runcmd = runcmd .. " " .. os.args(argv)
+            end
+            local perfinfo = profileinfo[runcmd]
+            if perfinfo == nil then
+                perfinfo = {}
+                profileinfo[runcmd] = perfinfo
+            end
+            perfinfo.totaltime = (perfinfo.totaltime or 0) + runtime
+            perfinfo.runcount = (perfinfo.runcount or 0) + 1
+        end
     else
         -- cannot execute process
         return nil, os.strerror()
     end
-    return ok
+    return ok, errors
 end
 
 -- run command and return output and error data
@@ -876,6 +1151,12 @@ function os.iorun(cmd)
 end
 
 -- run command with arguments and return output and error data
+--
+-- @param program   the program path or name
+-- @param argv      the arguments list
+-- @param opt       the options, e.g. {envs = {}, curdir = "", stdin = ""}
+-- @return          the stdout data, the stderr data
+--
 function os.iorunv(program, argv, opt)
 
     -- make temporary output and error file
@@ -890,7 +1171,7 @@ function os.iorunv(program, argv, opt)
         if argv then
             cmd = cmd .. " " .. os.args(argv)
         end
-        errors = string.format("cannot runv(%s), %s", cmd, errors and errors or "unknown reason")
+        errors = string.format("cannot runv(%s), %s", cmd, errors or "unknown reason")
     end
 
     -- get output and error data
@@ -946,22 +1227,51 @@ end
 
 -- is executable program file?
 function os.isexec(filepath)
-    assert(filepath)
-
-    -- TODO
-    -- check permission
-
-    -- check executable program exist
-    if os.isfile(filepath) then
-        return true
-    end
     if os.host() == "windows" then
-        for _, suffix in ipairs({".exe", ".cmd", ".bat"}) do
+        local exts_map = os._ISEXEC_WINDOWS_EXTS_MAP
+        if not exts_map then
+            local exts = {".exe", ".com", ".cmd", ".bat", ".ps1", ".sh"}
+            exts_map = {}
+            for _, ext in ipairs(exts) do
+                exts_map[ext] = true
+            end
+            os._ISEXEC_WINDOWS_EXTS_MAP = exts_map
+        end
+        if os.isfile(filepath) then
+            local extension = path.extension(filepath)
+            if extension and #extension > 0 then
+                if exts_map[extension:lower()] then
+                    return true
+                end
+            else
+                -- detect executable file header
+                --
+                -- @note only for files without extension, because .dll is also PE
+                -- pe: native windows executables
+                -- ape: cosmocc/APE executables (e.g. `cosmocc -o foo.exe ...`)
+                -- shebang: scripts starting with `#!`
+                local format = nil
+                if binutils and binutils.format then
+                    format = binutils.format(filepath)
+                end
+                if format == "pe" or format == "ape" or format == "shebang" then
+                    return true
+                end
+            end
+        end
+        for suffix, _ in pairs(exts_map) do
             if os.isfile(filepath .. suffix) then
                 return true
             end
         end
+    elseif os.isfile(filepath) then
+        if os._access then
+            return os._access(filepath, "x")
+        else
+            return true
+        end
     end
+    return false
 end
 
 -- get system host
@@ -1010,6 +1320,10 @@ function os.is_subarch(...)
 end
 
 -- get the system null device
+--
+-- @param input     use as input device if true, otherwise as output device
+-- @return          the null device path, e.g. "/dev/null" or "nul"
+--
 function os.nuldev(input)
 
     if input then
@@ -1137,23 +1451,29 @@ function os.term()
     return require("base/tty").term()
 end
 
--- get all current environment variables
--- e.g. envs["PATH"] = "/xxx:/yyy/foo"
+-- get all current environments variables
 function os.getenvs()
-    local envs = {}
-    for _, line in ipairs(os._getenvs()) do
-        local p = line:find('=', 1, true)
-        if p then
-            local key = line:sub(1, p - 1):trim()
-            -- only translate Path to PATH on windows
-            -- @see https://github.com/xmake-io/xmake/issues/3752
-            if os.host() == "windows" and key:lower() == "path" then
-                key = key:upper()
+    local envs = os._getenvs()
+    if envs then
+        -- we need to be compatible with the old binary core, if it's array (<= v3.0.3)
+        if envs[1] ~= nil then
+            local result = {}
+            for _, line in ipairs(envs) do
+                local p = line:find('=', 1, true)
+                if p then
+                    local key = line:sub(1, p - 1):trim()
+                    -- only translate Path to PATH on windows
+                    -- @see https://github.com/xmake-io/xmake/issues/3752
+                    if os.host() == "windows" and key:lower() == "path" then
+                        key = key:upper()
+                    end
+                    local values = line:sub(p + 1):trim()
+                    if #key > 0 then
+                        result[key] = values
+                    end
+                end
             end
-            local values = line:sub(p + 1):trim()
-            if #key > 0 then
-                envs[key] = values
-            end
+            envs = result
         end
     end
     return envs
@@ -1277,7 +1597,7 @@ function os.addenv(name, ...)
     end
 end
 
--- set values to environment variable with the given seperator
+-- set values to environment variable with the given separator
 function os.setenvp(name, values, sep)
     sep = sep or path.envsep()
     local ok = os._setenv(name, table.concat(table.wrap(values), sep))
@@ -1287,7 +1607,7 @@ function os.setenvp(name, values, sep)
     return ok
 end
 
--- add values to environment variable with the given seperator
+-- add values to environment variable with the given separator
 function os.addenvp(name, values, sep)
     sep = sep or path.envsep()
     values = table.wrap(values)
@@ -1408,4 +1728,3 @@ end
 
 -- return module
 return os
-

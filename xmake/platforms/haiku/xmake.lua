@@ -12,41 +12,33 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
 --
 
--- define platform
 platform("haiku")
-
-    -- set os
     set_os("haiku")
-
-    -- set hosts
     set_hosts("haiku")
-
-    -- set archs
     set_archs("i386", "x86_64")
 
-    -- set formats
     set_formats("static", "lib$(name).a")
     set_formats("object", "$(name).o")
     set_formats("shared", "lib$(name).so")
     set_formats("symbol", "$(name).sym")
 
-    -- set toolchains
     set_toolchains("envs", "gcc", "clang", "yasm", "nasm", "fasm", "cuda", "go", "rust", "gfortran", "zig")
 
-    -- set menu
     set_menu {
                 config =
                 {
                     {category = "Cuda SDK Configuration"                                            }
                 ,   {nil, "cuda",           "kv", "auto",       "The Cuda SDK Directory"            }
+                ,   {nil, "cuda_sdkver",    "kv", "auto",       "The Cuda SDK Version"              }
                 ,   {category = "Qt SDK Configuration"                                              }
                 ,   {nil, "qt",             "kv", "auto",       "The Qt SDK Directory"              }
+                ,   {nil, "qt_host",        "kv", "auto",       "The Qt Host SDK Directory"         }
                 ,   {nil, "qt_sdkver",      "kv", "auto",       "The Qt SDK Version"                }
                 }
 
@@ -56,6 +48,7 @@ platform("haiku")
                 ,   {nil, "cuda",           "kv", "auto",       "The Cuda SDK Directory"            }
                 ,   {category = "Qt SDK Configuration"                                              }
                 ,   {nil, "qt",             "kv", "auto",       "The Qt SDK Directory"              }
+                ,   {nil, "qt_host",        "kv", "auto",       "The Qt Host SDK Directory"         }
                 }
             }
 

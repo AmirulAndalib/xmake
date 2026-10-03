@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        buildjobs.lua
@@ -51,7 +51,7 @@ end
     nodes["node1"] = {
         name = "node1",
         deps = {"node2", "node3"},
-        job = batchjobs:newjob("/job/node1", function(index, total)
+        job = batchjobs:newjob("/job/node1", function(index, total, opt)
         end)
     }
 --]]

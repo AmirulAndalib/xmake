@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        sudo.lua
@@ -85,7 +85,7 @@ function _lua(runner, luafile, luaargv)
     end
 
     -- run it with administrator permission
-    _sudov(runner, "xmake", table.join(argv, luafile, luaargv))
+    _sudov(runner, os.programfile(), table.join(argv, luafile, luaargv))
 end
 
 -- has sudo?

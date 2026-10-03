@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        task.lua
@@ -24,17 +24,20 @@ local task = task or {}
 -- load modules
 local os            = require("base/os")
 local table         = require("base/table")
+local utils         = require("base/utils")
 local string        = require("base/string")
 local global        = require("base/global")
+local hashset       = require("base/hashset")
 local interpreter   = require("base/interpreter")
+local addon         = require("package/addon")
 local sandbox       = require("sandbox/sandbox")
 local config        = require("project/config")
 local sandbox_os    = require("sandbox/modules/os")
 
 function task.common_options()
-    if not task._COMMON_OPTIONS then
-        task._COMMON_OPTIONS =
-        {
+    local common_options = task._COMMON_OPTIONS
+    if not common_options then
+        common_options = {
             {'q', "quiet",     "k",  nil,   "Quiet operation."                                          }
         ,   {'y', "yes",       "k",  nil,   "Input yes by default if need user confirm."                }
         ,   {nil, "confirm",   "kv", nil,   "Input the given result if need user confirm."
@@ -46,7 +49,6 @@ function task.common_options()
         ,   {'D', "diagnosis", "k",  nil,   "Print lots of diagnosis information (backtrace, check info ..) only for developers."
                                         ,   "And we can append -v to get more whole information."
                                         ,   "    e.g. $ xmake -vD"                                      }
-        ,   {nil, "version",   "k",  nil,   "Print the version number and exit."                        }
         ,   {'h', "help",      "k",  nil,   "Print this help message and exit."                         }
         ,   {}
         ,   {'F', "file",      "kv", nil,   "Read a given xmake.lua file."                              }
@@ -57,38 +59,60 @@ function task.common_options()
                                         ,   "    3. The Current Directory"                              }
         ,   {category = "action"}
         }
+        task._COMMON_OPTIONS = common_options
     end
     return task._COMMON_OPTIONS
 end
 
+function task._common_option_names()
+    local common_names = task._COMMON_OPTION_NAMES
+    if not common_names then
+        common_names = hashset.new()
+        for i, v in ipairs(task.common_options()) do
+            if v and v[1] then
+                common_names:insert(v[1])
+            end
+            if v and v[2] then
+                common_names:insert(v[2])
+            end
+        end
+        task._COMMON_OPTION_NAMES = common_names
+    end
+    return common_names
+end
+
 -- the directories of tasks
 function task._directories()
-    return {path.join(global.directory(), "plugins"),
-            path.join(os.programdir(), "plugins"),
-            path.join(os.programdir(), "actions")}
+    local dirs = task._DIRECTORIES
+    if dirs == nil then
+        -- add the plugins of the installed addons first, e.g. ~/.xmake/addons/<name>/<version>/plugins
+        --
+        -- we get them from the addons registry file directly,
+        -- so we do not need to scan the whole addons directory on startup
+        --
+        -- @note the first one wins, so an addon is able to take over a deprecated
+        -- builtin plugin, e.g. `xmake format`
+        --
+        dirs = addon.payloads("plugins")
+        table.insert(dirs, path.join(global.directory(), "plugins"))
+        table.insert(dirs, path.join(os.programdir(), "plugins"))
+        table.insert(dirs, path.join(os.programdir(), "actions"))
+        task._DIRECTORIES = dirs
+    end
+    return dirs
 end
 
 -- translate menu
-function task._translate_menu(menu)
-    assert(menu)
-
-    -- the interpreter
+function task._translate_menu(taskname, menu)
     local interp = task._interpreter()
-    assert(interp)
-
-    -- translate options
     local options = menu.options
     if options then
 
         -- make full options
         local options_full = {}
         for _, opt in ipairs(options) do
-
-            -- this option is function? translate it
             if type(opt) == "function" then
-
-                -- call menu script in the sandbox
-                local ok, results = sandbox.load(opt)
+                local ok, results = sandbox.call(opt)
                 if ok then
                     if results then
                         for _, opt in ipairs(results) do
@@ -96,7 +120,6 @@ function task._translate_menu(menu)
                         end
                     end
                 else
-                    -- errors
                     return nil, string.format("taskmenu: %s", results)
                 end
             else
@@ -110,8 +133,6 @@ function task._translate_menu(menu)
 
         -- filter options
         if interp:filter() then
-
-            -- filter option
             for _, opt in ipairs(options) do
 
                 -- filter default
@@ -136,13 +157,10 @@ function task._translate_menu(menu)
                         opt[i] = function ()
 
                             -- call it in the sandbox
-                            local ok, results = sandbox.load(description)
+                            local ok, results = sandbox.call(description)
                             if not ok then
-                                -- errors
                                 return nil, string.format("taskmenu: %s", results)
                             end
-
-                            -- ok
                             return results
                         end
                     end
@@ -152,14 +170,20 @@ function task._translate_menu(menu)
 
         -- add common options, we need to avoid repeat because the main/build task will be inserted twice
         if not menu._common_options then
+            local common_option_names = task._common_option_names()
+            for _, v in ipairs(options) do
+                local option_name = v[2] or v[1]
+                if option_name and common_option_names:has(option_name) then
+                    utils.warning("task(%s): option name '%s' is a built-in name and may cause conflicts, please rename it.", taskname, option_name)
+                end
+            end
+
             for i, v in ipairs(task.common_options()) do
                 table.insert(options, i, v)
             end
             menu._common_options = true
         end
     end
-
-    -- ok
     return menu
 end
 
@@ -222,17 +246,12 @@ end
 
 -- bind script with a sandbox instance
 function task._bind_script(interp, script)
-
-    -- make sandbox instance with the given script
-    local instance, errors = sandbox.new(script, interp:filter(), interp:rootdir())
+    local instance, errors = sandbox.new(script, {
+        filter = interp:filter(), rootdir = interp:rootdir(), namespace = interp:namespace()})
     if not instance then
         return nil, errors
     end
-
-    -- check
     assert(instance:script())
-
-    -- update option script
     return instance:script()
 end
 
@@ -314,8 +333,6 @@ function task._bind(tasks, interp)
             end
         end
     end
-
-    -- ok
     return true
 end
 
@@ -343,43 +360,84 @@ function task._load(filepath)
     if not ok then
         return nil, errors
     end
-
-    -- ok?
     return tasks
 end
 
 -- get task apis
 function task.apis()
-
-    return
-    {
-        values =
-        {
+    return {
+        values = {
             -- task.set_xxx
             "task.set_category"     -- main, action, plugin, task (default)
-        }
-    ,   dictionary =
-        {
+        },
+        dictionary = {
             -- task.set_xxx
             "task.set_menu"
-        }
-    ,   script =
-        {
+        },
+        script = {
             -- task.on_xxx
             "task.on_run"
         }
     }
 end
 
--- new a task instance
+-- create a new task instance
+--
+-- @param name  the task name
+-- @param info  the task info table
+-- @return      the task instance
+--
 function task.new(name, info)
     local instance = table.inherit(task)
-    instance._NAME = name
+    if name then
+        local parts = name:split("::", {plain = true})
+        instance._NAME = parts[#parts]
+        table.remove(parts)
+        if #parts > 0 then
+            instance._NAMESPACE = table.concat(parts, "::")
+        end
+    end
     instance._INFO = info
     return instance
 end
 
--- get global tasks
+-- is the given plugin conflicting with the loaded one?
+--
+-- the plugins are not namespaced, so the first one always wins, @see task._directories(),
+-- but we need to report the conflicts of the addons, otherwise we do not know which
+-- plugin will be run
+--
+-- @param taskname  the task name
+-- @param taskfile  the task file of the loaded plugin, it will be nil if it's the first one
+-- @param filepath  the task file of the plugin which we are loading
+--
+function task._is_conflicting(taskname, taskfile, filepath)
+    if not taskfile then
+        return false
+    end
+
+    -- we only report it if both of them come from the addons, taking over a builtin
+    -- plugin is expected, e.g. `xmake format` has been moved to an addon
+    --
+    -- @note we cannot raise errors here, otherwise all the commands will be broken,
+    -- and the user cannot even remove the conflicting addons
+    local addondir = path.absolute(addon.installdir())
+    if path.absolute(taskfile):startswith(addondir) and path.absolute(filepath):startswith(addondir) then
+        utils.warning("plugin(%s) conflicts, we will use the first one!\n  -> %s\n  -> %s", taskname, taskfile, filepath)
+    end
+    return true
+end
+
+-- clear the loaded tasks, e.g. some addons may be installed just now
+function task.clear()
+    task._TASKS = nil
+    task._DIRECTORIES = nil
+end
+
+-- get all registered tasks
+--
+-- @return      the tasks table {name = task, ...}
+--
 function task.tasks()
     if task._TASKS then
         return task._TASKS
@@ -387,6 +445,7 @@ function task.tasks()
 
     -- load tasks
     local tasks = {}
+    local taskfiles = {}
     local dirs = task._directories()
     for _, dir in ipairs(dirs) do
         local files = os.files(path.join(dir, "*", "xmake.lua"))
@@ -394,7 +453,12 @@ function task.tasks()
             for _, filepath in ipairs(files) do
                 local results, errors = task._load(filepath)
                 if results then
-                    table.join2(tasks, results)
+                    for taskname, taskinfo in pairs(results) do
+                        if not task._is_conflicting(taskname, taskfiles[taskname], filepath) then
+                            taskfiles[taskname] = filepath
+                            tasks[taskname] = taskinfo
+                        end
+                    end
                 else
                     os.raise(errors)
                 end
@@ -409,30 +473,31 @@ function task.tasks()
     return instances
 end
 
--- get the given global task
+-- get the given task by name
+--
+-- @param name  the task name
+-- @return      the task instance, or nil if not found
+--
 function task.task(name)
     return task.tasks()[name]
 end
 
--- the menu
+-- get the task menu for command line parsing
+--
+-- @param tasks the tasks table (optional, default all tasks)
+-- @return      the menu table
+--
 function task.menu(tasks)
-
-    -- make menu
     local menu = {}
     for taskname, taskinst in pairs(tasks) do
-
-        -- has task menu?
         local taskmenu = taskinst:get("menu")
         if taskmenu then
-
-            -- main?
+            -- delay to load main menu
             if taskinst:get("category") == "main" then
-
-                -- delay to load main menu
                 menu.main = function ()
 
                     -- translate main menu
-                    local mainmenu, errors = task._translate_menu(taskmenu)
+                    local mainmenu, errors = task._translate_menu(taskname, taskmenu)
                     if not mainmenu then
                         os.raise(errors)
                     end
@@ -440,38 +505,29 @@ function task.menu(tasks)
                     -- make tasks for the main menu
                     mainmenu.tasks = {}
                     for name, inst in pairs(tasks) do
-
-                        -- has menu?
                         local m = inst:get("menu")
                         if m then
-
-                            -- add task
-                            mainmenu.tasks[name] =
-                            {
+                            mainmenu.tasks[name] = {
                                 category    = inst:get("category")
                             ,   shortname   = m.shortname
                             ,   description = m.description
                             }
                         end
                     end
-
-                    -- ok
                     return mainmenu
                 end
             end
 
             -- delay to load task menu
             menu[taskname] = function ()
-                local taskmenu, errors = task._translate_menu(taskmenu)
-                if not taskmenu then
+                local result, errors = task._translate_menu(taskname, taskmenu)
+                if not result then
                     os.raise(errors)
                 end
-                return taskmenu
+                return result
             end
         end
     end
-
-    -- ok?
     return menu
 end
 
@@ -485,25 +541,32 @@ function task:name()
     return self._NAME
 end
 
+-- get the namespace
+function task:namespace()
+    return self._NAMESPACE
+end
+
+-- get the full name
+function task:fullname()
+    local namespace = self:namespace()
+    return namespace and namespace .. "::" .. self:name() or self:name()
+end
+
 -- run given task
 function task:run(...)
-
-    -- check
     local on_run = self:get("run")
     if not on_run then
-        return false, string.format("task(\"%s\"): no run script, please call on_run() first!", self:name())
+        return false, string.format("task(\"%s\"): no run script, please call on_run() first!", self:fullname())
     end
 
     -- save the current directory
     local curdir = os.curdir()
 
     -- run task
-    local ok, errors = sandbox.load(on_run, ...)
+    local ok, errors = sandbox.call(on_run, ...)
 
     -- restore the current directory
     os.cd(curdir)
-
-    -- ok?
     return ok, errors
 end
 

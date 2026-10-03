@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        server.lua
@@ -84,9 +84,6 @@ function distcc_build_server:_on_handle(stream, msg)
             end
             if msg:is_connect() then
                 session:open(respmsg)
-            elseif msg:is_disconnect() then
-                session:close()
-                self._SESSIONS[session_id] = nil
             else
                 assert(session:is_connected(), "session has not been connected!")
                 if msg:is_compile() then

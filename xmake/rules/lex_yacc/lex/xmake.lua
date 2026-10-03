@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -21,7 +21,7 @@
 -- define rule: lex
 rule("lex")
     add_deps("c++")
-    add_deps("yacc", {order = true})
+    add_orders("yacc", "lex")
     set_extensions(".l", ".ll")
     before_buildcmd_file(function (target, batchcmds, sourcefile_lex, opt)
 

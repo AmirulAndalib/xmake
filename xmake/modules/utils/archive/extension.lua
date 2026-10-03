@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        extension.lua
@@ -22,10 +22,15 @@
 import("core.base.hashset")
 
 -- get the archive extension
-function main(archivefile)
+function main(url)
+    local urlpath = url:split('?', {plain = true})[1]
     local extension = ""
-    local filename = path.filename(archivefile)
-    local extensionset = hashset.from({".zip", ".7z", ".gz", ".xz", ".tgz", ".bz2", ".tar", ".tar.gz", ".tar.xz", ".tar.bz2", ".tar.Z"})
+    local filename = path.filename(urlpath)
+    local extensionset = hashset.from({
+        ".xmz", -- xmake compression format
+        ".zip", ".7z", ".gz", ".xz", ".zst", ".tgz",
+        ".bz2", ".tar", ".tar.gz", ".tar.xz",
+        ".tar.zst", ".tar.bz2", ".tar.Z"})
     local i = filename:lastof(".", true)
     if i then
         local p = filename:sub(1, i - 1):lastof(".", true)

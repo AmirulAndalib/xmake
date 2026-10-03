@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        list-repo.lua
@@ -54,7 +54,7 @@ function list_repository()
     if not os.isdir(workdir) then
         os.mkdir(workdir)
         os.cd(workdir)
-        os.vrunv("xmake", {"create", "-P", "."})
+        os.vrunv(os.programfile(), {"create", "-P", "."})
     else
         os.cd(workdir)
     end
@@ -67,7 +67,7 @@ function list_repository()
     if option.get("diagnosis") then
         table.insert(repo_argv, "-D")
     end
-    os.vexecv("xmake", repo_argv)
+    os.vexecv(os.programfile(), repo_argv)
 end
 
 -- main entry

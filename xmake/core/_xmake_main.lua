@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        _xmake_main.lua
@@ -26,6 +26,7 @@ xmake._HOST             = _HOST
 xmake._ARCH             = _ARCH
 xmake._SUBHOST          = _SUBHOST
 xmake._SUBARCH          = _SUBARCH
+xmake._XMAKE_ARCH       = _XMAKE_ARCH
 xmake._VERSION          = _VERSION
 xmake._VERSION_SHORT    = _VERSION_SHORT
 xmake._PROGRAM_DIR      = _PROGRAM_DIR
@@ -35,6 +36,15 @@ xmake._PROJECT_FILE     = "xmake.lua"
 xmake._WORKING_DIR      = os.curdir()
 xmake._FEATURES         = _FEATURES
 xmake._LUAJIT           = _LUAJIT
+xmake._EMBED            = _EMBED
+xmake._THREAD_CALLBACK  = _THREAD_CALLBACK
+xmake._THREAD_CALLINFO  = _THREAD_CALLINFO
+
+-- we need not any arguments in sub-thread.
+-- because it always uses CommandLineToArgvW() on windows, so we need to reset it.
+if _THREAD_CALLBACK then
+    xmake._ARGV = {}
+end
 
 -- In order to be compatible with updates from lower versions of engine core
 -- @see https://github.com/xmake-io/xmake/issues/1694#issuecomment-925507210

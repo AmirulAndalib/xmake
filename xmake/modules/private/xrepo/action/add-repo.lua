@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        add-repo.lua
@@ -59,7 +59,7 @@ function _add_repository(name, url, branch)
     if not os.isdir(workdir) then
         os.mkdir(workdir)
         os.cd(workdir)
-        os.vrunv("xmake", {"create", "-P", "."})
+        os.vrunv(os.programfile(), {"create", "-P", "."})
     else
         os.cd(workdir)
     end
@@ -77,7 +77,7 @@ function _add_repository(name, url, branch)
     if branch then
         table.insert(repo_argv, branch)
     end
-    os.vexecv("xmake", repo_argv)
+    os.vexecv(os.programfile(), repo_argv)
 end
 
 -- main entry

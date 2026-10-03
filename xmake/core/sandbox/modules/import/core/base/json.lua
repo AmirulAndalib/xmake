@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        json.lua
@@ -27,6 +27,7 @@ local raise     = require("sandbox/modules/raise")
 
 -- inherit some builtin interfaces
 sandbox_core_base_json.null               = json.null
+sandbox_core_base_json.purenull           = json.purenull
 sandbox_core_base_json.mark_as_array      = json.mark_as_array
 sandbox_core_base_json.is_marked_as_array = json.is_marked_as_array
 

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        lastcommit.lua
@@ -38,6 +38,7 @@ import("net.proxy")
 -- @endcode
 --
 function main(opt)
+    opt = opt or {}
 
     -- find git
     local git = assert(find_tool("git"), "git not found!")

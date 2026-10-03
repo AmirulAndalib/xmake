@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        sdasstm8.lua
@@ -21,9 +21,9 @@
 -- imports
 import("core.base.option")
 import("core.base.global")
-import("utils.progress")
+import("core.project.policy")
 import("core.language.language")
-
+import("utils.progress")
 
 -- make the includedir flag
 function nf_includedir(self, dir)
@@ -41,7 +41,7 @@ function compargv(self, sourcefile, objectfile, flags)
 end
 
 -- compile the source file
-function compile(self, sourcefile, objectfile, dependinfo, flags)
+function compile(self, sourcefile, objectfile, dependinfo, flags, opt)
 
     -- ensure the object directory
     os.mkdir(path.directory(objectfile))
@@ -83,13 +83,8 @@ function compile(self, sourcefile, objectfile, dependinfo, flags)
         finally
         {
             function (ok, warnings)
-
-                -- print some warnings
-                if warnings and #warnings > 0 and (option.get("verbose") or option.get("warning") or global.get("build_warning")) then
-                    if progress.showing_without_scroll() then
-                        print("")
-                    end
-                    cprint("${color.warning}%s", table.concat(table.slice(warnings:split('\n'), 1, 8), '\n'))
+                if warnings and #warnings > 0 and policy.build_warnings(opt) then
+                    progress.show_output("${color.warning}%s", table.concat(table.slice(warnings:split('\n'), 1, 8), '\n'))
                 end
             end
         }

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        checker.lua
@@ -20,12 +20,16 @@
 
 -- imports
 import("core.base.option")
+import("core.cache.memcache")
 
 -- get all checkers
 function checkers()
     local checkers = _g._CHECKERS
     if not checkers then
         checkers = {
+            -- package api checkers
+            ["api.package.kind"]         = {description = "Check kind configuration in package.", load = true},
+            ["api.package.versionfiles"] = {description = "Check versionfiles configuration in package.", download_failure = true},
             -- target api checkers
             ["api.target.version"]       = {description = "Check version configuration in target."},
             ["api.target.kind"]          = {description = "Check kind configuration in target.", build = true},
@@ -53,10 +57,13 @@ function checkers()
             ["api.target.ldflags"]       = {description = "Check binary linker flags configuration in target."},
             ["api.target.shflags"]       = {description = "Check shared library linker flags configuration in target."},
             ["api.target.license"]       = {description = "Check license in target and packages.", build = true},
+            ["api.target.toolset"]       = {description = "Check toolset configuration in target."},
             -- cuda checkers
             ["cuda.devlink"]             = {description = "Check devlink for targets.", build_failure = true},
             -- clang tidy checker
-            ["clang.tidy"]               = {description = "Check project code using clang-tidy.", showstats = false}
+            ["clang.tidy"]               = {description = "Check project code using clang-tidy.", showstats = false},
+            -- syntax checker
+            ["syntax"]                   = {description = "Check the project sourcecode syntax without linking.", showstats = false}
         }
         _g._CHECKERS = checkers
     end
@@ -98,6 +105,16 @@ function update_stats(level, count)
     end
     count = count or 1
     stats[level] = (stats[level] or 0) + count
+end
+
+-- mark a checker as running (called internally by checker implementations)
+function start(name)
+    memcache.set("__checker_running", name, true)
+end
+
+-- mark a checker as stopped (called internally by checker implementations)
+function stop(name)
+    memcache.set("__checker_running", name, false)
 end
 
 -- show stats

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        check_csnippets.lua
@@ -43,6 +43,12 @@ import("lib.detect.check_cxsnippets")
 -- local ok = check_csnippets({"void test(){}", "#define TEST 1"}, {types = "wchar_t", includes = "stdio.h"})
 -- local ok = check_csnippets({snippet_name = "void test(){}", "#define TEST 1"}, {types = "wchar_t", includes = "stdio.h"})
 -- @endcode
+--
+-- check C code snippets for compilation
+--
+-- @param snippets   the code snippets table
+-- @param opt        the options, e.g. {target = target, includes = {}, configs = {}}
+-- @return           true and output on success, or false
 --
 function main(snippets, opt)
     return check_cxsnippets(snippets, table.join(table.wrap(opt), {sourcekind = "cc"}))

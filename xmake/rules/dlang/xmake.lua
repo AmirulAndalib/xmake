@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -21,7 +21,7 @@
 rule("dlang.build")
     set_sourcekinds("dc")
     add_deps("dlang.build.optimization")
-    on_build_files("private.action.build.object", {batch = true})
+    on_build_files("private.action.build.object", {jobgraph = true, batch = true})
     on_load(function (target)
         local toolchains = target:get("toolchains") or get_config("toolchain")
         if not toolchains or not table.contains(table.wrap(toolchains), "dlang", "dmd", "ldc", "gdc") then

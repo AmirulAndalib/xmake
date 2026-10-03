@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -21,11 +21,6 @@
 -- define rule: utils.compiler.runtime
 rule("utils.compiler.runtime")
     on_config(function (target)
-
-        -- set vs runtime
-        local vs_runtime = get_config("vs_runtime")
-        if vs_runtime and target:is_plat("windows") and not target:get("runtimes") then
-            target:set("runtimes", vs_runtime)
-        end
+        import("rules.c++.config.runtime", {rootdir = os.programdir(), alias = "config_runtime"})
+        config_runtime(target)
     end)
-

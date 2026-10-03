@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        hash.lua
@@ -25,13 +25,21 @@ local hash  = hash or {}
 local io    = require("base/io")
 local utils = require("base/utils")
 local bytes = require("base/bytes")
+local libc  = require("base/libc")
 
 -- save metatable and builtin functions
 hash._md5 = hash._md5 or hash.md5
 hash._sha = hash._sha or hash.sha
 hash._xxhash = hash._xxhash or hash.xxhash
+hash._rand32 = hash._rand32 or hash.rand32
+hash._rand64 = hash._rand64 or hash.rand64
+hash._rand128 = hash._rand128 or hash.rand128
 
--- make md5 from the given file or data
+-- generate md5 hash from the given file or data
+--
+-- @param file_or_data  the file path, data string, or bytes object
+-- @return              the hash hex string, or nil and error info
+--
 function hash.md5(file_or_data)
     local hashstr, errors
     if bytes.instance_of(file_or_data) then
@@ -44,7 +52,11 @@ function hash.md5(file_or_data)
     return hashstr, errors
 end
 
--- make sha1 from the given file or data
+-- generate sha1 hash from the given file or data
+--
+-- @param file_or_data  the file path, data string, or bytes object
+-- @return              the hash hex string, or nil and error info
+--
 function hash.sha1(file_or_data)
     local hashstr, errors
     if bytes.instance_of(file_or_data) then
@@ -57,7 +69,11 @@ function hash.sha1(file_or_data)
     return hashstr, errors
 end
 
--- make sha256 from the given file or data
+-- generate sha256 hash from the given file or data
+--
+-- @param file_or_data  the file path, data string, or bytes object
+-- @return              the hash hex string, or nil and error info
+--
 function hash.sha256(file_or_data)
     local hashstr, errors
     if bytes.instance_of(file_or_data) then
@@ -70,7 +86,37 @@ function hash.sha256(file_or_data)
     return hashstr, errors
 end
 
--- make xxhash64 from the given file or data
+-- generate uuid, e.g "91E8ECF1-417F-4EDF-A574-E22D7D8D204A"
+--
+-- @param str   the seed string (optional, random if nil)
+-- @return      the uuid string
+--
+function hash.uuid(str)
+    return hash.uuid4(str)
+end
+
+-- generate xxhash32 from the given file or data
+--
+-- @param file_or_data  the file path, data string, or bytes object
+-- @return              the hash hex string, or nil and error info
+--
+function hash.xxhash32(file_or_data)
+    local hashstr, errors
+    if bytes.instance_of(file_or_data) then
+        local datasize = file_or_data:size()
+        local dataaddr = file_or_data:caddr()
+        hashstr, errors = hash._xxhash(32, dataaddr, datasize)
+    else
+        hashstr, errors = hash._xxhash(32, file_or_data)
+    end
+    return hashstr, errors
+end
+
+-- generate xxhash64 from the given file or data
+--
+-- @param file_or_data  the file path, data string, or bytes object
+-- @return              the hash hex string, or nil and error info
+--
 function hash.xxhash64(file_or_data)
     local hashstr, errors
     if bytes.instance_of(file_or_data) then
@@ -83,7 +129,11 @@ function hash.xxhash64(file_or_data)
     return hashstr, errors
 end
 
--- make xxhash128 from the given file or data
+-- generate xxhash128 from the given file or data
+--
+-- @param file_or_data  the file path, data string, or bytes object
+-- @return              the hash hex string, or nil and error info
+--
 function hash.xxhash128(file_or_data)
     local hashstr, errors
     if bytes.instance_of(file_or_data) then
@@ -94,6 +144,75 @@ function hash.xxhash128(file_or_data)
         hashstr, errors = hash._xxhash(128, file_or_data)
     end
     return hashstr, errors
+end
+
+-- generate hash32 from string, e.g. "91e8ecf1"
+--
+-- @param str   the input string
+-- @return      the 32-bit hash hex string
+--
+function hash.strhash32(str)
+    if hash._rand32 then
+        local data = libc.ptraddr(libc.dataptr(str))
+        local size = #str
+        return hash._xxhash(32, data, size)
+    else
+        -- we need to be compatible with the old binary core (<= v3.0.3)
+        return hash.uuid4(str):split("-", {plain = true})[1]:lower()
+    end
+end
+
+-- generate hash64 from string, e.g. "91e8ecf191e8ecf1"
+--
+-- @param str   the input string
+-- @return      the 64-bit hash hex string
+--
+function hash.strhash64(str)
+    local data = libc.ptraddr(libc.dataptr(str))
+    local size = #str
+    return hash._xxhash(64, data, size)
+end
+
+-- generate hash128 from string, e.g. "91e8ecf1417f4edfa574e22d7d8d204a"
+--
+-- @param str   the input string
+-- @return      the 128-bit hash hex string
+--
+function hash.strhash128(str)
+    local data = libc.ptraddr(libc.dataptr(str))
+    local size = #str
+    return hash._xxhash(128, data, size)
+end
+
+-- generate random 32-bit hash
+--
+-- @return      the random hash hex string
+-- @note        it is easy to trigger hash conflicts
+--
+function hash.rand32()
+    if hash._rand32 then
+        return hash._rand32()
+    else
+        return hash.strhash32(tostring(math.random()))
+    end
+end
+
+-- generate random64 hash
+function hash.rand64()
+    if hash._rand64 then
+        return hash._rand64()
+    else
+        return hash.strhash64(tostring(math.random()))
+    end
+end
+
+-- generate random128 hash
+function hash.rand128()
+    if hash._rand128 then
+        return hash._rand128()
+    else
+        return hash.strhash128(tostring(math.random()))
+    end
 end
 
 -- return module: hash

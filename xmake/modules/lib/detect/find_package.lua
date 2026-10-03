@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_package.lua
@@ -23,30 +23,7 @@ import("core.base.option")
 import("core.project.config")
 import("core.cache.detectcache")
 import("package.manager.find_package")
-
--- concat packages
-function _concat_packages(a, b)
-    local result = table.copy(a)
-    for k, v in pairs(b) do
-        local o = result[k]
-        if o ~= nil then
-            v = table.join(o, v)
-        end
-        result[k] = v
-    end
-    for k, v in pairs(result) do
-        if k == "links" then
-            if type(v) == "table" and #v > 1 then
-                -- we need to ensure link orders when removing repeat values
-                v = table.reverse_unique(v)
-            end
-        else
-            v = table.unique(v)
-        end
-        result[k] = v
-    end
-    return result
-end
+import("private.utils.package", {alias = "package_utils"})
 
 -- find package using the package manager
 --
@@ -70,6 +47,12 @@ end
 -- local package = find_package("openssl", {linkdirs = {"/usr/lib", "/usr/local/lib", links = {"ssl", "crypto"}, includes = {"ssl.h"}})
 --
 -- @endcode
+--
+-- find package from system or package managers
+--
+-- @param name  the package name
+-- @param opt   the options, e.g. {require_version = ">=1.0", system = true, packagedirs = {}}
+-- @return      the package info table {links, linkdirs, includedirs, ...}, or nil
 --
 function main(name, opt)
 
@@ -121,7 +104,6 @@ function main(name, opt)
 
         -- cache result
         detectcache:set2(cachekey, packagekey, result and result or false)
-        detectcache:save()
 
         -- trace
         if opt.verbose or option.get("verbose") then
@@ -144,8 +126,8 @@ function main(name, opt)
     end
 
     -- register concat
-    if result and type(result) == "table" then
-        debug.setmetatable(result, {__concat = _concat_packages})
+    if result then
+        package_utils.fetchinfo_set_concat(result)
     end
     return result and result or nil
 end

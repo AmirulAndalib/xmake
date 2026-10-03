@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        filter.lua
@@ -33,7 +33,10 @@ local scheduler = require("base/scheduler")
 local escape_table1 = {["$"] = "\001", ["("] = "\002", [")"] = "\003", ["%"] = "\004"}
 local escape_table2 = {["\001"] = "$", ["\002"] = "(", ["\003"] = ")", ["\004"] = "%"}
 
--- new filter instance
+-- create a new filter instance for variable substitution
+--
+-- @return      the filter instance
+--
 function filter.new()
 
     -- init an filter instance
@@ -51,7 +54,10 @@ end
 -- e.g.
 --
 -- print("$(shell echo hello xmake)")
--- add_ldflags("$(shell pkg-config --libs sqlite3)")
+-- execute shell command and return output for $(shell ...) substitution
+--
+-- @param cmd   the shell command
+-- @return      the command output string
 --
 function filter.shell(cmd)
 
@@ -77,12 +83,20 @@ function filter.shell(cmd)
     return outdata
 end
 
--- filter the environment variables
+-- get environment variable value for $(env ...) substitution
+--
+-- @param name  the environment variable name
+-- @return      the environment value
+--
 function filter.env(name)
     return os.getenv(name)
 end
 
--- filter the winreg path
+-- query windows registry value for $(reg ...) substitution
+--
+-- @param path  the registry path
+-- @return      the registry value
+--
 function filter.reg(path)
 
     -- must be windows

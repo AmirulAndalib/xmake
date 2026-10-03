@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_link.lua
@@ -43,6 +43,7 @@ function main(opt)
 
     -- init options
     opt = opt or {}
+    opt.norunfile = true
     opt.check = opt.check or function (program)
         local toolchain = opt.toolchain
         if toolchain and toolchain:name() == "masm32" then
@@ -51,7 +52,8 @@ function main(opt)
             --
             -- TODO maybe we can use ml to improve it
         else
-            local cl = assert(find_tool("cl", {envs = opt.envs}))
+            local is_clang_cl = toolchain and toolchain:name() == "clang-cl"
+            local cl = assert(find_tool(is_clang_cl and "clang-cl" or "cl", {envs = opt.envs}))
 
             -- make an stub source file
             local binaryfile = os.tmpfile() .. ".exe"
@@ -59,7 +61,7 @@ function main(opt)
             local sourcefile = os.tmpfile() .. ".c"
 
             -- compile sourcefile first
-            io.writefile(sourcefile, "int main(int argc, char** argv)\n{return 0;}")
+            io.writefile(sourcefile, "int main(int argc, char** argv)\n{return 0;}\n")
             os.runv(cl.program, {"-c", "-Fo" .. objectfile, sourcefile}, {envs = opt.envs})
 
             -- do link

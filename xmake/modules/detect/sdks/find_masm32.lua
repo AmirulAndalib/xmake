@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_masm32.lua
@@ -89,6 +89,5 @@ function main(sdkdir, opt)
     -- save to cache
     cacheinfo.masm32 = masm32 or false
     detectcache:set(key, cacheinfo)
-    detectcache:save()
     return masm32
 end

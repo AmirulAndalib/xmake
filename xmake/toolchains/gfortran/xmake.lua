@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -32,7 +32,7 @@ toolchain("gfortran")
 
     -- on load
     on_load(function (toolchain)
-        local march = toolchain:is_arch("x86_64", "x64") and "-m64" or "-m32"
+        local march = toolchain:is_arch("x86_64", "x64", "arm64") and "-m64" or "-m32"
         toolchain:add("fcflags",   march)
         toolchain:add("fcshflags", march)
         toolchain:add("fcldflags", march)

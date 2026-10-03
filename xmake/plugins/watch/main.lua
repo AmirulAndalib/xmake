@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        main.lua
@@ -52,8 +52,8 @@ function _add_watchdirs()
     elseif os.isfile(os.projectfile()) then
         watchdirs = os.dirs(path.join(os.projectdir(), "*|.*"))
         for _, watchdir in ipairs(watchdirs) do
-            local buildir = path.absolute(config.buildir())
-            if path.absolute(watchdir) ~= buildir then
+            local builddir = path.absolute(config.builddir())
+            if path.absolute(watchdir) ~= builddir then
                 _add_watchdir(watchdir, {recursion = true})
             end
         end
@@ -90,9 +90,6 @@ function _run_command(events)
                 end
                 if option.get("diagnosis") then
                     table.insert(argv, "-D")
-                end
-                if option.get("warning") then
-                    table.insert(argv, "-w")
                 end
                 local target = option.get("target")
                 if target then

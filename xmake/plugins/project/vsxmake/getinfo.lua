@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      OpportunityLiu
 -- @file        getinfo.lua
@@ -22,6 +22,7 @@
 import("core.base.option")
 import("core.base.semver")
 import("core.base.hashset")
+import("core.tool.toolchain")
 import("core.project.config")
 import("core.project.project")
 import("core.platform.platform")
@@ -88,12 +89,26 @@ function _make_arrs(arr, sep)
     return table.concat(r, sep or ";")
 end
 
+-- detect project kind (csharp vs cxx) so vsxmake emits .csproj for C# targets
+function _get_projkind(target)
+    local sourcekinds = table.wrap(target:sourcekinds())
+    if #sourcekinds == 0 then
+        return "cxx"
+    end
+    for _, sk in ipairs(sourcekinds) do
+        if sk ~= "cs" then
+            return "cxx"
+        end
+    end
+    return "csharp"
+end
+
 -- get values from target
 function _get_values_from_target(target, name)
-    local values = table.wrap(target:get(name))
-    table.join2(values, target:get_from_opts(name))
-    table.join2(values, target:get_from_pkgs(name))
-    table.join2(values, target:get_from_deps(name, {interface = true}))
+    local values = {}
+    for _, value in ipairs((target:get_from(name, "*"))) do
+        table.join2(values, value)
+    end
     return table.unique(values)
 end
 
@@ -121,6 +136,7 @@ function _make_targetinfo(mode, arch, target)
 
     -- save target kind
     targetinfo.kind          = target:kind()
+    targetinfo.projkind      = _get_projkind(target)
 
     -- is default?
     targetinfo.default       = tostring(target:is_default())
@@ -131,12 +147,13 @@ function _make_targetinfo(mode, arch, target)
 
     -- save dirs
     targetinfo.targetdir     = _make_dirs(target:get("targetdir"))
-    targetinfo.buildir       = _make_dirs(config.get("buildir"))
+    targetinfo.builddir      = _make_dirs(config.get("builddir") or config.get("buildir"))
     targetinfo.rundir        = _make_dirs(target:get("rundir"))
     targetinfo.configdir     = _make_dirs(os.getenv("XMAKE_CONFIGDIR"))
     targetinfo.configfiledir = _make_dirs(target:get("configdir"))
     targetinfo.includedirs   = _make_dirs(table.join(_get_values_from_target(target, "includedirs") or {}, _get_values_from_target(target, "sysincludedirs")))
     targetinfo.linkdirs      = _make_dirs(_get_values_from_target(target, "linkdirs"))
+    targetinfo.forceincludes = path.joinenv(table.wrap(_get_values_from_target(target, "forceincludes")))
     targetinfo.sourcedirs    = _make_dirs(_get_values_from_target(target, "values.project.vsxmake.sourcedirs"))
     targetinfo.pcheaderfile  = target:pcheaderfile("cxx") or target:pcheaderfile("c")
 
@@ -154,7 +171,7 @@ function _make_targetinfo(mode, arch, target)
         -- fix c++17 to cxx17 for Xmake.props
         targetinfo.languages = targetinfo.languages:replace("c++", "cxx", {plain = true})
     end
-    if target:is_phony() or target:is_headeronly() then
+    if target:is_phony() or target:is_headeronly() or target:is_moduleonly() or target:is_object() then
         return targetinfo
     end
 
@@ -183,6 +200,7 @@ function _make_targetinfo(mode, arch, target)
         end
     end
     for k, v in table.orderpairs(addrunenvs) do
+        local v = v
         -- https://github.com/xmake-io/xmake/issues/3391
         v = table.unique(v)
         if k:upper() == "PATH" then
@@ -192,6 +210,7 @@ function _make_targetinfo(mode, arch, target)
         end
     end
     for k, v in table.orderpairs(setrunenvs) do
+        local v = v
         if #v == 1 then
             v = v[1]
             if path.is_absolute(v) and v:startswith(project.directory()) then
@@ -297,21 +316,29 @@ end
 function _make_vsinfo_groups()
     local groups = {}
     local group_deps = {}
-    for targetname, target in table.orderpairs(project.targets()) do
+    local project_targets = target_utils.get_project_targets()
+    for targetname, target in table.orderpairs(project_targets) do
         local group_path = target:get("group")
         if group_path and #(group_path:trim()) > 0 then
+            group_path = path.normalize(group_path)
             local group_name = path.filename(group_path)
             local group_names = path.split(group_path)
+            local group_current_path
             for idx, name in ipairs(group_names) do
-                local group = groups["group." .. name] or {}
+                group_current_path = group_current_path and path.join(group_current_path, name) or name
+                local group = groups["group." .. group_current_path] or {}
                 group.group = name
-                group.group_id = hash.uuid4("group." .. name)
+                group.group_id = hash.uuid4("group." .. group_current_path)
                 if idx > 1 then
-                    group_deps["group_dep." .. name] = {current_id = group.group_id, parent_id = hash.uuid4("group." .. group_names[idx - 1])}
+                    group_deps["group_dep." .. group_current_path] = {
+                        current_id = group.group_id,
+                        parent_id = hash.uuid4("group." .. path.directory(group_current_path))}
                 end
-                groups["group." .. name] = group
+                groups["group." .. group_current_path] = group
             end
-            group_deps["group_dep.target." .. targetname] = {current_id = hash.uuid4(targetname), parent_id = groups["group." .. group_name].group_id}
+            group_deps["group_dep.target." .. targetname] = {
+                current_id = hash.uuid4(targetname),
+                parent_id = groups["group." .. group_path].group_id}
         end
     end
     return groups, group_deps
@@ -332,6 +359,7 @@ function _make_filter(filepath, target, vcxprojdir)
             local rootdir = extraconf.rootdir
             assert(rootdir, "please set root directory, e.g. add_filegroups(%s, {rootdir = 'xxx'})", filegroup)
             for _, rootdir in ipairs(table.wrap(rootdir)) do
+                local rootdir = rootdir
                 if not path.is_absolute(rootdir) then
                     rootdir = path.absolute(rootdir, scriptdir)
                 end
@@ -339,7 +367,7 @@ function _make_filter(filepath, target, vcxprojdir)
                 local files = extraconf.files or "**"
                 local mode = extraconf.mode
                 for _, filepattern in ipairs(files) do
-                    filepattern = path.pattern(path.absolute(path.join(rootdir, filepattern)))
+                    local filepattern = path.pattern(path.absolute(path.join(rootdir, filepattern)))
                     if filepath:match(filepattern) then
                         if mode == "plain" then
                             filter = path.normalize(filegroup)
@@ -351,9 +379,6 @@ function _make_filter(filepath, target, vcxprojdir)
                             else
                                 filter = path.normalize(path.directory(fileitem))
                             end
-                        end
-                        if filter and filter == '.' then
-                            filter = nil
                         end
                         goto found_filter
                     end
@@ -373,9 +398,9 @@ function _make_filter(filepath, target, vcxprojdir)
         if filter then
             filter = _strip_dotdirs(filter)
         end
-        if filter and filter == '.' then
-            filter = nil
-        end
+    end
+    if filter and filter == '.' then
+        filter = nil
     end
     return filter
 end
@@ -388,8 +413,14 @@ function main(outputdir, vsinfo)
     local oldir = os.cd(project.directory())
 
     -- init solution directory
-    vsinfo.solution_dir = path.absolute(path.join(outputdir, "vsxmake" .. vsinfo.vstudio_version))
+    vsinfo.vcxproj_rootdir = path.absolute(path.join(outputdir, "vsxmake" .. vsinfo.vstudio_version))
+    if project.policy("generator.vsxmake.root_sln") then
+        vsinfo.solution_dir = path.absolute(outputdir)
+    else
+        vsinfo.solution_dir = vsinfo.vcxproj_rootdir
+    end
     vsinfo.programdir = _make_dirs(xmake.programdir())
+    vsinfo.programfile = xmake.programfile()
     vsinfo.projectdir = project.directory()
     vsinfo.sln_projectfile = path.relative(project.rootfile(), vsinfo.solution_dir)
     local projectfile = path.filename(project.rootfile())
@@ -419,7 +450,7 @@ function main(outputdir, vsinfo)
     -- init config flags
     local flags = {}
     for k, v in table.orderpairs(localcache.get("config", "options")) do
-        if k ~= "plat" and k ~= "mode" and k ~= "arch" and k ~= "clean" and k ~= "buildir" then
+        if k ~= "plat" and k ~= "mode" and k ~= "arch" and k ~= "clean" and k ~= "builddir" and k ~= "buildir" then
             table.insert(flags, "--" .. k .. "=" .. tostring(v))
         end
     end
@@ -436,24 +467,8 @@ function main(outputdir, vsinfo)
             -- trace
             print("checking for %s.%s ...", mode, arch)
 
-            -- reload config, project and platform
-            -- modify config
-            config.set("as", nil, {force = true}) -- force to re-check as for ml/ml64
-            config.set("mode", mode, {readonly = true, force = true})
-            config.set("arch", arch, {readonly = true, force = true})
-
-            -- clear all options
-            for _, opt in ipairs(project.options()) do
-                opt:clear()
-            end
-
-            -- clear cache
-            memcache.clear()
-            localcache.clear("detect")
-            localcache.clear("option")
-            localcache.clear("package")
-            localcache.clear("toolchain")
-            localcache.clear("cxxmodules")
+            -- reset project configs and caches
+            vsutils.reset_config_and_caches(mode, arch)
 
             -- check platform
             platform.load(config.plat(), arch):check()
@@ -464,17 +479,24 @@ function main(outputdir, vsinfo)
             -- install and update requires
             install_requires()
 
+            -- check target toolchains
+            target_utils.check_target_toolchains()
+
             -- load targets
             project.load_targets()
 
             -- update config files
             generate_configfiles()
 
+            -- save toolchain configs
+            toolchain.save()
+
             -- ensure to enter project directory
             os.cd(project.directory())
 
             -- save targets
-            for targetname, target in table.orderpairs(project.targets()) do
+            local project_targets = target_utils.get_project_targets()
+            for targetname, target in table.orderpairs(project_targets) do
 
                 -- https://github.com/xmake-io/xmake/issues/2337
                 target:data_set("plugin.project.kind", "vsxmake")
@@ -484,10 +506,23 @@ function main(outputdir, vsinfo)
                 local _target = targets[targetname]
 
                 -- init target info
-                _target.target = targetname
-                _target.vcxprojdir = path.join(vsinfo.solution_dir, targetname)
+                _target.targetname = targetname
+                _target.targetname_inpath = vsutils.translate_path(targetname)
+                _target.vcxprojdir = path.join(vsinfo.vcxproj_rootdir, targetname)
+                _target.vcxprojdir_relative_sln = vsutils.translate_path(path.relative(_target.vcxprojdir, vsinfo.solution_dir))
                 _target.target_id = hash.uuid4(targetname)
                 _target.kind = target:kind()
+                if not _target.projkind then
+                    _target.projkind = _get_projkind(target)
+                    if _target.projkind == "csharp" then
+                        -- C# project type GUID, see https://www.codeproject.com/Reference/720512/List-of-Visual-Studio-Project-Type-GUIDs
+                        _target.projtypeguid = "FAE04EC0-301F-11D3-BF4B-00C04F79EFBC"
+                        _target.projext = "csproj"
+                    else
+                        _target.projtypeguid = "8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942"
+                        _target.projext = "vcxproj"
+                    end
+                end
                 _target.absscriptdir = target:scriptdir()
                 _target.scriptdir = path.relative(target:scriptdir(), _target.vcxprojdir)
                 _target.projectdir = path.relative(project.directory(), _target.vcxprojdir)
@@ -575,12 +610,13 @@ function main(outputdir, vsinfo)
     -- we need to set startup project for default or binary target
     -- @see https://github.com/xmake-io/xmake/issues/1249
     local targetnames = {}
-    for targetname, target in table.orderpairs(project.targets()) do
+    local project_targets = target_utils.get_project_targets()
+    for targetname, target in table.orderpairs(project_targets) do
         if target:get("default") == true then
             table.insert(targetnames, 1, targetname)
         elseif target:is_binary() then
-            local first_target = targetnames[1] and project.target(targetnames[1])
-            if not first_target or first_target:is_default() then
+            local first_target = targetnames[1] and project.target(targetnames[1], {namespace = target:namespace()})
+            if not first_target or first_target:get("default") ~= true then
                 table.insert(targetnames, 1, targetname)
             else
                 table.insert(targetnames, targetname)

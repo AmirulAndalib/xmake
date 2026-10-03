@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        register_packages.lua
@@ -51,7 +51,6 @@ function _register_required_package_libs(instance, required_package, is_deps)
                 fetchinfo.static  = nil
                 fetchinfo.shared  = nil
                 fetchinfo.installdir = nil
-                fetchinfo.extra = nil
                 fetchinfo.components = nil
             end
 
@@ -65,6 +64,11 @@ function _register_required_package_libs(instance, required_package, is_deps)
                 required_package:set("__components_deps", instance:components_deps())
                 required_package:set("__components_default", instance:components_default())
                 required_package:set("__components_orderlist", instance:components_orderlist())
+            end
+
+            -- save namespace
+            if instance:namespace() then
+                required_package:set("__namespace", instance:namespace())
             end
 
             -- merge into the components values
@@ -129,6 +133,10 @@ function _register_required_package(instance, required_package)
 end
 
 -- register all required root packages to local cache
+-- register all packages to targets
+--
+-- @param packages  the packages table
+--
 function main(packages)
 
     -- register to package cache for add_packages()

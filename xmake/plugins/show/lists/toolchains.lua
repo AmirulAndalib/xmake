@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        toolchains.lua
@@ -21,6 +21,8 @@
 -- imports
 import("core.tool.toolchain")
 import("core.base.text")
+import("core.base.json")
+import("core.base.option")
 import("core.project.config")
 import("core.project.project")
 
@@ -28,6 +30,16 @@ import("core.project.project")
 function main()
 
     config.load()
+    if option.get("json") then
+        local list = {}
+        for _, name in ipairs(toolchain.list()) do
+            local t = os.isfile(os.projectfile()) and project.toolchain(name) or toolchain.load(name)
+            table.insert(list, {name = name, description = t:get("description")})
+        end
+        print(json.encode(list))
+        return 
+    end
+
     local tbl = {align = 'l', sep = "        "}
     for _, name in ipairs(toolchain.list()) do
         local t = os.isfile(os.projectfile()) and project.toolchain(name) or toolchain.load(name)

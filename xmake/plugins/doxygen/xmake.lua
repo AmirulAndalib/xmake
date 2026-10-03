@@ -12,37 +12,21 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        doxygen.lua
 --
 
--- define task
 task("doxygen")
-
-    -- set category
     set_category("plugin")
-
-    -- on run
     on_run("main")
-
-    -- set menu
     set_menu {
-                -- usage
-                usage = "xmake doxygen [options] [arguments]"
-
-                -- description
-            ,   description = "Generate the doxygen document."
-
-                -- options
-            ,   options =
-                {
-                    {'o', "outputdir",  "kv", nil,      "Set the output directory."         }
-                ,   {}
-                ,   {nil, "srcdir",     "v",  "src",    "Set the source code directory."    }
-                }
-            }
-
-
-
+        usage = "xmake doxygen [options] [arguments]",
+        description = "Generate the doxygen document.",
+        options = {
+            {'o', "outputdir", "kv", nil,   "Set the output directory."},
+            {},
+            {nil, "srcdir",    "v",  "src", "Set the source code directory."},
+        }
+    }

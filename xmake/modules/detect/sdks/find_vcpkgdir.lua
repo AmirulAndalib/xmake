@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_vcpkgdir.lua
@@ -26,6 +26,10 @@ import("core.cache.detectcache")
 import("lib.detect.find_tool")
 
 -- find vcpkgdir
+-- find the vcpkg installation directory
+--
+-- @return      the vcpkg directory path, or nil
+--
 function main()
     local vcpkgdir = detectcache:get("detect.sdks.find_vcpkgdir")
     if vcpkgdir == nil then
@@ -68,7 +72,6 @@ function main()
             end
         end
         detectcache:set("detect.sdks.find_vcpkgdir", vcpkgdir or false)
-        detectcache:save()
     end
     return vcpkgdir or nil
 end

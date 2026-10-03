@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        build_ninja.lua
@@ -27,7 +27,9 @@ import("core.tool.linker")
 import("core.tool.compiler")
 import("lib.detect.find_tool")
 import("lib.detect.find_toolname")
-import("private.tools.cl.parse_include")
+import("core.tools.cl.parse_include")
+import("plugins.project.utils.target_cmds", {rootdir = os.programdir()})
+import("private.utils.target", {alias = "target_utils"})
 
 -- this sourcebatch is built?
 function _sourcebatch_is_built(sourcebatch)
@@ -35,7 +37,8 @@ function _sourcebatch_is_built(sourcebatch)
     local rulename = sourcebatch.rulename
     if rulename == "c.build" or rulename == "c++.build"
         or rulename == "asm.build" or rulename == "cuda.build"
-        or rulename == "objc.build" or rulename == "objc++.build" then
+        or rulename == "objc.build" or rulename == "objc++.build"
+        or rulename == "win.sdk.resource" then
         return true
     end
 end
@@ -48,7 +51,7 @@ function _escape_path(filepath)
     return filepath
 end
 
--- tranlate path
+-- translate path
 function _translate_path(filepath, outputdir)
     filepath = path.translate(filepath)
     if filepath == "" then
@@ -76,6 +79,7 @@ function _translate_compflags(compflags, outputdir)
     local flags = {}
     local last_flag = nil;
     for _, flag in ipairs(compflags) do
+        local flag = flag
         if flag == "-I" or flag == "-isystem" then
             last_flag = flag
         else
@@ -101,6 +105,7 @@ end
 function _translate_linkflags(linkflags, outputdir)
     local flags = {}
     for _, flag in ipairs(linkflags) do
+        local flag = flag
         for _, pattern in ipairs({"[%-](L)(.*)", "[%-](F)(.*)"}) do
             flag = flag:gsub(pattern, function (flag, dir)
                 dir = _get_relative_unix_path(dir, outputdir)
@@ -147,6 +152,15 @@ function _add_rules_for_compiler_clang(ninjafile, sourcekind, program)
     return _add_rules_for_compiler_gcc(ninjafile, sourcekind, program)
 end
 
+-- add rules for complier (clang-cl)
+function _add_rules_for_compiler_clang_cl(ninjafile, sourcekind, program)
+    ninjafile:print("rule %s", sourcekind)
+    ninjafile:print(" command = %s -showIncludes -c $ARGS $in -Fo$out", program)
+    ninjafile:print(" deps = msvc")
+    ninjafile:print(" description = compiling.%s $in", config.mode())
+    ninjafile:print("")
+end
+
 -- add rules for complier (msvc/cl)
 function _add_rules_for_compiler_msvc_cl(ninjafile, sourcekind, program)
     ninjafile:print("rule %s", sourcekind)
@@ -182,6 +196,14 @@ function _add_rules_for_compiler_windres(ninjafile, sourcekind, program)
     ninjafile:print("")
 end
 
+-- add rules for complier (cuda/nvcc)
+function _add_rules_for_compiler_nvcc(ninjafile, sourcekind, program)
+    ninjafile:print("rule %s", sourcekind)
+    ninjafile:print(" command = %s -c $ARGS $in -o $out", program)
+    ninjafile:print(" description = compiling.%s $in", config.mode())
+    ninjafile:print("")
+end
+
 -- add rules for complier
 function _add_rules_for_compiler(ninjafile)
     ninjafile:print("# rules for compiler")
@@ -195,15 +217,17 @@ function _add_rules_for_compiler(ninjafile)
     end
     local add_compiler_rules =
     {
-        gcc     = _add_rules_for_compiler_gcc,
-        gxx     = _add_rules_for_compiler_gcc,
-        clang   = _add_rules_for_compiler_clang,
-        clangxx = _add_rules_for_compiler_clang,
-        cl      = _add_rules_for_compiler_msvc_cl,
-        ml      = _add_rules_for_compiler_msvc_ml,
-        ml64    = _add_rules_for_compiler_msvc_ml,
-        rc      = _add_rules_for_compiler_msvc_rc,
-        windres = _add_rules_for_compiler_windres
+        gcc      = _add_rules_for_compiler_gcc,
+        gxx      = _add_rules_for_compiler_gcc,
+        clang    = _add_rules_for_compiler_clang,
+        clangxx  = _add_rules_for_compiler_clang,
+        cl       = _add_rules_for_compiler_msvc_cl,
+        clang_cl = _add_rules_for_compiler_clang_cl,
+        ml       = _add_rules_for_compiler_msvc_ml,
+        ml64     = _add_rules_for_compiler_msvc_ml,
+        rc       = _add_rules_for_compiler_msvc_rc,
+        windres  = _add_rules_for_compiler_windres,
+        nvcc     = _add_rules_for_compiler_nvcc
     }
     for sourcekind, _ in pairs(language.sourcekinds()) do
         local program, toolname = platform.tool(sourcekind)
@@ -332,7 +356,7 @@ function _add_build_for_target(ninjafile, target, outputdir)
     target:data_set("plugin.project.kind", "ninja")
 
     -- is phony target?
-    if target:is_phony() then
+    if target:is_phony() or target:is_headeronly() then
         return _add_build_for_phony(ninjafile, target)
     end
 
@@ -358,7 +382,10 @@ function _add_build_for_target(ninjafile, target, outputdir)
         ninjafile:print(" || $")
         ninjafile:write("  ")
         for _, dep in ipairs(deps) do
-            ninjafile:write(" " .. _get_relative_unix_path(project.target(dep):targetfile(), outputdir))
+            local dep_target = project.target(dep, {namespace = target:namespace()});
+            if not dep_target:is_headeronly() then
+                ninjafile:write(" " .. _get_relative_unix_path(dep_target:targetfile(), outputdir))
+            end
         end
     end
     ninjafile:print("")
@@ -397,21 +424,22 @@ function _add_build_for_targets(ninjafile, outputdir)
     -- add build rule for generator
     _add_build_for_generator(ninjafile, outputdir)
 
+    local project_targets = target_utils.get_project_targets()
     -- TODO
     -- disable precompiled header first
-    for _, target in pairs(project.targets()) do
+    for _, target in pairs(project_targets) do
         target:set("pcheader", nil)
         target:set("pcxxheader", nil)
     end
 
     -- build targets
-    for _, target in pairs(project.targets()) do
+    for _, target in pairs(project_targets) do
         _add_build_for_target(ninjafile, target, outputdir)
     end
 
     -- build default
     local default = ""
-    for targetname, target in pairs(project.targets()) do
+    for targetname, target in pairs(project_targets) do
         if target:is_default() then
             default = default .. " " .. targetname
         end
@@ -420,7 +448,7 @@ function _add_build_for_targets(ninjafile, outputdir)
 
     -- build all
     local all = ""
-    for targetname, _ in pairs(project.targets()) do
+    for targetname, _ in pairs(project_targets) do
         all = all .. " " .. targetname
     end
     ninjafile:print("build all: phony%s\n", all)
@@ -430,9 +458,10 @@ function _add_build_for_targets(ninjafile, outputdir)
 end
 
 function make(outputdir)
-
-    -- enter project directory
     local oldir = os.cd(os.projectdir())
+
+    -- prepare targets
+    target_cmds.prepare_targets()
 
     -- open the build.ninja file
     --
@@ -455,7 +484,6 @@ function make(outputdir)
 
     -- close the ninjafile
     ninjafile:close()
-
-    -- leave project directory
     os.cd(oldir)
 end
+

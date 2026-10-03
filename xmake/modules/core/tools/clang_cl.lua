@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        clang_cl.lua
@@ -24,6 +24,7 @@ import("core.base.option")
 import("core.base.tty")
 import("core.base.colors")
 import("core.project.policy")
+import("utils.progress")
 
 -- init it
 function init(self)
@@ -83,6 +84,12 @@ function _has_color_diagnostics(self)
                 elseif self:has_flags("-fdiagnostics-color=always", "cxflags") then
                     colors_diagnostics = "-fdiagnostics-color=always"
                 end
+
+                -- enable color output for windows, @see https://github.com/xmake-io/xmake-vscode/discussions/260
+                if colors_diagnostics and
+                    self:has_flags("-fansi-escape-codes", "cxflags") then
+                    colors_diagnostics = table.join(colors_diagnostics, "-fansi-escape-codes")
+                end
             end
         end
         colors_diagnostics = colors_diagnostics or false
@@ -99,13 +106,14 @@ function nf_optimize(self, level)
     ,   faster      = "-Ox"
     ,   fastest     = "-O2"
     ,   smallest    = "-O1"
-    ,   aggressive  = "-O2 -fp:fast"
+    ,   aggressive  = "-O2"
     }
     return maps[level]
 end
 
 -- make the c precompiled header flag
-function nf_pcheader(self, pcheaderfile, target)
+function nf_pcheader(self, pcheaderfile, opt)
+    local target = opt.target
     if self:kind() == "cc" then
         local objectfiles = target:objectfiles()
         if objectfiles then
@@ -119,7 +127,8 @@ function nf_pcheader(self, pcheaderfile, target)
 end
 
 -- make the c++ precompiled header flag
-function nf_pcxxheader(self, pcheaderfile, target)
+function nf_pcxxheader(self, pcheaderfile, opt)
+    local target = opt.target
     if self:kind() == "cxx" then
         local objectfiles = target:objectfiles()
         if objectfiles then
@@ -134,13 +143,30 @@ function nf_pcxxheader(self, pcheaderfile, target)
     end
 end
 
+-- has /clang:-MMD -MF depfile?
+function _has_clang_mmd(self)
+    local has_clang_mmd = _g._HAS_CLANG_MMD
+    if has_clang_mmd == nil then
+        local depfile = os.tmpfile()
+        if self:has_flags({"/clang:-MMD", "/clang:-MF", "/clang:" .. depfile}, "cxflags", {flagskey = "clang_mmd"}) then
+            has_clang_mmd = true
+        end
+        has_clang_mmd = has_clang_mmd or false
+        _g._HAS_CLANG_MMD = has_clang_mmd
+        os.tryrm(depfile)
+    end
+    return has_clang_mmd
+end
+
 -- compile the source file
-function compile(self, sourcefile, objectfile, dependinfo, flags)
+function compile(self, sourcefile, objectfile, dependinfo, flags, opt)
 
     -- ensure the object directory
     os.mkdir(path.directory(objectfile))
 
     -- compile it
+    local depfile
+    local depfile_format
     local outdata = try
     {
         function ()
@@ -148,7 +174,14 @@ function compile(self, sourcefile, objectfile, dependinfo, flags)
             -- generate includes file
             local compflags = flags
             if dependinfo then
-                compflags = table.join(flags, "-showIncludes")
+                if _has_clang_mmd(self) then
+                    depfile = os.tmpfile()
+                    compflags = table.join(flags, "/clang:-MMD", "/clang:-MF", "/clang:" .. depfile)
+                    depfile_format = "gcc"
+                else
+                    compflags = table.join(flags, "-showIncludes")
+                    depfile_format = "cl"
+                end
             end
 
             -- has color diagnostics? enable it
@@ -167,6 +200,9 @@ function compile(self, sourcefile, objectfile, dependinfo, flags)
 
                 -- try removing the old object file for forcing to rebuild this source file
                 os.tryrm(objectfile)
+                if depfile then
+                    os.tryrm(depfile)
+                end
 
                 -- parse and strip errors
                 local lines = errors and tostring(errors):split('\n', {plain = true}) or {}
@@ -195,11 +231,11 @@ function compile(self, sourcefile, objectfile, dependinfo, flags)
         {
             function (ok, outdata, errdata)
                 -- show warnings?
-                if ok and errdata and #errdata > 0 and policy.build_warnings() then
+                if ok and errdata and #errdata > 0 and policy.build_warnings(opt) then
                     local lines = errdata:split('\n', {plain = true})
                     if #lines > 0 then
                         local warnings = table.concat(table.slice(lines, 1, (#lines > 8 and 8 or #lines)), "\n")
-                        cprint("${color.warning}%s", warnings)
+                        progress.show_output("${color.warning}%s", warnings)
                     end
                 end
             end
@@ -208,6 +244,15 @@ function compile(self, sourcefile, objectfile, dependinfo, flags)
 
     -- generate the dependent includes
     if dependinfo and outdata then
-        dependinfo.depfiles_cl = outdata
+        if depfile then
+            if os.isfile(depfile) then
+                dependinfo.depfiles_format = depfile_format
+                dependinfo.depfiles = io.readfile(depfile)
+                os.tryrm(depfile)
+            end
+        elseif depfile_format == "cl" then
+            dependinfo.depfiles_format = "cl"
+            dependinfo.depfiles = outdata
+        end
     end
 end

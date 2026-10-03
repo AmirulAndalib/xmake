@@ -12,7 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Copyright (C) 2015-present, TBOOX Open Source Group.
+ * Copyright (C) 2015-present, Xmake Open Source Community.
  *
  * @author      ruki
  * @file        prefix.h
@@ -27,19 +27,28 @@
 #include "prefix/prefix.h"
 #include "luaconf.h"
 #if defined(TB_CONFIG_OS_WINDOWS) && defined(__cplusplus)
-#   undef LUA_API
-#   undef LUALIB_API
-#   define LUA_API extern "C"
-#   define LUALIB_API	LUA_API
+#undef LUA_API
+#undef LUALIB_API
+#define LUA_API extern "C"
+#define LUALIB_API LUA_API
 #endif
 #ifdef USE_LUAJIT
-#   include "luajit.h"
-#   include "lualib.h"
-#   include "lauxlib.h"
+#include "luajit.h"
+#include "lualib.h"
+#include "lauxlib.h"
 #else
-#   include "lua.h"
-#   include "lualib.h"
-#   include "lauxlib.h"
+#include "lua.h"
+#include "lualib.h"
+#include "lauxlib.h"
+#endif
+
+/* //////////////////////////////////////////////////////////////////////////////////////
+ * types
+ */
+
+// define lua_Unsigned for luajit/lua5.1
+#if defined(USE_LUAJIT) || LUA_VERSION_NUM < 503
+typedef size_t                      lua_Unsigned;
 #endif
 
 /* //////////////////////////////////////////////////////////////////////////////////////
@@ -47,7 +56,7 @@
  */
 
 // this issue has been fixed, @see https://github.com/LuaJIT/LuaJIT/commit/e9af1abec542e6f9851ff2368e7f196b6382a44c
-#if 0//TB_CPU_BIT64
+#if 0 //TB_CPU_BIT64
 /* we use this interface instead of lua_pushlightuserdata() to fix bad light userdata pointer bug
  *
  * @see https://github.com/xmake-io/xmake/issues/914
@@ -95,41 +104,46 @@ static __tb_inline__ tb_pointer_t xm_lua_topointer(lua_State* lua, tb_int_t idx)
    return xm_lua_topointer2(lua, idx, tb_null);
 }
 #else
-static __tb_inline__ tb_void_t xm_lua_pushpointer(lua_State* lua, tb_pointer_t ptr)
-{
+static __tb_inline__ tb_void_t xm_lua_pushpointer(lua_State *lua, tb_pointer_t ptr) {
     lua_pushlightuserdata(lua, ptr);
 }
-static __tb_inline__ tb_bool_t xm_lua_ispointer(lua_State* lua, tb_int_t idx)
-{
+static __tb_inline__ tb_bool_t xm_lua_ispointer(lua_State *lua, tb_int_t idx) {
     return lua_isuserdata(lua, idx);
 }
-static __tb_inline__ tb_pointer_t xm_lua_topointer2(lua_State* lua, tb_int_t idx, tb_char_t const** pstr)
-{
-    if (pstr) *pstr = tb_null;
+static __tb_inline__ tb_pointer_t xm_lua_topointer2(lua_State *lua, tb_int_t idx, tb_char_t const **pstr) {
+    if (pstr)
+        *pstr = tb_null;
     return lua_touserdata(lua, idx);
 }
-static __tb_inline__ tb_pointer_t xm_lua_topointer(lua_State* lua, tb_int_t idx)
-{
+static __tb_inline__ tb_pointer_t xm_lua_topointer(lua_State *lua, tb_int_t idx) {
     return lua_touserdata(lua, idx);
 }
 #endif
 
-static __tb_inline__ tb_void_t xm_lua_register(lua_State *lua, tb_char_t const* libname, luaL_Reg const* l)
-{
+static __tb_inline__ tb_void_t xm_lua_register(lua_State *lua, tb_char_t const *libname, luaL_Reg const *l) {
 #if LUA_VERSION_NUM >= 504
-    lua_getglobal(lua, libname);
-    if (lua_isnil(lua, -1))
-    {
-        lua_pop(lua, 1);
-        lua_newtable(lua);
+    if (libname) {
+        lua_getglobal(lua, libname);
+        if (lua_isnil(lua, -1)) {
+            lua_pop(lua, 1);
+            lua_newtable(lua);
+        }
+        luaL_setfuncs(lua, l, 0);
+        lua_setglobal(lua, libname);
+    } else {
+        luaL_setfuncs(lua, l, 0);
     }
-    luaL_setfuncs(lua, l, 0);
-    lua_setglobal(lua, libname);
 #else
     luaL_register(lua, libname, l);
 #endif
 }
 
+static __tb_inline__ tb_int_t xm_lua_isinteger(lua_State *lua, int idx) {
+#ifdef USE_LUAJIT
+    return lua_isnumber(lua, idx);
+#else
+    return lua_isinteger(lua, idx);
 #endif
+}
 
-
+#endif

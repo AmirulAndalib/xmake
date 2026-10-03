@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -20,22 +20,27 @@
 
 rule("linker.soname")
     on_config(function (target)
+        local enabled = false
         local soname = target:soname()
         if target:is_shared() and soname then
             if target:has_tool("sh", "gcc", "gxx", "clang", "clangxx") then
                 if target:is_plat("macosx", "iphoneos", "watchos", "appletvos") then
-                    target:add("shflags", "-Wl,-install_name," .. soname, {force = true})
+                    target:add("shflags", "-Wl,-install_name,@rpath/" .. soname, {force = true})
                 else
                     target:add("shflags", "-Wl,-soname," .. soname, {force = true})
                 end
-                target:data_set("soname.enabled", true)
+                enabled = true
             end
+        end
+        if not enabled then
+            target:rule_enable("linker.soname", false)
         end
     end)
 
     after_link(function (target)
+        import("core.project.depend")
         local soname = target:soname()
-        if target:is_shared() and soname and target:data("soname.enabled") then
+        if target:is_shared() and soname then
             local version = target:version()
             local filename = target:filename()
             local extension = path.extension(filename)
@@ -46,12 +51,17 @@ rule("linker.soname")
             local targetfile_with_soname = path.join(target:targetdir(), soname)
             local targetfile = target:targetfile()
             if soname ~= filename and soname ~= path.filename(targetfile_with_version) then
-                os.cp(target:targetfile(), targetfile_with_version)
-                os.rm(target:targetfile())
-                local oldir = os.cd(target:targetdir())
-                os.ln(path.filename(targetfile_with_version), soname, {force = true})
-                os.ln(soname, path.filename(targetfile), {force = true})
-                os.cd(oldir)
+                depend.on_changed(function ()
+                    os.cp(target:targetfile(), targetfile_with_version)
+                    os.rm(target:targetfile())
+                    local oldir = os.cd(target:targetdir())
+                    os.ln(path.filename(targetfile_with_version), soname, {force = true})
+                    os.ln(soname, path.filename(targetfile), {force = true})
+                    os.cd(oldir)
+                end, {dependfile = target:dependfile(targetfile_with_version),
+                      files = {target:targetfile()},
+                      values = {soname, version},
+                      changed = target:is_rebuilt()})
             end
         end
     end)

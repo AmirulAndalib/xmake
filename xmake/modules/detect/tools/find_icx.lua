@@ -12,17 +12,17 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
--- @file        find_icc.lua
+-- @file        find_icx.lua
 --
 
 -- imports
 import("lib.detect.find_program")
 import("lib.detect.find_programver")
 
--- find icc
+-- find icx
 --
 -- @param opt   the argument options, e.g. {version = true}
 --
@@ -30,20 +30,14 @@ import("lib.detect.find_programver")
 --
 -- @code
 --
--- local icc = find_icc()
--- local icc, version, hintname = find_icc({program = "icc", version = true})
+-- local icx = find_icx()
+-- local icx, version, hintname = find_icx({program = "icx", version = true})
 --
 -- @endcode
 --
 function main(opt)
-
-    -- init options
     opt = opt or {}
-
-    -- find program
     local program = find_program(opt.program or "icx", opt)
-
-    -- find program version
     local version = nil
     if program and opt.version then
         version = find_programver(program, opt)

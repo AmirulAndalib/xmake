@@ -12,28 +12,19 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
 --
 
--- define platform
 platform("cross")
-
-    -- set hosts
     set_hosts("macosx", "linux", "windows", "bsd")
+    set_archs("i386", "x86_64", "arm", "armv7", "arm64", "mips", "mips64", "mips64el", "riscv", "riscv64", "loong64", "s390x", "ppc", "ppc64", "ppc64el", "sh4", "sparc64")
 
-    -- set archs
-    set_archs("i386", "x86_64", "arm", "arm64", "mips", "mips64", "riscv", "riscv64", "s390x", "ppc", "ppc64", "sh4")
-
-    -- set formats
     set_formats("static", "lib$(name).a")
     set_formats("object", "$(name).o")
     set_formats("shared", "lib$(name).so")
     set_formats("symbol", "$(name).sym")
 
-    -- set toolchains
     set_toolchains("envs", "cross")
-
-

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        check.lua
@@ -23,6 +23,11 @@ import("core.base.option")
 import("core.project.config")
 import("detect.sdks.find_ifortenv")
 import("lib.detect.find_tool")
+import("private.utils.toolchain", {alias = "toolchain_utils"})
+
+function _check_cl(toolchain, vcvars)
+    return find_tool("cl.exe", {force = true, envs = vcvars})
+end
 
 -- check intel on windows
 function _check_intel_on_windows(toolchain)
@@ -43,8 +48,7 @@ function _check_intel_on_windows(toolchain)
             if tool then
                 cprint("checking for Intel Fortran Compiler (%s) ... ${color.success}${text.success}", toolchain:arch())
                 toolchain:config_set("varsall", ifortvarsall)
-                toolchain:configs_save()
-                return true
+                return toolchain_utils.check_vstudio(toolchain, _check_cl)
             end
         end
     end
@@ -64,7 +68,6 @@ function _check_intel_on_linux(toolchain)
             cprint("checking for Intel Fortran Compiler (%s) ... ${color.success}${text.success}", toolchain:arch())
             toolchain:config_set("ifortenv", ifortenv)
             toolchain:config_set("bindir", ifortenv.bindir)
-            toolchain:configs_save()
             return true
         end
         return true

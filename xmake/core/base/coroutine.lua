@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        coroutine.lua
@@ -29,7 +29,12 @@ local string    = require("base/string")
 -- save original interfaces
 coroutine._resume  = coroutine._resume or coroutine.resume
 
--- resume coroutine
+-- resume coroutine with enhanced error reporting
+--
+-- @param co    the coroutine to resume
+-- @param ...   the resume arguments
+-- @return      true and results on success, or false and error info
+--
 function coroutine.resume(co, ...)
     local ok, results = coroutine._resume(co, ...)
     if not ok then

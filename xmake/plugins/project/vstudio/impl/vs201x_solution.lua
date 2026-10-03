@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        vs201x_solution.lua
@@ -22,6 +22,7 @@
 import("core.project.project")
 import("vsfile")
 import("vsutils")
+import("private.utils.target", {alias = "target_utils"})
 
 -- make header
 function _make_header(slnfile, vsinfo)
@@ -36,14 +37,15 @@ function _make_projects(slnfile, vsinfo)
     local groups = {}
     local targets = {}
     local vctool = "8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942"
-    for targetname, target in table.orderpairs(project.targets()) do
+    local project_targets = target_utils.get_project_targets()
+    for targetname, target in table.orderpairs(project_targets) do
         -- we need to set startup project for default or binary target
         -- @see https://github.com/xmake-io/xmake/issues/1249
         if target:get("default") == true then
             table.insert(targets, 1, target)
         elseif target:is_binary() then
             local first_target = targets[1]
-            if not first_target or first_target:is_default() then
+            if not first_target or first_target:get("default") ~= true then
                 table.insert(targets, 1, target)
             else
                 table.insert(targets, target)
@@ -63,16 +65,21 @@ function _make_projects(slnfile, vsinfo)
         slnfile:leave("EndProject")
         local group_path = target:get("group")
         if group_path and #(group_path:trim()) > 0 then
-            for _, group_name in ipairs(path.split(group_path)) do
-                groups[group_name] = hash.uuid4("group." .. group_name)
+            local group_current_path
+            local group_names = path.split(group_path)
+            for idx, group_name in ipairs(group_names) do
+                group_current_path = group_current_path and path.join(group_current_path, group_name) or group_name
+                groups[group_current_path] = hash.uuid4("group." .. group_current_path)
             end
         end
     end
 
     -- make all groups
     local project_group_uuid = "2150E333-8FDC-42A3-9474-1A3956D46DE8"
-    for group_name, group_uuid in table.orderpairs(groups) do
-        slnfile:enter("Project(\"{%s}\") = \"%s\", \"%s\", \"{%s}\"", project_group_uuid, group_name, group_name, group_uuid)
+    for group_path, group_uuid in table.orderpairs(groups) do
+        local group_name = path.filename(group_path)
+        slnfile:enter("Project(\"{%s}\") = \"%s\", \"%s\", \"{%s}\"",
+            project_group_uuid, group_name, group_name, group_uuid)
         slnfile:leave("EndProject")
     end
 end
@@ -94,7 +101,8 @@ function _make_global(slnfile, vsinfo)
 
     -- add project configuration platforms
     slnfile:enter("GlobalSection(ProjectConfigurationPlatforms) = postSolution")
-    for targetname, target in table.orderpairs(project.targets()) do
+    local project_targets = target_utils.get_project_targets()
+    for targetname, target in table.orderpairs(project_targets) do
         for _, mode in ipairs(vsinfo.modes) do
             for _, arch in ipairs(vsinfo.archs) do
                 local vs_arch = vsutils.vsarch(arch)
@@ -113,19 +121,22 @@ function _make_global(slnfile, vsinfo)
     -- add project groups
     slnfile:enter("GlobalSection(NestedProjects) = preSolution")
     local subgroups = {}
-    for targetname, target in table.orderpairs(project.targets()) do
+    for targetname, target in table.orderpairs(project_targets) do
         local group_path = target:get("group")
         if group_path then
             -- target -> group
-            local group_name = path.filename(group_path)
-            slnfile:print("{%s} = {%s}", hash.uuid4(targetname), hash.uuid4("group." .. group_name))
+            group_path = path.normalize(group_path)
+            slnfile:print("{%s} = {%s}", hash.uuid4(targetname), hash.uuid4("group." .. group_path))
             -- group -> group -> ...
+            local group_current_path
             local group_names = path.split(group_path)
             for idx, group_name in ipairs(group_names) do
-                local key = group_name .. (group_name_sub or "")
+                group_current_path = group_current_path and path.join(group_current_path, group_name) or group_name
                 local group_name_sub = group_names[idx + 1]
+                local key = group_name .. (group_name_sub or "")
                 if group_name_sub and not subgroups[key] then
-                    slnfile:print("{%s} = {%s}", hash.uuid4("group." .. group_name_sub), hash.uuid4("group." .. group_name))
+                    slnfile:print("{%s} = {%s}", hash.uuid4("group." .. path.join(group_current_path, group_name_sub)),
+                        hash.uuid4("group." .. group_current_path))
                     subgroups[key] = true
                 end
             end
@@ -162,3 +173,4 @@ function make(vsinfo)
     -- exit solution file
     slnfile:close()
 end
+

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -22,16 +22,16 @@ rule("qt.qrc")
     add_deps("qt.env")
     set_extensions(".qrc")
     on_config(function (target)
+        import("lib.detect.find_file")
 
         -- get rcc
         local qt = assert(target:data("qt"), "Qt not found!")
-        local rcc = path.join(qt.bindir, is_host("windows") and "rcc.exe" or "rcc")
-        if not os.isexec(rcc) and qt.libexecdir then
-            rcc = path.join(qt.libexecdir, is_host("windows") and "rcc.exe" or "rcc")
-        end
-        if not os.isexec(rcc) and qt.libexecdir_host then
-            rcc = path.join(qt.libexecdir_host, is_host("windows") and "rcc.exe" or "rcc")
-        end
+        local search_dirs = {}
+        if qt.bindir_host then table.insert(search_dirs, qt.bindir_host) end
+        if qt.bindir then table.insert(search_dirs, qt.bindir) end
+        if qt.libexecdir_host then table.insert(search_dirs, qt.libexecdir_host) end
+        if qt.libexecdir then table.insert(search_dirs, qt.libexecdir) end
+        local rcc = find_file(is_host("windows") and "rcc.exe" or "rcc", search_dirs)
         assert(os.isexec(rcc), "rcc not found!")
 
         -- save rcc
@@ -44,7 +44,7 @@ rule("qt.qrc")
         local rcc = target:data("qt.rcc")
 
         -- get c++ source file for qrc
-        local sourcefile_cpp = path.join(target:autogendir(), "rules", "qt", "qrc", path.basename(sourcefile_qrc) .. ".cpp")
+        local sourcefile_cpp = path.join(target:autogendir(), "rules", "qt", "qrc", path.basename(sourcefile_qrc).. "_" .. hash.strhash32(sourcefile_qrc) .. ".cpp")
         local sourcefile_dir = path.directory(sourcefile_cpp)
 
         -- add objectfile

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        test.lua
@@ -23,6 +23,14 @@ import("core.base.option")
 import("private.action.require.impl.utils.filter")
 
 -- test the given package
+-- test the installed package
+--
+-- @param package  the package instance
+--
+-- test the installed package
+--
+-- @param package  the package instance
+--
 function main(package)
 
     -- enter the test directory

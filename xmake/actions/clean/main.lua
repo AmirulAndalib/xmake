@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        main.lua
@@ -29,6 +29,7 @@ import("core.platform.platform")
 import("private.action.clean.remove_files")
 import("target.action.clean", {alias = "_do_clean_target"})
 import("private.service.remote_build.action", {alias = "remote_build_action"})
+import("private.action.utils", {alias = "action_utils"})
 
 -- on clean target
 function _on_clean_target(target)
@@ -102,19 +103,21 @@ function _clean_targets(targets)
     end
 end
 
--- clean target
-function _clean(targetname)
-
-    -- clean the given target
-    if targetname then
-        local target = project.target(targetname)
-        _clean_target(target)
+-- clean targets
+function _clean(targetnames, group_pattern)
+    if (targetnames and #targetnames > 0) or group_pattern then
+        _clean_targets(action_utils.get_targets(targetnames, {group_pattern = group_pattern}))
     else
+        -- clean all targets by default
         _clean_targets(project.ordertargets())
     end
+end
 
-    -- remove the configure directory if remove all
+-- clean configuration cache
+function _clean_configs()
     if option.get("all") then
+        -- we need to close it first after removing file lock
+        project.filelock():close()
         remove_files(config.directory())
     end
 end
@@ -142,7 +145,6 @@ function _try_clean()
     end
 end
 
--- main
 function main()
 
     -- try cleaning it using third-party buildsystem if xmake.lua not exists
@@ -155,23 +157,26 @@ function main()
         return remote_build_action()
     end
 
+    -- load config first
+    task.run("config", {require = false}, {disable_dump = true})
+
     -- lock the whole project
     project.lock()
 
-    -- get the target name
-    local targetname = option.get("target")
-
-    -- local config first
-    config.load()
+    -- get the target names and group pattern
+    local targetnames, group_pattern = action_utils.get_targets_and_group()
 
     -- enter project directory
     local oldir = os.cd(project.directory())
 
-    -- clean target
-    _clean(targetname)
+    -- clean targets
+    _clean(targetnames, group_pattern)
 
     -- unlock the whole project
     project.unlock()
+
+    -- we must call it after unlocking project because it will remove project lockfile
+    _clean_configs()
 
     -- leave project directory
     os.cd(oldir)

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_llvm_ar.lua
@@ -37,17 +37,13 @@ import("lib.detect.find_programver")
 -- @endcode
 --
 function main(opt)
-
-    -- init options
     opt = opt or {}
+    opt.norunfile = true
     opt.check = opt.check or "-h"
     opt.command = opt.command or "--version"
 
-    -- find program
-    local program = find_program(opt.program or "llvm-ar", opt)
-
-    -- find program version
     local version = nil
+    local program = find_program(opt.program or "llvm-ar", opt)
     if program and opt.version then
         version = find_programver(program, opt)
     end

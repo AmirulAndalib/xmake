@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      wsw0108
 -- @file        xmake.lua
@@ -20,7 +20,11 @@
 
 -- define rule: capnproto.cpp
 rule("capnproto.cpp")
+    add_deps("c++")
     set_extensions(".capnp")
+    after_load(function (target)
+        return import("capnp").load(target)
+    end)
     before_buildcmd_file(function (target, batchcmds, sourcefile_capnp, opt)
         return import("capnp").buildcmd(target, batchcmds, sourcefile_capnp, opt)
     end)

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        check.lua
@@ -44,7 +44,6 @@ function main(toolchain)
         toolchain:config_set("cross", cross_toolchain.cross)
         toolchain:config_set("bindir", cross_toolchain.bindir)
         toolchain:config_set("sdkdir", cross_toolchain.sdkdir)
-        toolchain:configs_save()
     else
         raise("cross toolchain not found!")
     end

@@ -12,7 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Copyright (C) 2015-present, TBOOX Open Source Group.
+ * Copyright (C) 2015-present, Xmake Open Source Community.
  *
  * @author      ruki
  * @file        pipe_read.c
@@ -22,8 +22,8 @@
 /* //////////////////////////////////////////////////////////////////////////////////////
  * trace
  */
-#define TB_TRACE_MODULE_NAME    "pipe_read"
-#define TB_TRACE_MODULE_DEBUG   (0)
+#define TB_TRACE_MODULE_NAME "pipe_read"
+#define TB_TRACE_MODULE_DEBUG (0)
 
 /* //////////////////////////////////////////////////////////////////////////////////////
  * includes
@@ -35,39 +35,38 @@
  */
 
 // real, data_or_errors = io.pipe_read(pipefile, size)
-tb_int_t xm_io_pipe_read(lua_State* lua)
-{
-    // check
+tb_int_t xm_io_pipe_read(lua_State *lua) {
     tb_assert_and_check_return_val(lua, 0);
 
     // check pipe file
-    if (!xm_lua_ispointer(lua, 1))
-    {
+    if (!xm_pipe_file_is_valid(lua, 1)) {
         lua_pushinteger(lua, -1);
         lua_pushliteral(lua, "invalid pipe file!");
         return 2;
     }
 
     // get pipe file
-    tb_pipe_file_ref_t pipefile = (tb_pipe_file_ref_t)xm_lua_topointer(lua, 1);
+    tb_pipe_file_ref_t pipefile = xm_pipe_file_get(lua, 1);
     tb_check_return_val(pipefile, 0);
 
     // get data
-    tb_byte_t* data = tb_null;
-    if (lua_isnumber(lua, 2))
-        data = (tb_byte_t*)(tb_size_t)(tb_long_t)lua_tonumber(lua, 2);
-    if (!data)
-    {
+    tb_byte_t *data = tb_null;
+    if (xm_lua_isinteger(lua, 2)) {
+        data = (tb_byte_t *)(tb_size_t)(tb_long_t)lua_tointeger(lua, 2);
+    }
+    if (!data) {
         lua_pushinteger(lua, -1);
         lua_pushfstring(lua, "invalid data(%p)!", data);
         return 2;
     }
+    tb_assert_static(sizeof(lua_Integer) >= sizeof(tb_pointer_t));
 
     // get size
     tb_long_t size = 0;
-    if (lua_isnumber(lua, 3)) size = (tb_long_t)lua_tonumber(lua, 3);
-    if (size <= 0)
-    {
+    if (xm_lua_isinteger(lua, 3)) {
+        size = (tb_long_t)lua_tointeger(lua, 3);
+    }
+    if (size <= 0) {
         lua_pushinteger(lua, -1);
         lua_pushfstring(lua, "invalid size(%d)!", (tb_int_t)size);
         return 2;

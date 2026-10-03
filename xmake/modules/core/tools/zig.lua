@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        zig.lua
@@ -46,6 +46,16 @@ end
 -- make the define flag
 function nf_define(self, macro)
     return {"-D" .. macro}
+end
+
+-- make the includedir flag (for @cImport)
+function nf_includedir(self, dir)
+    return {"-I", dir}
+end
+
+-- make the sysincludedir flag (for @cImport)
+function nf_sysincludedir(self, dir)
+    return nf_includedir(self, dir)
 end
 
 -- make the optimize flag

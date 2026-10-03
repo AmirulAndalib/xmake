@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        rustc.lua
@@ -78,7 +78,13 @@ end
 -- make the framework flag, crate module
 function nf_framework(self, framework)
     local basename = path.basename(framework)
-    local cratename = basename:match("lib(.-)%-.-") or basename:match("lib(.-)")
+    -- return "mycrate" from libmycrate-f882feaebb8ba0ca.rlib or libmycrate.rlib
+    local cratename = basename:match("lib(.-)%-.-") or basename:match("lib(.+)")
+    if not cratename and framework:endswith(".dll") then
+        -- @see https://github.com/xmake-io/xmake/issues/5156#issuecomment-2143978086
+        -- mycrate-f882feaebb8ba0ca.dll or mycrate.dll
+        cratename = basename:split("-", {plain = true})[1]
+    end
     if cratename then
         return {"--extern", cratename .. "=" .. framework}
     end

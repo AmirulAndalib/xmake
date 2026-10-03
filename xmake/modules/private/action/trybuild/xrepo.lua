@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xrepo.lua
@@ -28,7 +28,7 @@ import("private.action.require.impl.search_packages")
 
 -- get build directory
 function _get_buildir()
-    return config.buildir() or "build"
+    return config.builddir() or "build"
 end
 
 -- get artifacts directory
@@ -65,7 +65,7 @@ function detect()
 
     -- search packages
     local result
-    local packages_found = search_packages(packagename, {require_version = version and version:rawstr() or nil})
+    local packages_found = search_packages(packagename, {description = false, require_version = version and version:rawstr() or nil})
     for name, packages in pairs(packages_found) do
         for _, package in ipairs(packages) do
             if package.name == packagename or packagename:levenshtein(package.name) < 3 then
@@ -111,9 +111,10 @@ function _get_common_configs(argv)
     if config.get("toolchain") then
         table.insert(argv, "--toolchain=" .. config.get("toolchain"))
     end
-    if config.get("vs_runtime") then
+    local runtimes = config.get("runtimes") or config.get("vs_runtime")
+    if runtimes then
         table.insert(argv, "-f")
-        table.insert(argv, "vs_runtime='" .. config.get("vs_runtime") .. "'")
+        table.insert(argv, "runtimes='" .. runtimes .. "'")
     end
 end
 

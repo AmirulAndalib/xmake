@@ -12,23 +12,45 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
 --
 
 toolchain("nim")
-
     set_homepage("https://nim-lang.org/")
     set_description("Nim Programming Language Compiler")
 
-    set_toolset("nc",   "$(env NC)", "nim")
-    set_toolset("ncld", "$(env NC)", "nim")
-    set_toolset("ncsh", "$(env NC)", "nim")
-    set_toolset("ncar", "$(env NC)", "nim")
+    on_check(function (toolchain)
+        import("lib.detect.find_tool")
+        local paths = {}
+        for _, package in ipairs(toolchain:packages()) do
+            local envs = package:envs()
+            if envs then
+                table.join2(paths, envs.PATH)
+            end
+        end
+        local nim = get_config("nc")
+        if not nim then
+            nim = find_tool("nim", {force = true, paths = paths})
+            if nim and nim.program then
+                nim = nim.program
+            end
+        end
+        if nim then
+            toolchain:config_set("nim", nim)
+            return true
+        end
+    end)
 
     on_load(function (toolchain)
+        local nim = toolchain:config("nim") or "nim"
+        toolchain:set("toolset", "nc",   "$(env NC)", nim)
+        toolchain:set("toolset", "ncld", "$(env NC)", nim)
+        toolchain:set("toolset", "ncsh", "$(env NC)", nim)
+        toolchain:set("toolset", "ncar", "$(env NC)", nim)
+
         if toolchain:is_plat("windows") then
             toolchain:set("ncflags", "--cc:vcc")
             local msvc = import("core.tool.toolchain", {anonymous = true}).load("msvc", {plat = toolchain:plat(), arch = toolchain:arch()})
@@ -39,3 +61,4 @@ toolchain("nim")
         toolchain:set("ncshflags", "")
         toolchain:set("ncldflags", "")
     end)
+

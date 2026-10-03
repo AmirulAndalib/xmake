@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -33,13 +33,14 @@ language("cuda")
     set_nameflags {
         object = {
             "config.includedirs"
+        ,   "target.runtimes"
         ,   "target.symbols"
         ,   "target.warnings"
         ,   "target.optimize:check"
         ,   "target.vectorexts:check"
         ,   "target.includedirs"
         ,   "target.languages"
-        ,   "target.runtimes"
+        ,   "target.encodings"
         ,   "target.defines"
         ,   "target.undefines"
         ,   "toolchain.includedirs"
@@ -49,7 +50,8 @@ language("cuda")
         ,   "toolchain.sysincludedirs"
         }
     ,   binary = {
-            "config.linkdirs"
+            "target.runtimes"
+        ,   "config.linkdirs"
         ,   "target.linkdirs"
         ,   "target.rpathdirs"
         ,   "target.strip"
@@ -63,9 +65,9 @@ language("cuda")
         ,   "target.syslinks"
         ,   "toolchain.syslinks"
         }
-    ,   shared =
-        {
-            "config.linkdirs"
+    ,   shared = {
+            "target.runtimes"
+        ,   "config.linkdirs"
         ,   "target.linkdirs"
         ,   "target.strip"
         ,   "target.symbols"
@@ -97,16 +99,16 @@ language("cuda")
     set_menu {
                 config =
                 {
-                    {category = "Cross Complation Configuration/Compiler Configuration"         }
+                    {category = "Cross Compilation Configuration/Compiler Configuration"         }
                 ,   {nil, "cu",         "kv", nil,          "The Cuda Compiler"                 }
                 ,   {nil, "cu-ccbin",   "kv", nil,          "The Cuda Host C++ Compiler"        }
                 ,   {nil, "culd",      "kv", nil,          "The Cuda Linker"                   }
 
-                ,   {category = "Cross Complation Configuration/Compiler Flags Configuration"   }
+                ,   {category = "Cross Compilation Configuration/Compiler Flags Configuration"   }
                 ,   {nil, "cuflags",    "kv", nil,          "The Cuda Compiler Flags"           }
                 ,   {nil, "culdflags",  "kv", nil,          "The Cuda Linker Flags"             }
 
-                ,   {category = "Cross Complation Configuration/Builtin Flags Configuration"    }
+                ,   {category = "Cross Compilation Configuration/Builtin Flags Configuration"    }
                 ,   {nil, "links",      "kv", nil,          "The Link Libraries"                }
                 ,   {nil, "syslinks",   "kv", nil,          "The System Link Libraries"         }
                 ,   {nil, "linkdirs",   "kv", nil,          "The Link Search Directories"       }

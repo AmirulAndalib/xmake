@@ -12,7 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Copyright (C) 2015-present, TBOOX Open Source Group.
+ * Copyright (C) 2015-present, Xmake Open Source Community.
  *
  * @author      ruki
  * @file        poller_remove.c
@@ -22,8 +22,8 @@
 /* //////////////////////////////////////////////////////////////////////////////////////
  * trace
  */
-#define TB_TRACE_MODULE_NAME    "poller_remove"
-#define TB_TRACE_MODULE_DEBUG   (0)
+#define TB_TRACE_MODULE_NAME "poller_remove"
+#define TB_TRACE_MODULE_DEBUG (0)
 
 /* //////////////////////////////////////////////////////////////////////////////////////
  * includes
@@ -36,14 +36,11 @@
  */
 
 // io.poller_remove(obj:otype(), obj)
-tb_int_t xm_io_poller_remove(lua_State* lua)
-{
-    // check
+tb_int_t xm_io_poller_remove(lua_State *lua) {
     tb_assert_and_check_return_val(lua, 0);
 
     // is pointer?
-    if (!xm_lua_ispointer(lua, 2))
-    {
+    if (!xm_lua_ispointer(lua, 2)) {
         lua_pushboolean(lua, tb_false);
         lua_pushfstring(lua, "invalid poller object!");
         return 2;
@@ -60,7 +57,6 @@ tb_int_t xm_io_poller_remove(lua_State* lua)
     tb_poller_object_t object;
     object.type    = otype;
     object.ref.ptr = cdata;
-    lua_pushboolean(lua, tb_poller_remove(xm_io_poller(), &object));
+    lua_pushboolean(lua, tb_poller_remove(xm_io_poller(lua), &object));
     return 1;
 }
-

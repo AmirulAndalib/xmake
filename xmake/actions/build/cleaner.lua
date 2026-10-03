@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        cleaner.lua
@@ -54,7 +54,7 @@ function cleanup()
     try
     {
         function ()
-            process.openv("xmake", argv, {stdout = path.join(os.tmpdir(), "cleaner.log"), detach = true}):close()
+            process.openv(os.programfile(), argv, {stdout = path.join(os.tmpdir(), "cleaner.log"), detach = true}):close()
         end
     }
 end

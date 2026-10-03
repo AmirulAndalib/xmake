@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      OpportunityLiu, glcraft
 -- @file        complete.lua
@@ -203,10 +203,15 @@ function completer:_complete_option_v(options, current, completing)
     end
     -- transform values array to candidates array
     local function _transform_values(values)
+        if not values then
+            return {}
+        end
         local candidates = {}
         if #values > 0 and type(values[1]) == "string" then
             for _, v in ipairs(values) do
-                table.insert(candidates, { value = v, is_complete = true })
+                if v:startswith(completing) then
+                    table.insert(candidates, { value = v, is_complete = true })
+                end
             end
         else
             for _, v in ipairs(values) do
@@ -272,7 +277,7 @@ function completer:_complete_option(options, segs, completing)
         if current_options.project then
             table.insert(args, 2, "--project=" .. current_options.project)
         end
-        os.execv("xmake", args)
+        os.execv(os.programfile(), args)
         return true
     end
 

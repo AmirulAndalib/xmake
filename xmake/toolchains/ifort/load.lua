@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        load.lua
@@ -21,9 +21,10 @@
 -- imports
 import("core.base.option")
 import("core.project.config")
+import("private.utils.toolchain", {alias = "toolchain_utils"})
 
 -- add the given ifort environment
-function _add_ifortenv(toolchain, name)
+function _add_ifortenv(toolchain, name, curenvs)
 
     -- get ifortvarsall
     local ifortvarsall = toolchain:config("varsall")
@@ -36,9 +37,17 @@ function _add_ifortenv(toolchain, name)
     local ifortenv = ifortvarsall[arch] or {}
 
     -- get the paths for the ifort environment
-    local env = ifortenv[name]
-    if env then
-        toolchain:add("runenvs", name:upper(), path.splitenv(env))
+    local new = ifortenv[name]
+    if new then
+        -- fix case naming conflict for cmake/msbuild between the new msvc envs and current environment, if we are running xmake in vs prompt.
+        -- @see https://github.com/xmake-io/xmake/issues/4751
+        for k, c in pairs(curenvs) do
+            if name:lower() == k:lower() and name ~= k then
+                name = k
+                break
+            end
+        end
+        toolchain:add("runenvs", name, table.unpack(path.splitenv(new)))
     end
 end
 
@@ -57,11 +66,15 @@ function _load_intel_on_windows(toolchain)
     toolchain:set("toolset", "fcsh",  "ifort.exe")
     toolchain:set("toolset", "ar",  "link.exe")
 
+    -- add vs environments
+    toolchain_utils.add_vsenvs(toolchain)
+
     -- add ifort environments
-    _add_ifortenv(toolchain, "PATH")
-    _add_ifortenv(toolchain, "LIB")
-    _add_ifortenv(toolchain, "INCLUDE")
-    _add_ifortenv(toolchain, "LIBPATH")
+    local expect_vars = {"PATH", "LIB", "INCLUDE", "LIBPATH"}
+    local curenvs = os.getenvs()
+    for _, name in ipairs(expect_vars) do
+        _add_ifortenv(toolchain, name, curenvs)
+    end
 end
 
 -- load intel on linux

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_ollydbg.lua
@@ -50,6 +50,7 @@ function main(opt)
             return (val("reg " .. reg) or ""):match("\"(.-)\"")
         end
     end
+    opt.paths = table.wrap(opt.paths)
     opt.check  = opt.check or function (program) if not os.isfile(program) then raise() end end
 
     -- find program

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        fasturl.lua
@@ -29,6 +29,10 @@ function _parse_host(url)
     return host
 end
 
+-- add urls to the ping queue for later sorting
+--
+-- @param urls  the urls array to add
+--
 function add(urls)
     local pinginfo = _g._PINGINFO or {}
     _g._PINGHOSTS = _g._PINGHOSTS or {}
@@ -40,6 +44,11 @@ function add(urls)
     end
 end
 
+-- sort urls by network latency (fastest first)
+--
+-- @param urls  the urls array to sort
+-- @return      the sorted urls array
+--
 function sort(urls)
 
     -- ping hosts

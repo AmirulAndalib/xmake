@@ -12,19 +12,20 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
 --
 
 rule("platform.wasm")
-    add_deps("platform.wasm.preloadfiles")
-    add_deps("platform.wasm.installfiles")
+    add_deps("platform.wasm.preloadfiles",
+             "platform.wasm.installfiles")
 
 rule("platform.windows")
+    add_deps("platform.windows.def",
+             "platform.windows.idl",
+             "platform.windows.subsystem")
     if is_host("windows") then
-        add_deps("platform.windows.def")
         add_deps("platform.windows.manifest")
     end
-

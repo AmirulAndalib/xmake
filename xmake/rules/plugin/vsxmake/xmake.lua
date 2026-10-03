@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -39,7 +39,7 @@ rule("plugin.vsxmake.autoupdate")
         import("core.base.task")
 
         -- run only once for all xmake process in vs
-        local tmpfile = path.join(config.buildir(), ".gens", "rules", "plugin.vsxmake.autoupdate")
+        local tmpfile = path.join(config.builddir(), ".gens", "rules", "plugin.vsxmake.autoupdate")
         local dependfile = tmpfile .. ".d"
         local lockfile = io.openlock(tmpfile .. ".lock")
         local kind = localcache.get("vsxmake", "kind")
@@ -50,7 +50,7 @@ rule("plugin.vsxmake.autoupdate")
             if os.getenv("XMAKE_IN_VSTUDIO") and not os.getenv("XMAKE_IN_XREPO") then
                 local sourcefiles = {}
                 for _, target in pairs(project.targets()) do
-                    table.join2(sourcefiles, target:sourcefiles(), target:headerfiles())
+                    table.join2(sourcefiles, target:sourcefiles(), (target:headerfiles()))
                 end
                 table.sort(sourcefiles)
                 depend.on_changed(function ()

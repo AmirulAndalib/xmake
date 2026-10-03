@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -45,6 +45,10 @@ theme("emoji")
     set_text("build.progress_format", "[%3d%%]")
     set_text("build.progress_style", "scroll")
     set_color("build.progress", "green bright")
+    -- only for multirow_refresh
+    set_color("build.progress_superslow", "red")
+    set_color("build.progress_veryslow", "magenta")
+    set_color("build.progress_slow", "yellow")
 
     -- the building object file
     set_color("build.object", "")

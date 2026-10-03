@@ -12,7 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Copyright (C) 2015-present, TBOOX Open Source Group.
+ * Copyright (C) 2015-present, Xmake Open Source Community.
  *
  * @author      uael
  * @file        prefix.h
@@ -42,7 +42,8 @@ __tb_extern_c_enter__
  * @param semver    the semver struct
  *
  */
-tb_void_t lua_pushsemver(lua_State *lua, semver_t const* semver);
+tb_void_t
+lua_pushsemver(lua_State *lua, semver_t const *semver);
 
 /* //////////////////////////////////////////////////////////////////////////////////////
  * leave

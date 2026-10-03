@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -43,7 +43,7 @@ rule("plugin.compile_commands.autoupdate")
         end
 
         -- run only once for all xmake process
-        local tmpfile = path.join(config.buildir(), ".gens", "rules", "plugin.compile_commands.autoupdate")
+        local tmpfile = path.join(config.builddir(), ".gens", "rules", "plugin.compile_commands.autoupdate")
         local dependfile = tmpfile .. ".d"
         local lockfile = io.openlock(tmpfile .. ".lock")
         if lockfile:trylock() then
@@ -51,7 +51,7 @@ rule("plugin.compile_commands.autoupdate")
             local lsp
             local sourcefiles = {}
             for _, target in pairs(project.targets()) do
-                table.join2(sourcefiles, target:sourcefiles(), target:headerfiles())
+                table.join2(sourcefiles, target:sourcefiles(), (target:headerfiles()))
                 local extraconf = target:extraconf("rules", "plugin.compile_commands.autoupdate")
                 if extraconf then
                     outputdir = extraconf.outputdir
@@ -66,7 +66,7 @@ rule("plugin.compile_commands.autoupdate")
                 task.run("project", {kind = "compile_commands", outputdir = outputdir, lsp = lsp})
                 print("compile_commands.json updated!")
             end, {dependfile = dependfile,
-                  files = project.allfiles(),
+                  files = table.join(project.allfiles(), config.filepath()),
                   values = sourcefiles})
             lockfile:close()
         end

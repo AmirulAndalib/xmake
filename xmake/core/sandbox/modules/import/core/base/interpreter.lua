@@ -12,11 +12,23 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        interpreter.lua
 --
 
+-- load modules
+local interpreter = require("base/interpreter")
+
+-- define module
+local sandbox_core_base_interpreter = sandbox_core_base_interpreter or {}
+
+-- inherit some builtin interfaces
+sandbox_core_base_interpreter.instance        = interpreter.instance
+sandbox_core_base_interpreter.builtin_modules = interpreter.builtin_modules
+
 -- return module
-return require("base/interpreter")
+return sandbox_core_base_interpreter
+
+

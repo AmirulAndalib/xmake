@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_emcc.lua
@@ -50,7 +50,24 @@ function main(opt)
     end
 
     -- find program
-    local program = find_program(opt.program or (is_host("windows") and "emcc.bat" or "emcc"), opt)
+    -- emsdk 6.0.0+ ships .exe on windows, older releases ship .bat
+    local program
+    if opt.program then
+        program = find_program(opt.program, opt)
+    else
+        local candidate_names
+        if is_host("windows") then
+            candidate_names = {"emcc.exe", "emcc.bat"}
+        else
+            candidate_names = {"emcc"}
+        end
+        for _, name in ipairs(candidate_names) do
+            program = find_program(name, opt)
+            if program then
+                break
+            end
+        end
+    end
 
     -- find program version
     local version = nil

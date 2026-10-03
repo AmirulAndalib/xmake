@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_platform.lua
@@ -66,6 +66,8 @@ function _find_arch_from_cross()
             arch = "riscv64"
         elseif cross:find("riscv", 1, true) then
             arch = "riscv"
+        elseif cross:find("loong64", 1, true) then
+            arch = "loong64"
         elseif cross:find("s390x", 1, true) then
             arch = "s390x"
         elseif cross:find("powerpc64", 1, true) then
@@ -110,6 +112,8 @@ function _find_arch(plat, arch)
                 else
                     arch = "x86_64"
                 end
+            elseif plat == "harmony" then
+                arch = "arm64-v8a"
             elseif plat == "cross" then
                 arch = _find_arch_from_cross()
             else
@@ -141,19 +145,26 @@ function main(opt)
     -- find platform
     opt = opt or {}
     local plat = _find_plat(opt.plat)
+    local will_set_plat = false
     if opt.global then
         if not opt.plat and not config.get("plat") then
+            will_set_plat = true
             config.set("plat", plat)
-            cprint("checking for platform ... ${color.success}%s", plat)
         end
     end
 
     -- find architecture
     local arch = _find_arch(plat, opt.arch)
+    local will_set_arch = false
     if opt.global then
         if not opt.arch and not config.get("arch") then
+            will_set_arch = true
             config.set("arch", arch)
-            cprint("checking for architecture ... ${color.success}%s", arch)
+        end
+    end
+    if opt.global then
+        if will_set_plat or will_set_arch then
+            cprint("checking for platform ... ${color.success}%s (%s)", plat, arch)
         end
     end
     return plat, arch

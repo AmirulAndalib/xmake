@@ -12,7 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Copyright (C) 2015-present, TBOOX Open Source Group.
+ * Copyright (C) 2015-present, Xmake Open Source Community.
  *
  * @author      TitanSnow
  * @file        prefix.h
@@ -26,12 +26,9 @@
  */
 #include "../prefix.h"
 #ifdef XM_CONFIG_API_HAVE_READLINE
-#   include <stdio.h>   // on some OS (like centos) required
-#   include <readline/readline.h>
-#   include <readline/history.h>
+#include <stdio.h> // on some OS (like centos) required
+#include <readline/readline.h>
+#include <readline/history.h>
 #endif
 
-
 #endif
-
-

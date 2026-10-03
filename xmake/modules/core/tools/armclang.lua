@@ -12,13 +12,14 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        armclang.lua
 --
 
 inherit("gcc")
+import("core.language.language")
 
 function init(self)
     _super.init(self)
@@ -30,3 +31,22 @@ function nf_runtime(self, runtime)
         return "-D__MICROLIB"
     end
 end
+
+-- make the optimize flag
+function nf_optimize(self, level)
+    -- only for source kind
+    local kind = self:kind()
+    if language.sourcekinds()[kind] then
+        local maps =
+        {
+            none       = "-O0"
+        ,   fast       = "-O1"
+        ,   faster     = "-O2"
+        ,   fastest    = "-O3"
+        ,   smallest   = "-Oz" -- smaller than -Os
+        ,   aggressive = "-Ofast"
+        }
+        return maps[level]
+    end
+end
+

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        main.lua
@@ -52,7 +52,7 @@ function _generate_doxyfile(doxygen)
     --
     -- OUTPUT_DIRECTORY =
     --
-    local outputdir = option.get("outputdir") or config.buildir()
+    local outputdir = option.get("outputdir") or config.builddir()
     if outputdir then
         io.gsub(doxyfile, "OUTPUT_DIRECTORY%s-=.-\n", format("OUTPUT_DIRECTORY = %s\n", outputdir))
         os.mkdir(outputdir)
@@ -70,6 +70,10 @@ function _generate_doxyfile(doxygen)
 end
 
 function main()
+
+    -- @note we cannot use utils.warning() here, it's queued and only shown at the end
+    cprint("${bright color.warning}${text.warning}: ${color.warning}the builtin `xmake doxygen` plugin is deprecated, " ..
+           "please use the doxygen-plugin addon: `xmake addon --install doxygen-plugin`")
 
     -- load configuration
     config.load()
@@ -116,7 +120,7 @@ function main()
     os.vrunv(doxygen.program, {doxyfile}, {curdir = project.directory()})
 
     -- done
-    local outputdir = option.get("outputdir") or config.buildir()
+    local outputdir = option.get("outputdir") or config.builddir()
     cprint("${bright green}result: ${default green}%s/html/index.html", outputdir)
     cprint("${color.success}doxygen ok!")
     os.setenvs(oldenvs)

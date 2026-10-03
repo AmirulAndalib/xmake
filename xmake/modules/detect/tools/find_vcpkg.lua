@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_vcpkg.lua
@@ -21,6 +21,7 @@
 -- imports
 import("lib.detect.find_file")
 import("lib.detect.find_program")
+import("lib.detect.find_programver")
 import("core.project.config")
 import("detect.sdks.find_vcpkgdir")
 

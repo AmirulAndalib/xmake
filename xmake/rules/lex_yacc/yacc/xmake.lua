@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -23,8 +23,12 @@ rule("yacc")
     add_deps("c++")
     set_extensions(".y", ".yy")
     on_load(function (target)
-        local sourcefile_dir = path.join(target:autogendir(), "rules", "yacc_yacc")
-        target:add("includedirs", sourcefile_dir)
+        -- add yacc includedirs if there are yacc files
+        -- @see https://github.com/xmake-io/xmake/issues/4820
+        if target:sourcebatches()["yacc"] then
+            local sourcefile_dir = path.join(target:autogendir(), "rules", "yacc_yacc")
+            target:add("includedirs", sourcefile_dir)
+        end
     end)
     before_buildcmd_file(function (target, batchcmds, sourcefile_yacc, opt)
 

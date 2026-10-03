@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        component.lua
@@ -46,40 +46,67 @@ function _instance.new(name, opt)
 end
 
 -- get the component name
+--
+-- @return      the component name string
+--
 function _instance:name()
     return self._NAME
 end
 
--- get the type: component
+-- get the instance type
+--
+-- @return      "component"
+--
 function _instance:type()
     return "component"
 end
 
--- get the it's package
+-- get the parent package
+--
+-- @return      the package instance
+--
 function _instance:package()
     return self._PACKAGE
 end
 
--- get the component configuration
+-- get the component configuration value
+--
+-- @param name  the config name
+-- @return      the config value
+--
 function _instance:get(name)
     return self._INFO:get(name)
 end
 
 -- set the value to the component info
+--
+-- @param name  the info name
+-- @param ...   the values
+--
 function _instance:set(name, ...)
     self._INFO:apival_set(name, ...)
 end
 
 -- add the value to the component info
+--
+-- @param name  the info name
+-- @param ...   the values to add
+--
 function _instance:add(name, ...)
     self._INFO:apival_add(name, ...)
 end
 
 -- get the extra configuration
+--
+-- @param name  the config name
+-- @param item  the config item
+-- @param key   the config key (optional)
+-- @return      the extra config value
+--
 function _instance:extraconf(name, item, key)
     local conf = self._INFO:extraconf(name, item, key)
-    if conf == nil and self:base() then
-        conf = self:base():extraconf(name, item, key)
+    if conf == nil then
+        conf = self:package():extraconf(name, item, key)
     end
     return conf
 end
@@ -108,7 +135,7 @@ function _instance:_load()
     if not loaded then
         local script = self:_on_component()
         if script then
-            local ok, errors = sandbox.load(script, self:package(), self)
+            local ok, errors = sandbox.call(script, self:package(), self)
             if not ok then
                 os.raise("load component(%s) failed, %s", self:name(), errors or "unknown errors")
             end

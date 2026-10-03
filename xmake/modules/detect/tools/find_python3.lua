@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        find_python3.lua
@@ -40,7 +40,7 @@ function main(opt)
     -- init options
     opt = opt or {}
     if is_host("windows") then
-        opt.paths = opt.paths or {}
+        opt.paths = table.wrap(opt.paths)
         local keys = winos.registry_keys("HKEY_CURRENT_USER\\SOFTWARE\\Python\\PythonCore\\3.*\\InstallPath")
         for _, key in ipairs(keys) do
             local value = try {function () return winos.registry_query(key .. ";ExecutablePath") end}

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      OpportunityLiu
 -- @file        find_cudatool.lua
@@ -49,7 +49,10 @@ function main(toolname, parse, opt)
     local program
     local toolchains = find_cuda()
     if toolchains and toolchains.bindir then
-        program = find_program(path.join(toolchains.bindir, opt.program or toolname), opt)
+        local opt2 = table.clone(opt)
+        opt2.paths = opt2.paths or {}
+        table.insert(opt2.paths, toolchains.bindir)
+        program = find_program(opt2.program or toolname, opt2)
     end
 
     -- not found? attempt to find program only

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      OpportunityLiu
 -- @file        math.lua
@@ -22,7 +22,7 @@
 local math = math or {}
 
 -- init constants
-math.nan   = math.log(-1)
+math.nan   = 0/0 -- use 0/0 instead of math.log(-1) for better cross-platform compatibility (e.g., Solaris)
 math.e     = math.exp(1)
 math.inf   = 1/0 -- @see http://lua-users.org/wiki/InfAndNanComparisons
 

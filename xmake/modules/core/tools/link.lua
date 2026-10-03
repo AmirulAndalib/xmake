@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        link.lua
@@ -21,6 +21,14 @@
 -- imports
 import("core.project.config")
 import("private.tools.vstool")
+
+-- get implib file
+function _get_implibfile(self, opt)
+    local target = opt and opt.target
+    if target and target:type() == "target" then
+        return target:artifactfile("implib")
+    end
+end
 
 -- init it
 function init(self)
@@ -58,9 +66,10 @@ function get(self, name)
 end
 
 -- make the strip flag
-function nf_strip(self, level, target)
+function nf_strip(self, level, opt)
 
     -- link.exe/arm64 does not support /opt:ref, /opt:icf
+    local target = opt.target
     if target and target:is_arch("arm64") then
         return
     end
@@ -80,10 +89,11 @@ function nf_strip(self, level, target)
 end
 
 -- make the symbol flag
-function nf_symbol(self, level, target)
+function nf_symbol(self, level, opt)
 
     -- debug? generate *.pdb file
     local flags = nil
+    local target = opt.target
     if target then
         if target:type() == "target" then
             if level == "debug" and (target:is_binary() or target:is_shared()) then
@@ -100,7 +110,7 @@ end
 
 -- make the link flag
 function nf_link(self, lib)
-    if not lib:endswith(".lib") then
+    if not lib:endswith(".lib") and not lib:endswith(".obj") then
         lib = lib .. ".lib"
     end
     return lib
@@ -111,9 +121,9 @@ function nf_syslink(self, lib)
     return nf_link(self, lib)
 end
 
--- make vs runtime flag
-function nf_runtime(self, vs_runtime)
-    if vs_runtime and vs_runtime:startswith("MT") then
+-- make the runtime flag
+function nf_runtime(self, runtime)
+    if runtime and runtime:startswith("MT") then
         return "-nodefaultlib:msvcrt.lib"
     end
 end
@@ -131,19 +141,34 @@ function linkargv(self, objectfiles, targetkind, targetfile, flags, opt)
         argv = winos.cmdargv(argv)
     end
     -- @note we cannot put -lib/-dll to @args.txt
+    local implib = false
     if targetkind == "static" then
         table.insert(argv, 1, "-lib")
     elseif targetkind == "shared" then
         table.insert(argv, 1, "-dll")
+        implib = true
+    elseif targetkind == "binary" then
+        implib = true
+    end
+    if implib then
+        local implibfile = _get_implibfile(self, opt)
+        if implibfile then
+            table.insert(argv, "/implib:" .. implibfile)
+        end
     end
     return self:program(), argv
 end
 
 -- link the target file
 function link(self, objectfiles, targetkind, targetfile, flags, opt)
+    opt = opt or {}
 
-    -- ensure the target directory
+    -- ensure the target file directory exists
     os.mkdir(path.directory(targetfile))
+    local implibfile = _get_implibfile(self, opt)
+    if implibfile then
+        os.mkdir(path.directory(implibfile))
+    end
 
     try
     {
@@ -151,6 +176,7 @@ function link(self, objectfiles, targetkind, targetfile, flags, opt)
 
             local toolchain = self:toolchain()
             local program, argv = linkargv(self, objectfiles, targetkind, targetfile, flags, opt)
+
             if toolchain and toolchain:name() == "masm32" then
                 os.iorunv(program, argv, {envs = self:runenvs()})
             else
@@ -175,4 +201,3 @@ function link(self, objectfiles, targetkind, targetfile, flags, opt)
         }
     }
 end
-
